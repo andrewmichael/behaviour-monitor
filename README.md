@@ -262,6 +262,190 @@ When an anomaly is detected, a persistent notification includes:
 - Anomaly details and scores
 - Related entities (for cross-sensor anomalies)
 
+### Mobile Notifications
+
+There are two ways to receive notifications on your mobile device:
+
+#### Option 1: Built-in Mobile Notification Service
+
+The integration includes a "Mobile notification service" configuration option. To use it:
+
+1. Install the Home Assistant Companion app on your device
+2. Find your notification service name:
+   - Go to **Developer Tools** → **Services**
+   - Search for "mobile_app" to find services like `notify.mobile_app_your_phone`
+3. Enter the full service name (e.g., `notify.mobile_app_iphone`) in the Behaviour Monitor configuration
+
+Mobile notifications include:
+- Sound alerts for critical/significant anomalies
+- Badge counts showing number of anomalies
+- Time-sensitive interruption levels for critical welfare alerts
+- Grouped notifications by type (statistical, ML, welfare)
+
+#### Option 2: Custom Automations
+
+For more control over when and how notifications are sent, create automations triggered by the Behaviour Monitor sensors.
+
+**Basic Welfare Alert Automation:**
+
+```yaml
+alias: "Elder Care - Welfare Alert"
+description: "Send mobile notification when welfare status changes to alert or concern"
+trigger:
+  - platform: state
+    entity_id: sensor.behaviour_monitor_welfare_status
+    to:
+      - alert
+      - concern
+condition: []
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "🚨 Elder Care Welfare {{ states('sensor.behaviour_monitor_welfare_status') | title }}"
+      message: >-
+        {{ state_attr('sensor.behaviour_monitor_welfare_status', 'summary') }}
+
+        Recommendation: {{ state_attr('sensor.behaviour_monitor_welfare_status', 'recommendation') }}
+
+        Triggered sensors:
+        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
+        {% for e in statuses if e.status in ['alert', 'concern', 'attention'] %}
+        - {{ e.entity_id }}: {{ e.status }} ({{ e.time_since_activity }})
+        {% endfor %}
+      data:
+        push:
+          sound: default
+          interruption-level: time-sensitive
+        group: elder-care
+        tag: welfare-alert
+mode: single
+```
+
+**Anomaly Detection Automation:**
+
+```yaml
+alias: "Behaviour Monitor - Anomaly Alert"
+description: "Send notification when any anomaly is detected"
+trigger:
+  - platform: state
+    entity_id: sensor.behaviour_monitor_anomaly_detected
+    to: "on"
+condition:
+  - condition: numeric_state
+    entity_id: sensor.behaviour_monitor_baseline_confidence
+    above: 99
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "⚠️ Unusual Activity Detected"
+      message: >-
+        {% set anomalies = state_attr('sensor.behaviour_monitor_anomaly_detected', 'anomaly_details') %}
+        {% for a in anomalies %}
+        - {{ a.entity_id }}: {{ a.description }} ({{ a.severity }})
+        {% endfor %}
+      data:
+        push:
+          sound: default
+        group: behaviour-monitor
+        tag: anomaly-alert
+mode: single
+```
+
+**Low Activity Alert Automation:**
+
+```yaml
+alias: "Elder Care - Low Activity Alert"
+description: "Alert when routine progress falls significantly below normal"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.behaviour_monitor_routine_progress
+    below: 50
+    for:
+      hours: 2
+condition:
+  - condition: time
+    after: "09:00:00"
+    before: "21:00:00"
+  - condition: numeric_state
+    entity_id: sensor.behaviour_monitor_baseline_confidence
+    above: 99
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "ℹ️ Low Activity Detected"
+      message: >-
+        Routine progress is only {{ states('sensor.behaviour_monitor_routine_progress') }}%
+        ({{ state_attr('sensor.behaviour_monitor_routine_progress', 'actual_today') }} activities,
+        expected ~{{ state_attr('sensor.behaviour_monitor_routine_progress', 'expected_by_now') | round(0) }})
+
+        Last activity: {{ states('sensor.behaviour_monitor_time_since_activity') }}
+
+        Sensor status:
+        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
+        {% for e in statuses %}
+        - {{ e.entity_id }}: {{ e.status }} (last: {{ e.time_since_activity }})
+        {% endfor %}
+      data:
+        push:
+          sound: default
+        group: elder-care
+        tag: low-activity
+mode: single
+```
+
+**No Activity for Extended Period:**
+
+```yaml
+alias: "Elder Care - Extended Inactivity"
+description: "Alert when no activity for longer than typical interval"
+trigger:
+  - platform: template
+    value_template: >-
+      {{ state_attr('sensor.behaviour_monitor_time_since_activity', 'concern_level') | float(0) > 2.0 }}
+    for:
+      minutes: 30
+condition:
+  - condition: time
+    after: "07:00:00"
+    before: "23:00:00"
+  - condition: numeric_state
+    entity_id: sensor.behaviour_monitor_baseline_confidence
+    above: 99
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "🚨 Extended Inactivity"
+      message: >-
+        {{ state_attr('sensor.behaviour_monitor_time_since_activity', 'context') }}
+
+        Inactive sensors:
+        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
+        {% for e in statuses if e.status != 'normal' %}
+        - {{ e.entity_id }}: {{ e.time_since_activity }} ({{ e.severity }})
+        {% endfor %}
+      data:
+        push:
+          sound: default
+          interruption-level: time-sensitive
+        group: elder-care
+        tag: extended-inactivity
+        actions:
+          - action: ACKNOWLEDGE
+            title: "Acknowledged"
+          - action: CALL_RELATIVE
+            title: "Call Now"
+mode: single
+```
+
+**Tips for Automations:**
+
+- Always check `baseline_confidence` is above 99% to avoid false alerts during learning
+- Use `for:` duration on triggers to avoid transient state changes
+- Set appropriate time conditions to avoid night-time alerts
+- Use notification `tag` to replace previous notifications instead of stacking
+- Use `group` to organize notifications on mobile devices
+- Add actionable buttons for quick responses
+
 ## Data Storage
 
 - Statistical patterns: `.storage/behaviour_monitor.{entry_id}`

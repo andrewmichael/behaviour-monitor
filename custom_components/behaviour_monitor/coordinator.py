@@ -21,6 +21,7 @@ from .const import (
     CONF_LEARNING_PERIOD,
     CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
+    CONF_NOTIFY_SERVICE,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
     CONF_TRACK_ATTRIBUTES,
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
     DEFAULT_ML_LEARNING_PERIOD,
+    DEFAULT_NOTIFY_SERVICE,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -117,6 +119,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._track_attributes = entry.data.get(
             CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
+        )
+        self._notify_service = entry.data.get(
+            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
         )
 
     @property
@@ -389,14 +394,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
             # Statistical anomaly notifications require statistical learning complete
-            if stat_learning_complete:
-                for anomaly in stat_anomalies:
-                    await self._send_notification(anomaly)
+            if stat_learning_complete and stat_anomalies:
+                await self._send_notification(stat_anomalies)
 
             # ML anomaly notifications require ML trained AND learning period elapsed
-            if ml_learning_complete:
-                for ml_anomaly in ml_anomalies:
-                    await self._send_ml_notification(ml_anomaly)
+            if ml_learning_complete and ml_anomalies:
+                await self._send_ml_notification(ml_anomalies)
 
             # Welfare notifications sent when either learning method is ready
             if stat_learning_complete or ml_learning_complete:
@@ -471,9 +474,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "entity_status": entity_status,
         }
 
-    async def _send_notification(self, anomaly: AnomalyResult) -> None:
-        """Send a persistent notification for a statistical anomaly."""
-        notification_id = f"{DOMAIN}_{anomaly.entity_id}_{anomaly.anomaly_type}"
+    async def _send_notification(self, anomalies: list[AnomalyResult]) -> None:
+        """Send a persistent notification for statistical anomalies."""
+        if not anomalies:
+            return
+
+        notification_id = f"{DOMAIN}_statistical_anomaly"
+
+        # Find highest severity
+        severity_order = ["critical", "significant", "moderate", "minor", "normal"]
+        highest_severity = "normal"
+        for anomaly in anomalies:
+            if severity_order.index(anomaly.severity) < severity_order.index(highest_severity):
+                highest_severity = anomaly.severity
 
         severity_emoji = {
             "critical": "🚨",
@@ -481,23 +494,36 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "moderate": "⚡",
             "minor": "ℹ️",
             "normal": "",
-        }.get(anomaly.severity, "")
+        }.get(highest_severity, "")
 
-        title = f"{severity_emoji} Behaviour Monitor Alert"
-        if anomaly.anomaly_type == "unusual_activity":
-            title = f"{severity_emoji} Unusual Activity Detected"
-        elif anomaly.anomaly_type == "unusual_inactivity":
-            title = f"{severity_emoji} Unusual Inactivity Detected"
+        title = f"{severity_emoji} Behaviour Monitor Alert ({len(anomalies)} sensor{'s' if len(anomalies) > 1 else ''})"
+
+        # Build list of triggered sensors
+        triggered_lines = []
+        for anomaly in anomalies:
+            emoji = {
+                "critical": "🚨",
+                "significant": "⚠️",
+                "moderate": "⚡",
+                "minor": "ℹ️",
+            }.get(anomaly.severity, "")
+            triggered_lines.append(
+                f"- {emoji} `{anomaly.entity_id}` - {anomaly.severity} "
+                f"(Z: {anomaly.z_score:.1f}, {anomaly.anomaly_type})"
+            )
+
+        sensors_text = "\n".join(triggered_lines)
+
+        # Use first anomaly for time reference
+        first_anomaly = anomalies[0]
 
         message = (
-            f"**Severity:** {anomaly.severity.upper()}\n\n"
-            f"**Entity:** `{anomaly.entity_id}`\n\n"
-            f"**Time Slot:** {anomaly.time_slot}\n\n"
-            f"**Details:** {anomaly.description}\n\n"
-            f"**Z-Score:** {anomaly.z_score:.2f} "
-            f"(threshold: {self._analyzer._sensitivity_threshold:.1f})\n\n"
+            f"**Triggered Sensors:**\n{sensors_text}\n\n"
+            f"**Highest Severity:** {highest_severity.upper()}\n\n"
+            f"**Time Slot:** {first_anomaly.time_slot}\n\n"
             f"**Detection:** Statistical (Z-score)\n\n"
-            f"**Time:** {anomaly.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"**Threshold:** {self._analyzer._sensitivity_threshold:.1f}σ\n\n"
+            f"**Time:** {first_anomaly.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
         await self.hass.services.async_call(
@@ -510,32 +536,62 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         )
 
-        _LOGGER.info("Sent notification for anomaly: %s (severity: %s)", anomaly.description, anomaly.severity)
+        _LOGGER.info(
+            "Sent notification for %d anomalies (highest severity: %s)",
+            len(anomalies),
+            highest_severity
+        )
 
-    async def _send_ml_notification(self, anomaly: MLAnomalyResult) -> None:
-        """Send a persistent notification for an ML-detected anomaly."""
-        entity_part = anomaly.entity_id or "cross_sensor"
-        notification_id = f"{DOMAIN}_ml_{entity_part}_{anomaly.anomaly_type}"
+        # Also send to mobile device if configured
+        await self._send_mobile_notification(
+            title=title,
+            message=message,
+            data={
+                "push": {
+                    "sound": "default" if highest_severity in ["critical", "significant"] else None,
+                    "badge": len(anomalies),
+                    "interruption-level": "time-sensitive" if highest_severity == "critical" else "active",
+                },
+                "group": f"{DOMAIN}_statistical",
+            },
+        )
 
-        title = "Behaviour Monitor ML Alert"
-        if anomaly.anomaly_type == "isolation_forest":
-            title = "Unusual Pattern Detected (ML)"
-        elif anomaly.anomaly_type == "missing_correlation":
-            title = "Missing Expected Activity"
-        elif anomaly.anomaly_type == "unexpected_correlation":
-            title = "Unexpected Activity Pattern"
+    async def _send_ml_notification(self, anomalies: list[MLAnomalyResult]) -> None:
+        """Send a persistent notification for ML-detected anomalies."""
+        if not anomalies:
+            return
 
-        related = ""
-        if anomaly.related_entities:
-            related = f"**Related Entities:** {', '.join(anomaly.related_entities)}\n\n"
+        notification_id = f"{DOMAIN}_ml_anomaly"
+
+        title = f"Behaviour Monitor ML Alert ({len(anomalies)} pattern{'s' if len(anomalies) > 1 else ''})"
+
+        # Build list of triggered sensors/patterns
+        triggered_lines = []
+        all_related = set()
+
+        for anomaly in anomalies:
+            entity_name = anomaly.entity_id or "Cross-sensor"
+            triggered_lines.append(
+                f"- `{entity_name}` - {anomaly.anomaly_type} "
+                f"(score: {anomaly.anomaly_score:.2f})"
+            )
+            if anomaly.related_entities:
+                all_related.update(anomaly.related_entities)
+
+        sensors_text = "\n".join(triggered_lines)
+
+        related_text = ""
+        if all_related:
+            related_text = f"**Related Entities:** {', '.join(sorted(all_related))}\n\n"
+
+        # Use first anomaly for time reference
+        first_anomaly = anomalies[0]
 
         message = (
-            f"**Entity:** `{anomaly.entity_id or 'Cross-sensor pattern'}`\n\n"
-            f"{related}"
-            f"**Details:** {anomaly.description}\n\n"
-            f"**ML Score:** {anomaly.anomaly_score:.3f}\n\n"
-            f"**Detection:** Machine Learning ({anomaly.anomaly_type})\n\n"
-            f"**Time:** {anomaly.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"**Triggered Patterns:**\n{sensors_text}\n\n"
+            f"{related_text}"
+            f"**Detection:** Machine Learning (Half-Space Trees)\n\n"
+            f"**Time:** {first_anomaly.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
         await self.hass.services.async_call(
@@ -548,7 +604,21 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         )
 
-        _LOGGER.info("Sent ML notification for anomaly: %s", anomaly.description)
+        _LOGGER.info("Sent ML notification for %d anomalies", len(anomalies))
+
+        # Also send to mobile device if configured
+        await self._send_mobile_notification(
+            title=title,
+            message=message,
+            data={
+                "push": {
+                    "sound": "default",
+                    "badge": len(anomalies),
+                    "interruption-level": "active",
+                },
+                "group": f"{DOMAIN}_ml",
+            },
+        )
 
     async def _send_welfare_notification(self, welfare_status: dict[str, Any]) -> None:
         """Send a notification for welfare status changes."""
@@ -569,10 +639,29 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         routine = welfare_status.get("routine_progress", {})
         activity = welfare_status.get("time_since_activity", {})
 
+        # Get list of triggered sensors (those not in 'normal' status)
+        entity_statuses = self._analyzer.get_entity_status()
+        triggered_sensors = [
+            e for e in entity_statuses
+            if e.get("status") in ["alert", "concern", "attention"]
+        ]
+
+        triggered_text = ""
+        if triggered_sensors:
+            triggered_lines = []
+            for e in triggered_sensors:
+                status_emoji = {"alert": "🚨", "concern": "⚠️", "attention": "ℹ️"}.get(e["status"], "")
+                triggered_lines.append(
+                    f"- {status_emoji} `{e['entity_id']}` - {e['status']} "
+                    f"({e.get('time_since_activity', 'unknown')})"
+                )
+            triggered_text = f"**Triggered Sensors:**\n" + "\n".join(triggered_lines) + "\n\n"
+
         message = (
             f"**Status:** {status.upper()}\n\n"
             f"**Summary:** {welfare_status.get('summary', 'Unknown')}\n\n"
             f"**Reasons:**\n{reasons_text}\n\n"
+            f"{triggered_text}"
             f"**Recommendation:** {welfare_status.get('recommendation', '')}\n\n"
             f"---\n\n"
             f"**Routine Progress:** {routine.get('progress_percent', 0):.0f}% "
@@ -593,3 +682,65 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         _LOGGER.info("Sent welfare notification: %s - %s", status, welfare_status.get("summary", ""))
+
+        # Also send to mobile device if configured
+        await self._send_mobile_notification(
+            title=title,
+            message=message,
+            data={
+                "push": {
+                    "sound": "default",
+                    "badge": 1,
+                    "interruption-level": "time-sensitive" if status == WELFARE_ALERT else "active",
+                },
+                "group": f"{DOMAIN}_welfare",
+            },
+        )
+
+    async def _send_mobile_notification(
+        self, title: str, message: str, data: dict[str, Any] | None = None
+    ) -> None:
+        """Send notification to mobile device if configured."""
+        if not self._notify_service:
+            return
+
+        # Parse the service name (e.g., "notify.mobile_app_iphone" -> domain="notify", service="mobile_app_iphone")
+        service_parts = self._notify_service.split(".", 1)
+        if len(service_parts) != 2:
+            _LOGGER.warning(
+                "Invalid notify service format: %s (expected 'notify.service_name')",
+                self._notify_service,
+            )
+            return
+
+        domain, service = service_parts
+
+        # Strip markdown formatting for mobile - convert to plain text
+        plain_message = message.replace("**", "").replace("`", "").replace("---", "")
+
+        service_data: dict[str, Any] = {
+            "title": title.replace("🚨 ", "").replace("⚠️ ", "").replace("⚡ ", "").replace("ℹ️ ", ""),
+            "message": plain_message,
+        }
+
+        # Add iOS/Android specific data for rich notifications
+        if data:
+            service_data["data"] = data
+        else:
+            service_data["data"] = {
+                "push": {
+                    "sound": "default",
+                    "badge": 1,
+                },
+                "group": DOMAIN,
+            }
+
+        try:
+            await self.hass.services.async_call(domain, service, service_data)
+            _LOGGER.debug("Sent mobile notification via %s", self._notify_service)
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to send mobile notification via %s: %s",
+                self._notify_service,
+                err,
+            )

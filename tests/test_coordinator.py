@@ -243,7 +243,7 @@ class TestBehaviourMonitorCoordinator:
             description="Test anomaly",
         )
 
-        await coordinator._send_notification(anomaly)
+        await coordinator._send_notification([anomaly])
 
         mock_hass.services.async_call.assert_called_once()
         call_args = mock_hass.services.async_call.call_args
@@ -267,7 +267,7 @@ class TestBehaviourMonitorCoordinator:
             related_entities=[],
         )
 
-        await coordinator._send_ml_notification(anomaly)
+        await coordinator._send_ml_notification([anomaly])
 
         mock_hass.services.async_call.assert_called_once()
         call_args = mock_hass.services.async_call.call_args
