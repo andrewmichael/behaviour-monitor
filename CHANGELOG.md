@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-01-28
+
+### Fixed
+- add configurable min learning peroiid, dont send out notificaitons until learning is complete
+
 ## [2.4.3] - 2026-01-28
 
 ### Changed
