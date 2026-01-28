@@ -250,8 +250,10 @@ jobs:
 
       - name: Create zip for HACS
         run: |
-          cd custom_components
-          zip -r ../behaviour_monitor.zip behaviour_monitor
+          # Zip the contents directly (not the directory itself)
+          # This ensures HACS extracts files directly into custom_components/behaviour_monitor/
+          cd custom_components/behaviour_monitor
+          zip -r ../../behaviour_monitor.zip .
 
       - name: Generate release body
         run: |
