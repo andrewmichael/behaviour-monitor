@@ -21,7 +21,7 @@ from .const import (
     CONF_LEARNING_PERIOD,
     CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
-    CONF_NOTIFY_SERVICE,
+    CONF_NOTIFY_SERVICES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
     CONF_TRACK_ATTRIBUTES,
@@ -30,7 +30,7 @@ from .const import (
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
     DEFAULT_ML_LEARNING_PERIOD,
-    DEFAULT_NOTIFY_SERVICE,
+    DEFAULT_NOTIFY_SERVICES,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -120,8 +120,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_attributes = entry.data.get(
             CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
-        self._notify_service = entry.data.get(
-            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        self._notify_services: list[str] = entry.data.get(
+            CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
         )
 
     @property
@@ -467,6 +467,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ),
             },
             "cross_sensor_patterns": cross_patterns,
+            # Training time remaining
+            "stat_training": self._analyzer.get_training_time_remaining(),
+            "ml_training": (
+                self._ml_analyzer.get_training_time_remaining(self._ml_learning_period_days)
+                if self._enable_ml
+                else {"complete": False, "formatted": "ML disabled", "status": "ML disabled"}
+            ),
             # Elder care data
             "welfare": welfare_status,
             "routine": routine_progress,
@@ -700,20 +707,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _send_mobile_notification(
         self, title: str, message: str, data: dict[str, Any] | None = None
     ) -> None:
-        """Send notification to mobile device if configured."""
-        if not self._notify_service:
+        """Send notification to mobile devices if configured."""
+        if not self._notify_services:
             return
-
-        # Parse the service name (e.g., "notify.mobile_app_iphone" -> domain="notify", service="mobile_app_iphone")
-        service_parts = self._notify_service.split(".", 1)
-        if len(service_parts) != 2:
-            _LOGGER.warning(
-                "Invalid notify service format: %s (expected 'notify.service_name')",
-                self._notify_service,
-            )
-            return
-
-        domain, service = service_parts
 
         # Strip markdown formatting for mobile - convert to plain text
         plain_message = message.replace("**", "").replace("`", "").replace("---", "")
@@ -735,12 +731,24 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "group": DOMAIN,
             }
 
-        try:
-            await self.hass.services.async_call(domain, service, service_data)
-            _LOGGER.debug("Sent mobile notification via %s", self._notify_service)
-        except Exception as err:
-            _LOGGER.warning(
-                "Failed to send mobile notification via %s: %s",
-                self._notify_service,
-                err,
-            )
+        for notify_service in self._notify_services:
+            # Parse the service name (e.g., "notify.mobile_app_iphone" -> domain="notify", service="mobile_app_iphone")
+            service_parts = notify_service.split(".", 1)
+            if len(service_parts) != 2:
+                _LOGGER.warning(
+                    "Invalid notify service format: %s (expected 'notify.service_name')",
+                    notify_service,
+                )
+                continue
+
+            domain, service = service_parts
+
+            try:
+                await self.hass.services.async_call(domain, service, service_data)
+                _LOGGER.debug("Sent mobile notification via %s", notify_service)
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to send mobile notification via %s: %s",
+                    notify_service,
+                    err,
+                )

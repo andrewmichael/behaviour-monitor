@@ -342,6 +342,57 @@ class PatternAnalyzer:
         """Check if the learning period is complete."""
         return self.get_confidence() >= 100.0
 
+    def get_training_time_remaining(self) -> dict[str, Any]:
+        """Get information about training time remaining."""
+        if not self._patterns:
+            return {
+                "complete": False,
+                "days_remaining": self._learning_period_days,
+                "days_elapsed": 0,
+                "total_days": self._learning_period_days,
+                "formatted": f"{self._learning_period_days} days remaining",
+                "first_observation": None,
+            }
+
+        # Find earliest first observation
+        min_first_obs = None
+        for pattern in self._patterns.values():
+            if pattern.first_observation:
+                if min_first_obs is None or pattern.first_observation < min_first_obs:
+                    min_first_obs = pattern.first_observation
+
+        if min_first_obs is None:
+            return {
+                "complete": False,
+                "days_remaining": self._learning_period_days,
+                "days_elapsed": 0,
+                "total_days": self._learning_period_days,
+                "formatted": f"{self._learning_period_days} days remaining",
+                "first_observation": None,
+            }
+
+        now = datetime.now(timezone.utc)
+        elapsed = now - min_first_obs
+        days_elapsed = elapsed.days
+        days_remaining = max(0, self._learning_period_days - days_elapsed)
+
+        if days_remaining == 0:
+            formatted = "Complete"
+        elif days_remaining == 1:
+            hours_remaining = max(0, 24 - (elapsed.seconds // 3600))
+            formatted = f"~{hours_remaining} hours remaining"
+        else:
+            formatted = f"{days_remaining} days remaining"
+
+        return {
+            "complete": days_remaining == 0,
+            "days_remaining": days_remaining,
+            "days_elapsed": days_elapsed,
+            "total_days": self._learning_period_days,
+            "formatted": formatted,
+            "first_observation": min_first_obs.isoformat(),
+        }
+
     def calculate_activity_score(self) -> float:
         """Calculate current activity score (0-100)."""
         if not self._patterns:

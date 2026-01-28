@@ -14,7 +14,7 @@ CONF_RETRAIN_PERIOD: Final = "retrain_period"
 CONF_ML_LEARNING_PERIOD: Final = "ml_learning_period"
 CONF_CROSS_SENSOR_WINDOW: Final = "cross_sensor_window"
 CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
-CONF_NOTIFY_SERVICE: Final = "notify_service"
+CONF_NOTIFY_SERVICES: Final = "notify_services"
 
 # Sensitivity levels (standard deviations for Z-score)
 SENSITIVITY_LOW: Final = "low"
@@ -43,7 +43,7 @@ DEFAULT_RETRAIN_PERIOD: Final = 14  # days (2 weeks)
 DEFAULT_ML_LEARNING_PERIOD: Final = 7  # days (minimum time before ML alerts)
 DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds (5 minutes)
 DEFAULT_TRACK_ATTRIBUTES: Final = True  # Track attribute changes (not just state)
-DEFAULT_NOTIFY_SERVICE: Final = ""  # Empty = persistent_notification only
+DEFAULT_NOTIFY_SERVICES: Final = []  # Empty = persistent_notification only
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"

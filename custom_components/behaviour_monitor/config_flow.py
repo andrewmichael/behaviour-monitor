@@ -31,7 +31,7 @@ from .const import (
     CONF_LEARNING_PERIOD,
     CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
-    CONF_NOTIFY_SERVICE,
+    CONF_NOTIFY_SERVICES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
     CONF_TRACK_ATTRIBUTES,
@@ -40,7 +40,7 @@ from .const import (
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
     DEFAULT_ML_LEARNING_PERIOD,
-    DEFAULT_NOTIFY_SERVICE,
+    DEFAULT_NOTIFY_SERVICES,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -165,9 +165,9 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_TRACK_ATTRIBUTES, default=DEFAULT_TRACK_ATTRIBUTES
                 ): BooleanSelector(),
                 vol.Optional(
-                    CONF_NOTIFY_SERVICE, default=DEFAULT_NOTIFY_SERVICE
+                    CONF_NOTIFY_SERVICES, default=DEFAULT_NOTIFY_SERVICES
                 ): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                    TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
                 ),
             }
         )
@@ -234,8 +234,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_track_attributes = self._config_entry.data.get(
             CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
-        current_notify_service = self._config_entry.data.get(
-            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        current_notify_services = self._config_entry.data.get(
+            CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
         )
 
         data_schema = vol.Schema(
@@ -309,9 +309,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                     CONF_TRACK_ATTRIBUTES, default=current_track_attributes
                 ): BooleanSelector(),
                 vol.Optional(
-                    CONF_NOTIFY_SERVICE, default=current_notify_service
+                    CONF_NOTIFY_SERVICES, default=current_notify_services
                 ): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                    TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
                 ),
             }
         )

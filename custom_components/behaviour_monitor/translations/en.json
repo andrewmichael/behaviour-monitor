@@ -14,7 +14,7 @@
           "retrain_period": "ML retrain period",
           "cross_sensor_window": "Cross-sensor correlation window",
           "track_attributes": "Track attribute changes",
-          "notify_service": "Mobile notification service"
+          "notify_services": "Mobile notification services"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -26,7 +26,7 @@
           "retrain_period": "How often to retrain the ML model with new data.",
           "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors.",
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
-          "notify_service": "Service to send mobile notifications (e.g., notify.mobile_app_iphone). Leave empty to only use persistent notifications in the HA UI."
+          "notify_services": "Services to send mobile notifications (e.g., notify.mobile_app_iphone). Add multiple services to notify multiple devices. Leave empty to only use persistent notifications in the HA UI."
         }
       }
     },
@@ -78,6 +78,12 @@
       },
       "cross_sensor_patterns": {
         "name": "Cross-Sensor Patterns"
+      },
+      "statistical_training_remaining": {
+        "name": "Statistical Training Remaining"
+      },
+      "ml_training_remaining": {
+        "name": "ML Training Remaining"
       }
     }
   }

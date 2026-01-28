@@ -266,15 +266,16 @@ When an anomaly is detected, a persistent notification includes:
 
 There are two ways to receive notifications on your mobile device:
 
-#### Option 1: Built-in Mobile Notification Service
+#### Option 1: Built-in Mobile Notification Services
 
-The integration includes a "Mobile notification service" configuration option. To use it:
+The integration includes a "Mobile notification services" configuration option that supports multiple devices. To use it:
 
-1. Install the Home Assistant Companion app on your device
-2. Find your notification service name:
+1. Install the Home Assistant Companion app on each device you want to notify
+2. Find your notification service names:
    - Go to **Developer Tools** → **Services**
    - Search for "mobile_app" to find services like `notify.mobile_app_your_phone`
-3. Enter the full service name (e.g., `notify.mobile_app_iphone`) in the Behaviour Monitor configuration
+3. Add each service name (e.g., `notify.mobile_app_iphone`, `notify.mobile_app_ipad`) in the Behaviour Monitor configuration
+   - You can add multiple services to notify multiple devices simultaneously
 
 Mobile notifications include:
 - Sound alerts for critical/significant anomalies

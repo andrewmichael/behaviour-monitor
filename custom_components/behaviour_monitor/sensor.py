@@ -178,6 +178,37 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             ATTR_ENTITY_STATUS: data.get("entity_status", []),
         },
     ),
+    # Training Time Remaining Sensors
+    BehaviourMonitorSensorDescription(
+        key="statistical_training_remaining",
+        name="Statistical Training Remaining",
+        icon="mdi:timer-sand",
+        value_fn=lambda data: data.get("stat_training", {}).get("formatted", "Unknown"),
+        extra_attrs_fn=lambda coord, data: {
+            "complete": data.get("stat_training", {}).get("complete", False),
+            "days_remaining": data.get("stat_training", {}).get("days_remaining"),
+            "days_elapsed": data.get("stat_training", {}).get("days_elapsed"),
+            "total_days": data.get("stat_training", {}).get("total_days"),
+            "first_observation": data.get("stat_training", {}).get("first_observation"),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="ml_training_remaining",
+        name="ML Training Remaining",
+        icon="mdi:timer-sand",
+        value_fn=lambda data: data.get("ml_training", {}).get("formatted", "Unknown"),
+        extra_attrs_fn=lambda coord, data: {
+            "complete": data.get("ml_training", {}).get("complete", False),
+            "status": data.get("ml_training", {}).get("status"),
+            "days_remaining": data.get("ml_training", {}).get("days_remaining"),
+            "days_elapsed": data.get("ml_training", {}).get("days_elapsed"),
+            "total_days": data.get("ml_training", {}).get("total_days"),
+            "samples_remaining": data.get("ml_training", {}).get("samples_remaining"),
+            "samples_processed": data.get("ml_training", {}).get("samples_processed"),
+            "samples_needed": data.get("ml_training", {}).get("samples_needed"),
+            "first_event": data.get("ml_training", {}).get("first_event"),
+        },
+    ),
 )
 
 

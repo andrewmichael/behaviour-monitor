@@ -201,6 +201,80 @@ class MLPatternAnalyzer:
         """Get cross-sensor patterns."""
         return self._cross_sensor_patterns
 
+    def get_training_time_remaining(self, ml_learning_period_days: int) -> dict[str, Any]:
+        """Get information about ML training time remaining.
+
+        Args:
+            ml_learning_period_days: The configured ML learning period in days.
+
+        Returns:
+            Dictionary with training status and time remaining info.
+        """
+        if not ML_AVAILABLE:
+            return {
+                "complete": False,
+                "status": "ML not available (River not installed)",
+                "days_remaining": None,
+                "samples_remaining": None,
+                "formatted": "ML disabled",
+            }
+
+        samples_remaining = max(0, MIN_SAMPLES_FOR_ML - self._samples_processed)
+
+        if self._first_event_at is None:
+            return {
+                "complete": False,
+                "status": "Waiting for first event",
+                "days_remaining": ml_learning_period_days,
+                "days_elapsed": 0,
+                "total_days": ml_learning_period_days,
+                "samples_remaining": samples_remaining,
+                "samples_processed": self._samples_processed,
+                "samples_needed": MIN_SAMPLES_FOR_ML,
+                "formatted": f"{ml_learning_period_days} days remaining ({samples_remaining} samples needed)",
+                "first_event": None,
+            }
+
+        now = datetime.now(timezone.utc)
+        elapsed = now - self._first_event_at
+        days_elapsed = elapsed.days
+        days_remaining = max(0, ml_learning_period_days - days_elapsed)
+
+        # ML training requires BOTH time elapsed AND minimum samples
+        time_complete = days_remaining == 0
+        samples_complete = samples_remaining == 0
+        is_complete = time_complete and samples_complete
+
+        if is_complete:
+            formatted = "Complete"
+            status = "Trained and ready"
+        elif not samples_complete:
+            formatted = f"{samples_remaining} samples needed"
+            if not time_complete:
+                formatted += f", {days_remaining} days remaining"
+            status = "Collecting samples"
+        else:
+            # Samples complete but time not elapsed
+            if days_remaining == 1:
+                hours_remaining = max(0, 24 - (elapsed.seconds // 3600))
+                formatted = f"~{hours_remaining} hours remaining"
+            else:
+                formatted = f"{days_remaining} days remaining"
+            status = "Waiting for learning period"
+
+        return {
+            "complete": is_complete,
+            "status": status,
+            "days_remaining": days_remaining,
+            "days_elapsed": days_elapsed,
+            "total_days": ml_learning_period_days,
+            "samples_remaining": samples_remaining,
+            "samples_processed": self._samples_processed,
+            "samples_needed": MIN_SAMPLES_FOR_ML,
+            "formatted": formatted,
+            "first_event": self._first_event_at.isoformat(),
+        }
+
     def _get_entity_index(self, entity_id: str) -> int:
         """Get or create a numeric index for an entity."""
         if entity_id not in self._entity_indices:
