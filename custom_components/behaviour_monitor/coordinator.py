@@ -34,7 +34,7 @@ from .const import (
     STORAGE_VERSION,
     UPDATE_INTERVAL,
 )
-from .ml_analyzer import MLAnomalyResult, MLPatternAnalyzer, StateChangeEvent
+from .ml_analyzer import ML_AVAILABLE, MLAnomalyResult, MLPatternAnalyzer, StateChangeEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,8 +73,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             learning_period_days=learning_period,
         )
 
-        # ML configuration
-        self._enable_ml = entry.data.get(CONF_ENABLE_ML, DEFAULT_ENABLE_ML)
+        # ML configuration - only enable if dependencies are available
+        ml_requested = entry.data.get(CONF_ENABLE_ML, DEFAULT_ENABLE_ML)
+        self._enable_ml = ml_requested and ML_AVAILABLE
+        if ml_requested and not ML_AVAILABLE:
+            _LOGGER.warning(
+                "ML features requested but scikit-learn is not installed. "
+                "ML features will be disabled. Install with: pip install scikit-learn numpy"
+            )
+
         self._retrain_period_days = int(entry.data.get(CONF_RETRAIN_PERIOD, DEFAULT_RETRAIN_PERIOD))
         self._cross_sensor_window = int(entry.data.get(CONF_CROSS_SENSOR_WINDOW, DEFAULT_CROSS_SENSOR_WINDOW))
 

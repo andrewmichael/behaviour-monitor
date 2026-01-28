@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-import numpy as np
-from sklearn.ensemble import IsolationForest
-
 from .const import MIN_SAMPLES_FOR_ML
 
 _LOGGER = logging.getLogger(__name__)
+
+# Try to import ML dependencies - they may not be available
+try:
+    import numpy as np
+    from sklearn.ensemble import IsolationForest
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    np = None  # type: ignore
+    IsolationForest = None  # type: ignore
+    _LOGGER.warning(
+        "scikit-learn not available. ML features will be disabled. "
+        "Install with: pip install scikit-learn numpy"
+    )
 
 
 @dataclass
@@ -59,6 +69,8 @@ class CrossSensorPattern:
     @property
     def correlation_strength(self) -> float:
         """Calculate correlation strength (0-1)."""
+        import math
+
         if self.co_occurrence_count == 0:
             return 0.0
         # Higher count and consistent ordering = stronger correlation
@@ -67,7 +79,7 @@ class CrossSensorPattern:
             return 0.0
         consistency = max(self.a_before_b_count, self.b_before_a_count) / total
         # Scale by log of count to not over-weight high frequency
-        count_factor = min(1.0, np.log1p(self.co_occurrence_count) / 5.0)
+        count_factor = min(1.0, math.log1p(self.co_occurrence_count) / 5.0)
         return consistency * count_factor
 
     def to_dict(self) -> dict[str, Any]:
@@ -119,16 +131,21 @@ class MLPatternAnalyzer:
         self._contamination = contamination
         self._cross_sensor_window = timedelta(seconds=cross_sensor_window_seconds)
         self._events: list[StateChangeEvent] = []
-        self._model: IsolationForest | None = None
+        self._model: Any = None  # IsolationForest when ML is available
         self._last_trained: datetime | None = None
         self._cross_sensor_patterns: dict[tuple[str, str], CrossSensorPattern] = {}
         self._entity_last_change: dict[str, datetime] = {}
         self._recent_events_window: list[StateChangeEvent] = []
 
     @property
+    def ml_available(self) -> bool:
+        """Check if ML dependencies are available."""
+        return ML_AVAILABLE
+
+    @property
     def is_trained(self) -> bool:
         """Check if the model has been trained."""
-        return self._model is not None
+        return ML_AVAILABLE and self._model is not None
 
     @property
     def last_trained(self) -> datetime | None:
@@ -210,8 +227,11 @@ class MLPatternAnalyzer:
         # Add to recent window
         self._recent_events_window.append(new_event)
 
-    def _extract_features(self, event: StateChangeEvent) -> np.ndarray:
+    def _extract_features(self, event: StateChangeEvent) -> Any:
         """Extract features from a state change event for ML model."""
+        if not ML_AVAILABLE:
+            return None
+
         ts = event.timestamp
 
         # Time-based features
@@ -254,6 +274,10 @@ class MLPatternAnalyzer:
 
     def train(self) -> bool:
         """Train the Isolation Forest model on collected data."""
+        if not ML_AVAILABLE:
+            _LOGGER.debug("ML not available - scikit-learn not installed")
+            return False
+
         if len(self._events) < MIN_SAMPLES_FOR_ML:
             _LOGGER.debug(
                 "Not enough samples for ML training: %d < %d",
@@ -296,7 +320,11 @@ class MLPatternAnalyzer:
         if not self.is_trained:
             return None
 
-        features = self._extract_features(event).reshape(1, -1)
+        features = self._extract_features(event)
+        if features is None:
+            return None
+
+        features = features.reshape(1, -1)
         prediction = self._model.predict(features)[0]
         score = self._model.decision_function(features)[0]
 
