@@ -77,10 +77,21 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ML configuration - only enable if dependencies are available
         ml_requested = entry.data.get(CONF_ENABLE_ML, DEFAULT_ENABLE_ML)
         self._enable_ml = ml_requested and ML_AVAILABLE
-        if ml_requested and not ML_AVAILABLE:
+
+        # Log ML status clearly
+        if self._enable_ml:
+            _LOGGER.info(
+                "Behaviour Monitor: ML features ENABLED (scikit-learn available)"
+            )
+        elif ml_requested and not ML_AVAILABLE:
             _LOGGER.warning(
-                "ML features requested but scikit-learn is not installed. "
-                "ML features will be disabled. Install with: pip install scikit-learn numpy"
+                "Behaviour Monitor: ML features DISABLED - scikit-learn not installed. "
+                "Statistical analysis will still work. "
+                "To enable ML, install: pip install scikit-learn numpy"
+            )
+        else:
+            _LOGGER.info(
+                "Behaviour Monitor: ML features DISABLED (not requested in config)"
             )
 
         self._retrain_period_days = int(entry.data.get(CONF_RETRAIN_PERIOD, DEFAULT_RETRAIN_PERIOD))
@@ -171,6 +182,23 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsubscribe_state_changed = self.hass.bus.async_listen(
             EVENT_STATE_CHANGED, self._handle_state_changed
         )
+
+        # Log startup summary
+        _LOGGER.info(
+            "Behaviour Monitor started: "
+            "monitoring %d entities, "
+            "ML=%s, "
+            "sensitivity=%s, "
+            "learning_period=%d days, "
+            "notifications=%s",
+            len(self._monitored_entities),
+            "ENABLED" if self._enable_ml else "DISABLED",
+            self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY),
+            int(self._entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD)),
+            "ON" if self._enable_notifications else "OFF",
+        )
+        if self._monitored_entities:
+            _LOGGER.info("Monitored entities: %s", ", ".join(sorted(self._monitored_entities)))
 
     async def async_shutdown(self) -> None:
         """Shut down the coordinator."""

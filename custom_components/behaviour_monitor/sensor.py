@@ -21,21 +21,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ANOMALY_DETAILS,
-    ATTR_CONSECUTIVE_LOW_DAYS,
     ATTR_CROSS_SENSOR_PATTERNS,
     ATTR_ENTITY_STATUS,
     ATTR_EXPECTED_BY_NOW,
-    ATTR_LAST_ACTIVITY_CONTEXT,
     ATTR_LAST_RETRAIN,
     ATTR_LEARNING_PROGRESS,
     ATTR_ML_STATUS,
     ATTR_MONITORED_ENTITIES,
-    ATTR_ROUTINE_PROGRESS,
-    ATTR_SEVERITY,
     ATTR_TIME_SINCE_ACTIVITY,
-    ATTR_TREND,
     ATTR_TYPICAL_INTERVAL,
-    ATTR_WELFARE_STATUS,
     DOMAIN,
 )
 from .coordinator import BehaviourMonitorCoordinator
@@ -109,6 +103,25 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         value_fn=lambda data: len(data.get("cross_sensor_patterns", [])),
         extra_attrs_fn=lambda coord, data: {
             ATTR_CROSS_SENSOR_PATTERNS: data.get("cross_sensor_patterns", []),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="ml_status",
+        name="ML Status",
+        icon="mdi:brain",
+        value_fn=lambda data: (
+            "Trained" if data.get("ml_status", {}).get("trained", False)
+            else "Learning" if data.get("ml_status", {}).get("enabled", False)
+            else "Disabled"
+        ),
+        extra_attrs_fn=lambda coord, data: {
+            "enabled": data.get("ml_status", {}).get("enabled", False),
+            "trained": data.get("ml_status", {}).get("trained", False),
+            "sample_count": data.get("ml_status", {}).get("sample_count", 0),
+            "samples_needed": max(0, 100 - data.get("ml_status", {}).get("sample_count", 0)),
+            "last_trained": data.get("ml_status", {}).get("last_trained"),
+            "next_retrain": data.get("ml_status", {}).get("next_retrain"),
+            "scikit_learn_available": coord.ml_analyzer.ml_available if coord else False,
         },
     ),
     # Elder Care Sensors
@@ -207,7 +220,7 @@ class BehaviourMonitorSensor(
             name="Behaviour Monitor",
             manufacturer="Custom Integration",
             model="Pattern Analyzer",
-            sw_version="2.1.0",
+            sw_version="2.1.2",
         )
 
     @property
