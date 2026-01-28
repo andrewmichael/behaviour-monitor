@@ -150,6 +150,7 @@ class MLPatternAnalyzer:
         self._entity_last_change: dict[str, datetime] = {}
         self._recent_events_window: list[StateChangeEvent] = []
         self._entity_indices: dict[str, int] = {}
+        self._first_event_at: datetime | None = None  # When first event was recorded
         self._became_effective_at: datetime | None = None  # When model reached min samples
         self._last_warmup: datetime | None = None  # When train() was last called
 
@@ -165,6 +166,11 @@ class MLPatternAnalyzer:
     def ml_available(self) -> bool:
         """Check if ML dependencies are available."""
         return ML_AVAILABLE
+
+    @property
+    def first_event_time(self) -> datetime | None:
+        """Get the timestamp of the first event recorded."""
+        return self._first_event_at
 
     @property
     def is_trained(self) -> bool:
@@ -216,6 +222,10 @@ class MLPatternAnalyzer:
             new_state=new_state,
         )
         self._events.append(event)
+
+        # Track when first event was recorded
+        if self._first_event_at is None:
+            self._first_event_at = timestamp
 
         # Update cross-sensor correlations
         self._update_cross_sensor_patterns(event)
@@ -524,6 +534,10 @@ class MLPatternAnalyzer:
             "contamination": self._contamination,
             "cross_sensor_window_seconds": self._cross_sensor_window.total_seconds(),
             "entity_indices": self._entity_indices,
+            "first_event_at": (
+                self._first_event_at.isoformat()
+                if self._first_event_at else None
+            ),
             "became_effective_at": (
                 self._became_effective_at.isoformat()
                 if self._became_effective_at else None
@@ -568,6 +582,13 @@ class MLPatternAnalyzer:
         analyzer._samples_processed = data.get("samples_processed", 0)
 
         # Restore timestamps (ensure timezone awareness)
+        first_event = data.get("first_event_at")
+        if first_event:
+            dt = datetime.fromisoformat(first_event)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            analyzer._first_event_at = dt
+
         became_effective = data.get("became_effective_at")
         if became_effective:
             dt = datetime.fromisoformat(became_effective)

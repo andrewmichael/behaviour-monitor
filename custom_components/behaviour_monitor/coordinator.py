@@ -19,6 +19,7 @@ from .const import (
     CONF_ENABLE_ML,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_LEARNING_PERIOD,
+    CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
@@ -27,6 +28,7 @@ from .const import (
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
+    DEFAULT_ML_LEARNING_PERIOD,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -98,6 +100,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
         self._retrain_period_days = int(entry.data.get(CONF_RETRAIN_PERIOD, DEFAULT_RETRAIN_PERIOD))
+        self._ml_learning_period_days = int(entry.data.get(CONF_ML_LEARNING_PERIOD, DEFAULT_ML_LEARNING_PERIOD))
         self._cross_sensor_window = int(entry.data.get(CONF_CROSS_SENSOR_WINDOW, DEFAULT_CROSS_SENSOR_WINDOW))
 
         ml_contamination = ML_CONTAMINATION.get(sensitivity_key, 0.05)
@@ -370,18 +373,38 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Combine anomalies for notifications
         all_anomalies_detected = len(stat_anomalies) > 0 or len(ml_anomalies) > 0
 
+        # Send notifications only after respective learning periods complete
         if self._enable_notifications:
-            for anomaly in stat_anomalies:
-                await self._send_notification(anomaly)
-            for ml_anomaly in ml_anomalies:
-                await self._send_ml_notification(ml_anomaly)
+            # Determine if any learning is complete
+            stat_learning_complete = self._analyzer.is_learning_complete()
 
-            # Check for welfare status change (elder care)
-            welfare_status = self._analyzer.get_welfare_status()
-            current_welfare = welfare_status.get("status", "ok")
-            if current_welfare != self._last_welfare_status:
-                await self._send_welfare_notification(welfare_status)
-                self._last_welfare_status = current_welfare
+            # ML learning requires both sample count AND time elapsed
+            ml_learning_complete = False
+            if self._enable_ml and self._ml_analyzer.is_trained:
+                first_event = self._ml_analyzer.first_event_time
+                if first_event is not None:
+                    ml_learning_elapsed = dt_util.now() - first_event
+                    ml_learning_complete = ml_learning_elapsed >= timedelta(
+                        days=self._ml_learning_period_days
+                    )
+
+            # Statistical anomaly notifications require statistical learning complete
+            if stat_learning_complete:
+                for anomaly in stat_anomalies:
+                    await self._send_notification(anomaly)
+
+            # ML anomaly notifications require ML trained AND learning period elapsed
+            if ml_learning_complete:
+                for ml_anomaly in ml_anomalies:
+                    await self._send_ml_notification(ml_anomaly)
+
+            # Welfare notifications sent when either learning method is ready
+            if stat_learning_complete or ml_learning_complete:
+                welfare_status = self._analyzer.get_welfare_status()
+                current_welfare = welfare_status.get("status", "ok")
+                if current_welfare != self._last_welfare_status:
+                    await self._send_welfare_notification(welfare_status)
+                    self._last_welfare_status = current_welfare
 
         # Periodically save data
         await self._save_data()

@@ -26,6 +26,7 @@ from .const import (
     CONF_ENABLE_ML,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_LEARNING_PERIOD,
+    CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
+    DEFAULT_ML_LEARNING_PERIOD,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -122,6 +124,17 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ENABLE_ML, default=DEFAULT_ENABLE_ML
                 ): BooleanSelector(),
                 vol.Required(
+                    CONF_ML_LEARNING_PERIOD, default=DEFAULT_ML_LEARNING_PERIOD
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=30,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="days",
+                    )
+                ),
+                vol.Required(
                     CONF_RETRAIN_PERIOD, default=DEFAULT_RETRAIN_PERIOD
                 ): NumberSelector(
                     NumberSelectorConfig(
@@ -199,6 +212,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_enable_ml = self._config_entry.data.get(
             CONF_ENABLE_ML, DEFAULT_ENABLE_ML
         )
+        current_ml_learning = self._config_entry.data.get(
+            CONF_ML_LEARNING_PERIOD, DEFAULT_ML_LEARNING_PERIOD
+        )
         current_retrain = self._config_entry.data.get(
             CONF_RETRAIN_PERIOD, DEFAULT_RETRAIN_PERIOD
         )
@@ -243,6 +259,17 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_ENABLE_ML, default=current_enable_ml
                 ): BooleanSelector(),
+                vol.Required(
+                    CONF_ML_LEARNING_PERIOD, default=current_ml_learning
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=30,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="days",
+                    )
+                ),
                 vol.Required(
                     CONF_RETRAIN_PERIOD, default=current_retrain
                 ): NumberSelector(

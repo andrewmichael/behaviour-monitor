@@ -10,6 +10,7 @@
           "learning_period": "Statistical learning period",
           "enable_notifications": "Enable anomaly notifications",
           "enable_ml": "Enable machine learning",
+          "ml_learning_period": "ML learning period",
           "retrain_period": "ML retrain period",
           "cross_sensor_window": "Cross-sensor correlation window",
           "track_attributes": "Track attribute changes"
@@ -19,7 +20,8 @@
           "sensitivity": "Higher sensitivity detects smaller deviations. Low = 3σ (extreme only), Medium = 2σ, High = 1σ (any deviation).",
           "learning_period": "Number of days to collect data before statistical anomaly detection activates.",
           "enable_notifications": "Send persistent notifications when anomalies are detected.",
-          "enable_ml": "Enable Isolation Forest ML for advanced pattern detection and cross-sensor correlation analysis.",
+          "enable_ml": "Enable Half-Space Trees ML for advanced pattern detection and cross-sensor correlation analysis.",
+          "ml_learning_period": "Minimum days before ML anomaly notifications are sent.",
           "retrain_period": "How often to retrain the ML model with new data.",
           "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors.",
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state."
@@ -44,6 +46,7 @@
           "learning_period": "Statistical learning period",
           "enable_notifications": "Enable anomaly notifications",
           "enable_ml": "Enable machine learning",
+          "ml_learning_period": "ML learning period",
           "retrain_period": "ML retrain period",
           "cross_sensor_window": "Cross-sensor correlation window",
           "track_attributes": "Track attribute changes"
