@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
@@ -162,7 +162,7 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         return BehaviourMonitorOptionsFlow(config_entry)
 
 
-class BehaviourMonitorOptionsFlow(ConfigFlow):
+class BehaviourMonitorOptionsFlow(OptionsFlow):
     """Handle options flow for Behaviour Monitor."""
 
     def __init__(self, config_entry) -> None:
@@ -179,7 +179,12 @@ class BehaviourMonitorOptionsFlow(ConfigFlow):
             if not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                # Update the config entry data (not just options)
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry,
+                    data=user_input,
+                )
+                return self.async_create_entry(title="", data={})
 
         current_entities = self._config_entry.data.get(CONF_MONITORED_ENTITIES, [])
         current_sensitivity = self._config_entry.data.get(

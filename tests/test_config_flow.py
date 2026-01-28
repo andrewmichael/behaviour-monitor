@@ -129,6 +129,8 @@ class TestBehaviourMonitorOptionsFlow:
         """Create an options flow instance."""
         flow = BehaviourMonitorOptionsFlow(mock_config_entry)
         flow.hass = MagicMock()
+        flow.hass.config_entries = MagicMock()
+        flow.hass.config_entries.async_update_entry = MagicMock()
         return flow
 
     @pytest.mark.asyncio
@@ -164,9 +166,9 @@ class TestBehaviourMonitorOptionsFlow:
 
     @pytest.mark.asyncio
     async def test_step_init_valid_input(
-        self, options_flow: BehaviourMonitorOptionsFlow
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
     ) -> None:
-        """Test init step with valid input creates entry."""
+        """Test init step with valid input updates config entry."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
             CONF_SENSITIVITY: "high",
@@ -180,7 +182,8 @@ class TestBehaviourMonitorOptionsFlow:
         result = await options_flow.async_step_init(user_input=user_input)
 
         assert result["type"] == "create_entry"
-        assert result["data"] == user_input
+        # Data is now stored in config entry, not returned in result
+        assert result["data"] == {}
 
     @pytest.mark.asyncio
     async def test_step_init_preserves_defaults(
