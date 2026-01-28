@@ -356,3 +356,139 @@ class TestAnomalyDetection:
         # Note: Detection depends on having variance in baseline
         # This test verifies the mechanism works
         assert isinstance(anomalies, list)
+
+
+class TestElderCareFunctions:
+    """Tests for elder care monitoring functions."""
+
+    def test_get_typical_interval_no_data(self) -> None:
+        """Test typical interval with no data returns 0."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        assert analyzer.get_typical_interval() == 0.0
+
+    def test_get_typical_interval_with_data(self) -> None:
+        """Test typical interval calculation with data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+
+        # Record multiple activities throughout the day
+        now = datetime.now()
+        for i in range(10):
+            ts = now - timedelta(hours=i)
+            analyzer.record_state_change("sensor.motion", ts)
+
+        interval = analyzer.get_typical_interval()
+        # Should return some positive value based on recorded patterns
+        assert interval >= 0
+
+    def test_get_time_since_activity_context_no_data(self) -> None:
+        """Test time since activity context with no data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        context = analyzer.get_time_since_activity_context()
+
+        assert context["time_since_seconds"] is None
+        assert context["status"] == "unknown"
+
+    def test_get_time_since_activity_context_with_data(self) -> None:
+        """Test time since activity context with recent data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+
+        # Record recent activity
+        now = datetime.now()
+        analyzer.record_state_change("sensor.motion", now - timedelta(minutes=5))
+
+        context = analyzer.get_time_since_activity_context()
+
+        assert context["time_since_seconds"] is not None
+        assert context["time_since_seconds"] > 0
+        assert "time_since_formatted" in context
+        assert context["status"] in ["normal", "check_recommended", "concern", "alert", "unknown"]
+
+    def test_get_routine_progress_no_data(self) -> None:
+        """Test routine progress with no data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        progress = analyzer.get_routine_progress()
+
+        assert "progress_percent" in progress
+        assert "expected_by_now" in progress
+        assert "actual_today" in progress
+        assert progress["actual_today"] == 0
+
+    def test_get_routine_progress_with_data(self) -> None:
+        """Test routine progress with activity today."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+
+        # Record some activity today
+        now = datetime.now()
+        for i in range(5):
+            analyzer.record_state_change("sensor.motion", now - timedelta(minutes=i*10))
+
+        progress = analyzer.get_routine_progress()
+
+        assert progress["actual_today"] == 5
+        assert "summary" in progress
+        assert progress["status"] in ["on_track", "below_normal", "concerning", "alert"]
+
+    def test_get_entity_status_no_data(self) -> None:
+        """Test entity status with no data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        status = analyzer.get_entity_status()
+
+        assert isinstance(status, list)
+        assert len(status) == 0
+
+    def test_get_entity_status_with_data(self) -> None:
+        """Test entity status with monitored entities."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+
+        now = datetime.now()
+        analyzer.record_state_change("sensor.motion", now)
+        analyzer.record_state_change("sensor.door", now - timedelta(hours=2))
+
+        status = analyzer.get_entity_status()
+
+        assert len(status) == 2
+        assert all("entity_id" in s for s in status)
+        assert all("status" in s for s in status)
+        assert all("severity" in s for s in status)
+        assert all("time_since_activity" in s for s in status)
+
+    def test_get_welfare_status_no_data(self) -> None:
+        """Test welfare status with no data."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        welfare = analyzer.get_welfare_status()
+
+        assert "status" in welfare
+        assert "reasons" in welfare
+        assert "recommendation" in welfare
+
+    def test_get_welfare_status_with_data(self) -> None:
+        """Test welfare status with recent activity."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+
+        now = datetime.now()
+        analyzer.record_state_change("sensor.motion", now)
+
+        welfare = analyzer.get_welfare_status()
+
+        assert welfare["status"] in ["ok", "check_recommended", "concern", "alert"]
+        assert isinstance(welfare["reasons"], list)
+        assert "entity_count_by_status" in welfare
+
+    def test_severity_calculation(self) -> None:
+        """Test severity is calculated correctly for anomalies."""
+        from custom_components.behaviour_monitor.analyzer import _get_severity
+
+        assert _get_severity(0.5) == "normal"
+        assert _get_severity(1.8) == "minor"
+        assert _get_severity(2.8) == "moderate"
+        assert _get_severity(4.0) == "significant"
+        assert _get_severity(5.0) == "critical"
+
+    def test_format_duration(self) -> None:
+        """Test duration formatting."""
+        from custom_components.behaviour_monitor.analyzer import _format_duration
+
+        assert "seconds" in _format_duration(30)
+        assert "minute" in _format_duration(120)
+        assert "hours" in _format_duration(7200)
+        assert "days" in _format_duration(172800)

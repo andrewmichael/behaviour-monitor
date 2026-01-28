@@ -21,11 +21,21 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ANOMALY_DETAILS,
+    ATTR_CONSECUTIVE_LOW_DAYS,
     ATTR_CROSS_SENSOR_PATTERNS,
+    ATTR_ENTITY_STATUS,
+    ATTR_EXPECTED_BY_NOW,
+    ATTR_LAST_ACTIVITY_CONTEXT,
     ATTR_LAST_RETRAIN,
     ATTR_LEARNING_PROGRESS,
     ATTR_ML_STATUS,
     ATTR_MONITORED_ENTITIES,
+    ATTR_ROUTINE_PROGRESS,
+    ATTR_SEVERITY,
+    ATTR_TIME_SINCE_ACTIVITY,
+    ATTR_TREND,
+    ATTR_TYPICAL_INTERVAL,
+    ATTR_WELFARE_STATUS,
     DOMAIN,
 )
 from .coordinator import BehaviourMonitorCoordinator
@@ -101,6 +111,60 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             ATTR_CROSS_SENSOR_PATTERNS: data.get("cross_sensor_patterns", []),
         },
     ),
+    # Elder Care Sensors
+    BehaviourMonitorSensorDescription(
+        key="welfare_status",
+        name="Welfare Status",
+        icon="mdi:heart-pulse",
+        value_fn=lambda data: data.get("welfare", {}).get("status", "unknown"),
+        extra_attrs_fn=lambda coord, data: {
+            "reasons": data.get("welfare", {}).get("reasons", []),
+            "summary": data.get("welfare", {}).get("summary", ""),
+            "recommendation": data.get("welfare", {}).get("recommendation", ""),
+            "entity_count_by_status": data.get("welfare", {}).get("entity_count_by_status", {}),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="routine_progress",
+        name="Routine Progress",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:progress-check",
+        value_fn=lambda data: data.get("routine", {}).get("progress_percent", 0),
+        extra_attrs_fn=lambda coord, data: {
+            ATTR_EXPECTED_BY_NOW: data.get("routine", {}).get("expected_by_now", 0),
+            "actual_today": data.get("routine", {}).get("actual_today", 0),
+            "expected_full_day": data.get("routine", {}).get("expected_full_day", 0),
+            "status": data.get("routine", {}).get("status", "unknown"),
+            "summary": data.get("routine", {}).get("summary", ""),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="time_since_activity",
+        name="Time Since Activity",
+        icon="mdi:clock-alert-outline",
+        value_fn=lambda data: data.get("activity_context", {}).get("time_since_formatted", "Unknown"),
+        extra_attrs_fn=lambda coord, data: {
+            ATTR_TIME_SINCE_ACTIVITY: data.get("activity_context", {}).get("time_since_seconds"),
+            ATTR_TYPICAL_INTERVAL: data.get("activity_context", {}).get("typical_interval_seconds"),
+            "typical_interval_formatted": data.get("activity_context", {}).get("typical_interval_formatted", ""),
+            "concern_level": data.get("activity_context", {}).get("concern_level", 0),
+            "status": data.get("activity_context", {}).get("status", "unknown"),
+            "context": data.get("activity_context", {}).get("context", ""),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="entity_status_summary",
+        name="Entity Status Summary",
+        icon="mdi:format-list-checks",
+        value_fn=lambda data: (
+            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('normal', 0)} OK, "
+            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('attention', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('concern', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('alert', 0)} Need Attention"
+        ),
+        extra_attrs_fn=lambda coord, data: {
+            ATTR_ENTITY_STATUS: data.get("entity_status", []),
+        },
+    ),
 )
 
 
@@ -143,7 +207,7 @@ class BehaviourMonitorSensor(
             name="Behaviour Monitor",
             manufacturer="Custom Integration",
             model="Pattern Analyzer",
-            sw_version="2.0.0",
+            sw_version="2.1.0",
         )
 
     @property

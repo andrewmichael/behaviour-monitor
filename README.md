@@ -1,6 +1,6 @@
 # Behaviour Monitor
 
-A Home Assistant custom integration that learns entity state patterns and detects anomalies using statistical analysis and optional machine learning.
+A Home Assistant custom integration that learns entity state patterns and detects anomalies using statistical analysis and optional machine learning. Ideal for **elder care monitoring**, security, and detecting unusual activity patterns.
 
 ## Features
 
@@ -8,8 +8,38 @@ A Home Assistant custom integration that learns entity state patterns and detect
 - **Machine Learning** (optional): Isolation Forest for multivariate anomaly detection
 - **Cross-Sensor Correlation**: Learns relationships between sensors (e.g., "motion sensor usually triggers before light turns on")
 - **Hybrid Detection**: Combines Z-score statistics with ML for comprehensive anomaly detection
-- **Notifications**: Sends persistent notifications for unusual activity patterns
+- **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
+- **Notifications**: Sends persistent notifications with severity levels for unusual activity patterns
 - **HACS Compatible**: Install via HACS for easy updates
+
+## Elder Care Use Case
+
+This integration is designed for monitoring the wellbeing of elderly family members by learning their daily patterns and alerting when something is out of character:
+
+**What it monitors:**
+- Motion sensor activity (movement around the home)
+- Door/window sensors (exits, entries, room changes)
+- Light switches (daily routine indicators)
+- Appliance usage (kettle, TV, etc.)
+
+**What it detects:**
+- No morning activity when there usually is
+- Significantly reduced activity compared to normal
+- Missing expected routines (e.g., kitchen not used by usual breakfast time)
+- Unusual activity patterns (awake at unusual hours)
+
+**Severity levels:**
+| Level | Meaning | Recommended Action |
+|-------|---------|-------------------|
+| `ok` | Activity patterns are normal | No action needed |
+| `check_recommended` | Slight deviation from normal | Consider checking in |
+| `concern` | Notable deviation from patterns | Welfare check recommended soon |
+| `alert` | Significant anomaly detected | Immediate welfare check recommended |
+
+**Example notifications:**
+- "🚨 No activity for 4 hours (usually active every 45 minutes)"
+- "⚠️ Daily routine only 20% complete by 10am (usually 80%)"
+- "ℹ️ Motion sensor showing unusual inactivity for Tuesday 09:15"
 
 ## Installation
 
@@ -74,6 +104,8 @@ If scikit-learn is not installed, the integration will log a warning and automat
 
 The integration creates the following sensors:
 
+### Core Sensors
+
 | Sensor | Description |
 |--------|-------------|
 | `sensor.behaviour_monitor_last_activity` | Timestamp of the most recent detected state change |
@@ -83,10 +115,46 @@ The integration creates the following sensors:
 | `sensor.behaviour_monitor_daily_activity_count` | Total state changes recorded today |
 | `sensor.behaviour_monitor_cross_sensor_patterns` | Number of detected cross-sensor correlations |
 
+### Elder Care Sensors
+
+| Sensor | Description |
+|--------|-------------|
+| `sensor.behaviour_monitor_welfare_status` | Overall welfare status: `ok`, `check_recommended`, `concern`, or `alert` |
+| `sensor.behaviour_monitor_routine_progress` | Daily routine completion percentage (0-100%) |
+| `sensor.behaviour_monitor_time_since_activity` | Human-readable time since last activity with context |
+| `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention") |
+
 ### Sensor Attributes
 
+**Welfare Status** sensor includes:
+- `reasons`: List of reasons for current status
+- `summary`: Brief description of welfare state
+- `recommendation`: Suggested action (e.g., "Immediate welfare check recommended")
+- `entity_count_by_status`: Breakdown of entities by alert level
+
+**Routine Progress** sensor includes:
+- `expected_by_now`: Expected activity count by current time
+- `actual_today`: Actual activity count today
+- `expected_full_day`: Total expected activities for the day
+- `status`: `on_track`, `below_normal`, `concerning`, or `alert`
+- `summary`: Human-readable progress description
+
+**Time Since Activity** sensor includes:
+- `time_since_activity`: Seconds since last activity
+- `typical_interval`: Expected interval between activities (seconds)
+- `typical_interval_formatted`: Human-readable typical interval
+- `concern_level`: Ratio of actual to typical interval (>2.0 is concerning)
+- `context`: Full context string (e.g., "Last activity 4 hours ago (usually every 45 minutes)")
+
+**Entity Status Summary** sensor includes:
+- `entity_status`: Detailed list of each monitored entity with:
+  - Status (`normal`, `attention`, `concern`, `alert`)
+  - Severity (`normal`, `minor`, `moderate`, `significant`, `critical`)
+  - Time since last activity
+  - Z-score deviation from expected
+
 **Anomaly Detected** sensor includes:
-- `anomaly_details`: List of current anomalies with entity, type, and description
+- `anomaly_details`: List of current anomalies with entity, type, severity, and description
 
 **Baseline Confidence** sensor includes:
 - `learning_progress`: "learning" or "complete"

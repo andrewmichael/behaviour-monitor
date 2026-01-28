@@ -62,6 +62,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._recent_anomalies: list[AnomalyResult] = []
         self._recent_ml_anomalies: list[MLAnomalyResult] = []
         self._recent_events: list[StateChangeEvent] = []
+        self._last_welfare_status: str | None = None
 
         # Get configuration
         sensitivity_key = entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY)
@@ -305,6 +306,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for ml_anomaly in ml_anomalies:
                 await self._send_ml_notification(ml_anomaly)
 
+            # Check for welfare status change (elder care)
+            welfare_status = self._analyzer.get_welfare_status()
+            current_welfare = welfare_status.get("status", "ok")
+            if current_welfare != self._last_welfare_status:
+                await self._send_welfare_notification(welfare_status)
+                self._last_welfare_status = current_welfare
+
         # Periodically save data
         await self._save_data()
 
@@ -315,6 +323,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         cross_patterns = []
         if self._enable_ml:
             cross_patterns = self._ml_analyzer.get_strong_patterns(min_strength=0.3)
+
+        # Get elder care data
+        welfare_status = self._analyzer.get_welfare_status()
+        routine_progress = self._analyzer.get_routine_progress()
+        activity_context = self._analyzer.get_time_since_activity_context()
+        entity_status = self._analyzer.get_entity_status()
 
         return {
             "last_activity": last_activity.isoformat() if last_activity else None,
@@ -327,6 +341,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "entity_id": a.entity_id,
                     "type": a.anomaly_type,
                     "description": a.description,
+                    "severity": a.severity,
+                    "z_score": round(a.z_score, 2),
                     "source": "statistical",
                 }
                 for a in stat_anomalies
@@ -355,19 +371,33 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ),
             },
             "cross_sensor_patterns": cross_patterns,
+            # Elder care data
+            "welfare": welfare_status,
+            "routine": routine_progress,
+            "activity_context": activity_context,
+            "entity_status": entity_status,
         }
 
     async def _send_notification(self, anomaly: AnomalyResult) -> None:
         """Send a persistent notification for a statistical anomaly."""
         notification_id = f"{DOMAIN}_{anomaly.entity_id}_{anomaly.anomaly_type}"
 
-        title = "Behaviour Monitor Alert"
+        severity_emoji = {
+            "critical": "🚨",
+            "significant": "⚠️",
+            "moderate": "⚡",
+            "minor": "ℹ️",
+            "normal": "",
+        }.get(anomaly.severity, "")
+
+        title = f"{severity_emoji} Behaviour Monitor Alert"
         if anomaly.anomaly_type == "unusual_activity":
-            title = "Unusual Activity Detected"
+            title = f"{severity_emoji} Unusual Activity Detected"
         elif anomaly.anomaly_type == "unusual_inactivity":
-            title = "Unusual Inactivity Detected"
+            title = f"{severity_emoji} Unusual Inactivity Detected"
 
         message = (
+            f"**Severity:** {anomaly.severity.upper()}\n\n"
             f"**Entity:** `{anomaly.entity_id}`\n\n"
             f"**Time Slot:** {anomaly.time_slot}\n\n"
             f"**Details:** {anomaly.description}\n\n"
@@ -387,7 +417,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         )
 
-        _LOGGER.info("Sent notification for anomaly: %s", anomaly.description)
+        _LOGGER.info("Sent notification for anomaly: %s (severity: %s)", anomaly.description, anomaly.severity)
 
     async def _send_ml_notification(self, anomaly: MLAnomalyResult) -> None:
         """Send a persistent notification for an ML-detected anomaly."""
@@ -426,3 +456,47 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         _LOGGER.info("Sent ML notification for anomaly: %s", anomaly.description)
+
+    async def _send_welfare_notification(self, welfare_status: dict[str, Any]) -> None:
+        """Send a notification for welfare status changes."""
+        from .const import WELFARE_ALERT, WELFARE_CONCERN
+
+        status = welfare_status.get("status", "ok")
+        if status not in [WELFARE_ALERT, WELFARE_CONCERN]:
+            return
+
+        notification_id = f"{DOMAIN}_welfare_{status}"
+
+        emoji = "🚨" if status == WELFARE_ALERT else "⚠️"
+        title = f"{emoji} Elder Care Welfare {status.replace('_', ' ').title()}"
+
+        reasons = welfare_status.get("reasons", [])
+        reasons_text = "\n".join(f"- {r}" for r in reasons)
+
+        routine = welfare_status.get("routine_progress", {})
+        activity = welfare_status.get("time_since_activity", {})
+
+        message = (
+            f"**Status:** {status.upper()}\n\n"
+            f"**Summary:** {welfare_status.get('summary', 'Unknown')}\n\n"
+            f"**Reasons:**\n{reasons_text}\n\n"
+            f"**Recommendation:** {welfare_status.get('recommendation', '')}\n\n"
+            f"---\n\n"
+            f"**Routine Progress:** {routine.get('progress_percent', 0):.0f}% "
+            f"({routine.get('actual_today', 0)} of ~{routine.get('expected_by_now', 0):.0f} expected)\n\n"
+            f"**Last Activity:** {activity.get('time_since_formatted', 'Unknown')} "
+            f"(usually every {activity.get('typical_interval_formatted', 'Unknown')})\n\n"
+            f"**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": title,
+                "message": message,
+                "notification_id": notification_id,
+            },
+        )
+
+        _LOGGER.info("Sent welfare notification: %s - %s", status, welfare_status.get("summary", ""))

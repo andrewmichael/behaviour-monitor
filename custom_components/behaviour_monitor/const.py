@@ -57,3 +57,36 @@ ATTR_ANOMALY_DETAILS: Final = "anomaly_details"
 ATTR_ML_STATUS: Final = "ml_status"
 ATTR_CROSS_SENSOR_PATTERNS: Final = "cross_sensor_patterns"
 ATTR_LAST_RETRAIN: Final = "last_retrain"
+
+# Elder care severity levels (based on Z-score)
+SEVERITY_NORMAL: Final = "normal"
+SEVERITY_MINOR: Final = "minor"
+SEVERITY_MODERATE: Final = "moderate"
+SEVERITY_SIGNIFICANT: Final = "significant"
+SEVERITY_CRITICAL: Final = "critical"
+
+SEVERITY_THRESHOLDS: Final = {
+    SEVERITY_MINOR: 1.5,       # 1.5σ
+    SEVERITY_MODERATE: 2.5,    # 2.5σ
+    SEVERITY_SIGNIFICANT: 3.5, # 3.5σ
+    SEVERITY_CRITICAL: 4.5,    # 4.5σ
+}
+
+# Elder care attributes
+ATTR_SEVERITY: Final = "severity"
+ATTR_TIME_SINCE_ACTIVITY: Final = "time_since_activity"
+ATTR_TYPICAL_INTERVAL: Final = "typical_interval"
+ATTR_ROUTINE_PROGRESS: Final = "routine_progress"
+ATTR_EXPECTED_BY_NOW: Final = "expected_by_now"
+ATTR_ACTUAL_TODAY: Final = "actual_today"
+ATTR_TREND: Final = "trend"
+ATTR_CONSECUTIVE_LOW_DAYS: Final = "consecutive_low_days"
+ATTR_ENTITY_STATUS: Final = "entity_status"
+ATTR_LAST_ACTIVITY_CONTEXT: Final = "last_activity_context"
+ATTR_WELFARE_STATUS: Final = "welfare_status"
+
+# Welfare status levels
+WELFARE_OK: Final = "ok"
+WELFARE_CHECK: Final = "check_recommended"
+WELFARE_CONCERN: Final = "concern"
+WELFARE_ALERT: Final = "alert"

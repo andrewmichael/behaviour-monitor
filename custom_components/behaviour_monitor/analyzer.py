@@ -173,6 +173,43 @@ class EntityPattern:
         return pattern
 
 
+def _get_severity(z_score: float) -> str:
+    """Get severity level based on Z-score."""
+    from .const import (
+        SEVERITY_CRITICAL,
+        SEVERITY_MINOR,
+        SEVERITY_MODERATE,
+        SEVERITY_NORMAL,
+        SEVERITY_SIGNIFICANT,
+        SEVERITY_THRESHOLDS,
+    )
+
+    if z_score >= SEVERITY_THRESHOLDS[SEVERITY_CRITICAL]:
+        return SEVERITY_CRITICAL
+    elif z_score >= SEVERITY_THRESHOLDS[SEVERITY_SIGNIFICANT]:
+        return SEVERITY_SIGNIFICANT
+    elif z_score >= SEVERITY_THRESHOLDS[SEVERITY_MODERATE]:
+        return SEVERITY_MODERATE
+    elif z_score >= SEVERITY_THRESHOLDS[SEVERITY_MINOR]:
+        return SEVERITY_MINOR
+    return SEVERITY_NORMAL
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration."""
+    if seconds < 60:
+        return f"{int(seconds)} seconds"
+    elif seconds < 3600:
+        mins = int(seconds / 60)
+        return f"{mins} minute{'s' if mins != 1 else ''}"
+    elif seconds < 86400:
+        hours = seconds / 3600
+        return f"{hours:.1f} hours"
+    else:
+        days = seconds / 86400
+        return f"{days:.1f} days"
+
+
 @dataclass
 class AnomalyResult:
     """Result of anomaly detection."""
@@ -187,6 +224,7 @@ class AnomalyResult:
     timestamp: datetime
     time_slot: str  # e.g., "monday 09:15"
     description: str
+    severity: str = "normal"  # normal, minor, moderate, significant, critical
 
 
 class PatternAnalyzer:
@@ -381,6 +419,7 @@ class PatternAnalyzer:
                         timestamp=now,
                         time_slot=time_slot,
                         description=description,
+                        severity=_get_severity(z_score),
                     )
                 )
 
@@ -394,6 +433,256 @@ class PatternAnalyzer:
                 if last_time is None or pattern.last_observation > last_time:
                     last_time = pattern.last_observation
         return last_time
+
+    def get_typical_interval(self, entity_id: str | None = None) -> float:
+        """Get typical interval between activities in seconds.
+
+        If entity_id is None, calculates across all entities.
+        Returns average time between state changes based on learned patterns.
+        """
+        now = datetime.now()
+        day_of_week = now.weekday()
+
+        if entity_id:
+            patterns = [self._patterns.get(entity_id)] if entity_id in self._patterns else []
+        else:
+            patterns = list(self._patterns.values())
+
+        if not patterns:
+            return 0.0
+
+        total_rate = 0.0
+        for pattern in patterns:
+            if pattern is None:
+                continue
+            # Sum expected activity across all intervals today
+            daily_expected = sum(
+                bucket.mean for bucket in pattern.day_buckets[day_of_week]
+            )
+            if daily_expected > 0:
+                # Typical interval = seconds in day / expected activities
+                total_rate += daily_expected
+
+        if total_rate == 0:
+            return 0.0
+
+        # Return typical interval in seconds
+        return 86400 / total_rate
+
+    def get_time_since_activity_context(self) -> dict[str, Any]:
+        """Get time since last activity with context for elder care."""
+        last_activity = self.get_last_activity_time()
+        if last_activity is None:
+            return {
+                "time_since_seconds": None,
+                "time_since_formatted": "No activity recorded",
+                "typical_interval_seconds": 0,
+                "typical_interval_formatted": "Unknown",
+                "status": "unknown",
+                "concern_level": 0.0,
+            }
+
+        now = datetime.now()
+        time_since = (now - last_activity).total_seconds()
+        typical_interval = self.get_typical_interval()
+
+        # Calculate concern level (0.0 to 1.0+)
+        if typical_interval > 0:
+            concern_level = time_since / typical_interval
+        else:
+            concern_level = 0.0
+
+        # Determine status
+        if concern_level < 1.5:
+            status = "normal"
+        elif concern_level < 2.5:
+            status = "check_recommended"
+        elif concern_level < 4.0:
+            status = "concern"
+        else:
+            status = "alert"
+
+        return {
+            "time_since_seconds": time_since,
+            "time_since_formatted": _format_duration(time_since),
+            "typical_interval_seconds": typical_interval,
+            "typical_interval_formatted": _format_duration(typical_interval) if typical_interval > 0 else "Unknown",
+            "status": status,
+            "concern_level": round(concern_level, 2),
+            "context": (
+                f"Last activity {_format_duration(time_since)} ago "
+                f"(usually every {_format_duration(typical_interval)})"
+                if typical_interval > 0
+                else f"Last activity {_format_duration(time_since)} ago"
+            ),
+        }
+
+    def get_routine_progress(self) -> dict[str, Any]:
+        """Calculate routine progress for today.
+
+        Returns expected vs actual activity counts up to current time.
+        """
+        now = datetime.now()
+        day_of_week = now.weekday()
+        current_interval = _get_interval_index(now)
+
+        expected_total = 0.0
+        actual_total = 0
+
+        for entity_id, pattern in self._patterns.items():
+            # Sum expected activity from midnight to current interval
+            for interval in range(current_interval + 1):
+                bucket = pattern.day_buckets[day_of_week][interval]
+                expected_total += bucket.mean
+
+            # Get actual count for today
+            actual_total += self.get_daily_count(entity_id)
+
+        # Calculate progress percentage
+        if expected_total > 0:
+            progress = min(100.0, (actual_total / expected_total) * 100)
+        else:
+            progress = 100.0 if actual_total == 0 else 100.0
+
+        # Calculate expected for full day
+        expected_full_day = 0.0
+        for pattern in self._patterns.values():
+            for bucket in pattern.day_buckets[day_of_week]:
+                expected_full_day += bucket.mean
+
+        return {
+            "progress_percent": round(progress, 1),
+            "expected_by_now": round(expected_total, 1),
+            "actual_today": actual_total,
+            "expected_full_day": round(expected_full_day, 1),
+            "time_of_day": _interval_to_time_str(current_interval),
+            "day_name": DAY_NAMES[day_of_week],
+            "status": (
+                "on_track" if progress >= 70
+                else "below_normal" if progress >= 40
+                else "concerning" if progress >= 20
+                else "alert"
+            ),
+            "summary": (
+                f"{actual_total} of ~{expected_total:.0f} expected activities "
+                f"by {_interval_to_time_str(current_interval)} ({progress:.0f}%)"
+            ),
+        }
+
+    def get_entity_status(self) -> list[dict[str, Any]]:
+        """Get status for each monitored entity for elder care dashboard."""
+        now = datetime.now()
+        entity_statuses = []
+
+        for entity_id, pattern in self._patterns.items():
+            expected_mean, expected_std = pattern.get_expected_activity(now)
+            actual = self._current_interval_activity.get(entity_id, 0)
+            daily_count = self.get_daily_count(entity_id)
+
+            # Calculate Z-score
+            if expected_std > 0:
+                z_score = abs(actual - expected_mean) / expected_std
+            elif actual != expected_mean and expected_mean > 0:
+                z_score = 3.0  # Significant deviation with no variance
+            else:
+                z_score = 0.0
+
+            # Time since last activity for this entity
+            last_obs = pattern.last_observation
+            if last_obs:
+                time_since = (now - last_obs).total_seconds()
+                time_since_formatted = _format_duration(time_since)
+            else:
+                time_since = None
+                time_since_formatted = "Never"
+
+            entity_statuses.append({
+                "entity_id": entity_id,
+                "last_activity": last_obs.isoformat() if last_obs else None,
+                "time_since_activity": time_since_formatted,
+                "time_since_seconds": time_since,
+                "daily_count": daily_count,
+                "current_interval_count": actual,
+                "expected_interval_count": round(expected_mean, 1),
+                "z_score": round(z_score, 2),
+                "severity": _get_severity(z_score),
+                "status": (
+                    "normal" if z_score < 1.5
+                    else "attention" if z_score < 2.5
+                    else "concern" if z_score < 3.5
+                    else "alert"
+                ),
+            })
+
+        # Sort by severity (most concerning first)
+        severity_order = {"alert": 0, "concern": 1, "attention": 2, "normal": 3}
+        entity_statuses.sort(key=lambda x: severity_order.get(x["status"], 4))
+
+        return entity_statuses
+
+    def get_welfare_status(self) -> dict[str, Any]:
+        """Get overall welfare status for elder care monitoring.
+
+        Aggregates all signals into a single welfare assessment.
+        """
+        from .const import WELFARE_ALERT, WELFARE_CHECK, WELFARE_CONCERN, WELFARE_OK
+
+        activity_context = self.get_time_since_activity_context()
+        routine_progress = self.get_routine_progress()
+        entity_statuses = self.get_entity_status()
+
+        # Count concerning entities
+        alert_count = sum(1 for e in entity_statuses if e["status"] == "alert")
+        concern_count = sum(1 for e in entity_statuses if e["status"] == "concern")
+        attention_count = sum(1 for e in entity_statuses if e["status"] == "attention")
+
+        # Determine overall welfare status
+        reasons = []
+
+        if activity_context["status"] == "alert":
+            welfare = WELFARE_ALERT
+            reasons.append(f"No activity for {activity_context['time_since_formatted']}")
+        elif alert_count > 0:
+            welfare = WELFARE_ALERT
+            reasons.append(f"{alert_count} sensor(s) showing alert-level anomalies")
+        elif activity_context["status"] == "concern" or concern_count > 0:
+            welfare = WELFARE_CONCERN
+            if activity_context["status"] == "concern":
+                reasons.append(f"Extended time since last activity")
+            if concern_count > 0:
+                reasons.append(f"{concern_count} sensor(s) showing concerning patterns")
+        elif routine_progress["status"] in ["concerning", "alert"]:
+            welfare = WELFARE_CONCERN
+            reasons.append(f"Daily routine only {routine_progress['progress_percent']:.0f}% complete")
+        elif activity_context["status"] == "check_recommended" or attention_count > 1:
+            welfare = WELFARE_CHECK
+            if activity_context["status"] == "check_recommended":
+                reasons.append("Longer than usual since last activity")
+            if attention_count > 1:
+                reasons.append(f"{attention_count} sensors need attention")
+        else:
+            welfare = WELFARE_OK
+            reasons.append("Activity patterns are normal")
+
+        return {
+            "status": welfare,
+            "reasons": reasons,
+            "summary": reasons[0] if reasons else "Normal activity",
+            "time_since_activity": activity_context,
+            "routine_progress": routine_progress,
+            "entity_count_by_status": {
+                "alert": alert_count,
+                "concern": concern_count,
+                "attention": attention_count,
+                "normal": len(entity_statuses) - alert_count - concern_count - attention_count,
+            },
+            "recommendation": (
+                "Immediate welfare check recommended" if welfare == WELFARE_ALERT
+                else "Welfare check recommended soon" if welfare == WELFARE_CONCERN
+                else "Consider checking in" if welfare == WELFARE_CHECK
+                else "No action needed"
+            ),
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Convert analyzer state to dictionary for storage."""
