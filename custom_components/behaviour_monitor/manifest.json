@@ -3,10 +3,12 @@
   "name": "Behaviour Monitor",
   "codeowners": [],
   "config_flow": true,
-  "dependencies": ["recorder"],
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/your-repo/behaviour-monitor",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/your-repo/behaviour-monitor/issues",
   "requirements": [],
-  "version": "2.4.1"
+  "version": "2.4.2"
 }
