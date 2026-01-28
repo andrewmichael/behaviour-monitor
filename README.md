@@ -333,22 +333,7 @@ PYTHONPATH=. pytest tests/ -v
 
 ## Changelog
 
-### v2.3.0
-- Replaced scikit-learn with River for ML features
-- ML now uses streaming Half-Space Trees instead of batch-trained Isolation Forest
-- Better compatibility with Home Assistant OS and Python 3.13
-- No compilation required for ML features
-
-### v2.2.x
-- Added attribute tracking option
-- Fixed options flow for entity configuration changes
-- Added ML Status sensor
-- Elder care sensors and welfare monitoring
-
-### v2.0.0
-- Initial release with statistical and ML-based anomaly detection
-- Elder care monitoring features
-- Cross-sensor correlation
+See [CHANGELOG.md](CHANGELOG.md) for a detailed list of changes.
 
 ## License
 
