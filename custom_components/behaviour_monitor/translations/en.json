@@ -11,7 +11,8 @@
           "enable_notifications": "Enable anomaly notifications",
           "enable_ml": "Enable machine learning",
           "retrain_period": "ML retrain period",
-          "cross_sensor_window": "Cross-sensor correlation window"
+          "cross_sensor_window": "Cross-sensor correlation window",
+          "track_attributes": "Track attribute changes"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -20,7 +21,8 @@
           "enable_notifications": "Send persistent notifications when anomalies are detected.",
           "enable_ml": "Enable Isolation Forest ML for advanced pattern detection and cross-sensor correlation analysis.",
           "retrain_period": "How often to retrain the ML model with new data.",
-          "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors."
+          "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors.",
+          "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state."
         }
       }
     },
@@ -43,7 +45,8 @@
           "enable_notifications": "Enable anomaly notifications",
           "enable_ml": "Enable machine learning",
           "retrain_period": "ML retrain period",
-          "cross_sensor_window": "Cross-sensor correlation window"
+          "cross_sensor_window": "Cross-sensor correlation window",
+          "track_attributes": "Track attribute changes"
         }
       }
     },

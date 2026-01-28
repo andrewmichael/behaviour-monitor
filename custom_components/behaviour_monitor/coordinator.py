@@ -21,12 +21,14 @@ from .const import (
     CONF_MONITORED_ENTITIES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_CROSS_SENSOR_WINDOW,
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
+    DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     ML_CONTAMINATION,
     SENSITIVITY_THRESHOLDS,
@@ -109,6 +111,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._enable_notifications = entry.data.get(
             CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS
         )
+        self._track_attributes = entry.data.get(
+            CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
+        )
 
     @property
     def analyzer(self) -> PatternAnalyzer:
@@ -190,12 +195,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ML=%s, "
             "sensitivity=%s, "
             "learning_period=%d days, "
-            "notifications=%s",
+            "notifications=%s, "
+            "track_attributes=%s",
             len(self._monitored_entities),
             "ENABLED" if self._enable_ml else "DISABLED",
             self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY),
             int(self._entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD)),
             "ON" if self._enable_notifications else "OFF",
+            "ON" if self._track_attributes else "OFF",
         )
         if self._monitored_entities:
             _LOGGER.info("Monitored entities: %s", ", ".join(sorted(self._monitored_entities)))
@@ -245,6 +252,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _handle_state_changed(self, event: Event) -> None:
         """Handle state change events."""
         entity_id = event.data.get("entity_id")
+
+        # Debug: log all state changes to help diagnose issues
+        _LOGGER.debug(
+            "State change event received: entity=%s, monitored=%s",
+            entity_id,
+            entity_id in self._monitored_entities,
+        )
+
         if entity_id not in self._monitored_entities:
             return
 
@@ -253,9 +268,34 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Only record if the state actually changed (not just attributes)
         if old_state is None or new_state is None:
+            _LOGGER.debug(
+                "Ignoring %s: old_state=%s, new_state=%s (None state)",
+                entity_id,
+                old_state,
+                new_state,
+            )
             return
         if old_state.state == new_state.state:
-            return
+            if not self._track_attributes:
+                _LOGGER.debug(
+                    "Ignoring %s: state unchanged (%s -> %s, only attributes changed)",
+                    entity_id,
+                    old_state.state,
+                    new_state.state,
+                )
+                return
+            # Track attribute changes - check if attributes actually changed
+            if old_state.attributes == new_state.attributes:
+                _LOGGER.debug(
+                    "Ignoring %s: no changes (state and attributes identical)",
+                    entity_id,
+                )
+                return
+            _LOGGER.debug(
+                "Tracking attribute change for %s (state=%s, attributes changed)",
+                entity_id,
+                new_state.state,
+            )
 
         timestamp = datetime.now()
 
@@ -284,11 +324,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cutoff = timestamp - timedelta(seconds=self._cross_sensor_window * 2)
             self._recent_events = [e for e in self._recent_events if e.timestamp >= cutoff]
 
-        _LOGGER.debug(
-            "Recorded state change for %s: %s -> %s",
+        _LOGGER.info(
+            "Behaviour Monitor: Recorded state change for %s: %s -> %s (daily total: %d)",
             entity_id,
             old_state.state,
             new_state.state,
+            self._analyzer.get_total_daily_count(),
         )
 
         # Trigger an update to refresh sensors

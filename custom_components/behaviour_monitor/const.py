@@ -12,6 +12,7 @@ CONF_ENABLE_NOTIFICATIONS: Final = "enable_notifications"
 CONF_ENABLE_ML: Final = "enable_ml"
 CONF_RETRAIN_PERIOD: Final = "retrain_period"
 CONF_CROSS_SENSOR_WINDOW: Final = "cross_sensor_window"
+CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 
 # Sensitivity levels (standard deviations for Z-score)
 SENSITIVITY_LOW: Final = "low"
@@ -38,6 +39,7 @@ DEFAULT_ENABLE_NOTIFICATIONS: Final = True
 DEFAULT_ENABLE_ML: Final = True
 DEFAULT_RETRAIN_PERIOD: Final = 14  # days (2 weeks)
 DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds (5 minutes)
+DEFAULT_TRACK_ATTRIBUTES: Final = True  # Track attribute changes (not just state)
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"

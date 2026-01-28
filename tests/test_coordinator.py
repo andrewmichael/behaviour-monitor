@@ -119,7 +119,10 @@ class TestBehaviourMonitorCoordinator:
     def test_handle_state_changed_ignores_attribute_only_changes(
         self, coordinator: BehaviourMonitorCoordinator
     ) -> None:
-        """Test state changed handler ignores attribute-only changes."""
+        """Test state changed handler ignores attribute-only changes when track_attributes is off."""
+        # Disable attribute tracking for this test
+        coordinator._track_attributes = False
+
         old_state = MagicMock()
         old_state.state = "on"
 
@@ -136,8 +139,36 @@ class TestBehaviourMonitorCoordinator:
         initial_count = coordinator.analyzer.get_total_daily_count()
         coordinator._handle_state_changed(event)
 
-        # Count should not change
+        # Count should not change when track_attributes is off
         assert coordinator.analyzer.get_total_daily_count() == initial_count
+
+    def test_handle_state_changed_tracks_attribute_changes_when_enabled(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test state changed handler tracks attribute changes when track_attributes is on."""
+        # Enable attribute tracking (should be on by default)
+        coordinator._track_attributes = True
+
+        old_state = MagicMock()
+        old_state.state = "on"
+        old_state.attributes = {"brightness": 100}
+
+        new_state = MagicMock()
+        new_state.state = "on"  # Same state
+        new_state.attributes = {"brightness": 50}  # Different attributes
+
+        event = MagicMock()
+        event.data = {
+            "entity_id": "sensor.test1",
+            "old_state": old_state,
+            "new_state": new_state,
+        }
+
+        initial_count = coordinator.analyzer.get_total_daily_count()
+        coordinator._handle_state_changed(event)
+
+        # Count should increase when track_attributes is on and attributes changed
+        assert coordinator.analyzer.get_total_daily_count() == initial_count + 1
 
     def test_handle_state_changed_ignores_none_states(
         self, coordinator: BehaviourMonitorCoordinator

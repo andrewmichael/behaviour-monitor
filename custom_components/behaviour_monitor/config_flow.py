@@ -29,12 +29,14 @@ from .const import (
     CONF_MONITORED_ENTITIES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_CROSS_SENSOR_WINDOW,
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
+    DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
@@ -141,6 +143,9 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                         unit_of_measurement="seconds",
                     )
                 ),
+                vol.Required(
+                    CONF_TRACK_ATTRIBUTES, default=DEFAULT_TRACK_ATTRIBUTES
+                ): BooleanSelector(),
             }
         )
 
@@ -194,6 +199,9 @@ class BehaviourMonitorOptionsFlow(ConfigFlow):
         )
         current_cross_window = self._config_entry.data.get(
             CONF_CROSS_SENSOR_WINDOW, DEFAULT_CROSS_SENSOR_WINDOW
+        )
+        current_track_attributes = self._config_entry.data.get(
+            CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
 
         data_schema = vol.Schema(
@@ -252,6 +260,9 @@ class BehaviourMonitorOptionsFlow(ConfigFlow):
                         unit_of_measurement="seconds",
                     )
                 ),
+                vol.Required(
+                    CONF_TRACK_ATTRIBUTES, default=current_track_attributes
+                ): BooleanSelector(),
             }
         )
 
