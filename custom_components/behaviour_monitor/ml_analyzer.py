@@ -1,28 +1,27 @@
-"""Machine learning analyzer using Isolation Forest for anomaly detection."""
+"""Machine learning analyzer using River for streaming anomaly detection."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .const import MIN_SAMPLES_FOR_ML
 
 _LOGGER = logging.getLogger(__name__)
 
-# Try to import ML dependencies - they may not be available
+# Try to import River ML library - it may not be available
 try:
-    import numpy as np
-    from sklearn.ensemble import IsolationForest
+    from river import anomaly
     ML_AVAILABLE = True
+    _LOGGER.info("River ML library available - ML features enabled")
 except ImportError:
     ML_AVAILABLE = False
-    np = None  # type: ignore
-    IsolationForest = None  # type: ignore
+    anomaly = None  # type: ignore
     _LOGGER.warning(
-        "scikit-learn not available. ML features will be disabled. "
-        "Install with: pip install scikit-learn numpy"
+        "River not available. ML features will be disabled. "
+        "Install with: pip install river"
     )
 
 
@@ -112,30 +111,50 @@ class MLAnomalyResult:
 
     is_anomaly: bool
     entity_id: str | None  # None for cross-sensor anomalies
-    anomaly_score: float  # -1 to 1, lower = more anomalous
-    anomaly_type: str  # "isolation_forest", "missing_correlation", "unexpected_correlation"
+    anomaly_score: float  # 0 to 1, higher = more anomalous
+    anomaly_type: str  # "half_space_trees", "missing_correlation", "unexpected_correlation"
     description: str
     timestamp: datetime
     related_entities: list[str] = field(default_factory=list)
 
 
 class MLPatternAnalyzer:
-    """Analyzes patterns using Isolation Forest and cross-sensor correlation."""
+    """Analyzes patterns using River's Half-Space Trees for streaming anomaly detection."""
 
     def __init__(
         self,
         contamination: float = 0.05,
         cross_sensor_window_seconds: int = 300,
+        n_trees: int = 10,
+        height: int = 8,
     ) -> None:
-        """Initialize the ML analyzer."""
+        """Initialize the ML analyzer.
+
+        Args:
+            contamination: Expected proportion of anomalies (used for threshold)
+            cross_sensor_window_seconds: Window for cross-sensor correlation
+            n_trees: Number of trees in Half-Space Trees ensemble
+            height: Height of each tree
+        """
         self._contamination = contamination
         self._cross_sensor_window = timedelta(seconds=cross_sensor_window_seconds)
+        self._n_trees = n_trees
+        self._height = height
         self._events: list[StateChangeEvent] = []
-        self._model: Any = None  # IsolationForest when ML is available
-        self._last_trained: datetime | None = None
+        self._model: Any = None
+        self._samples_processed: int = 0
         self._cross_sensor_patterns: dict[tuple[str, str], CrossSensorPattern] = {}
         self._entity_last_change: dict[str, datetime] = {}
         self._recent_events_window: list[StateChangeEvent] = []
+        self._entity_indices: dict[str, int] = {}
+
+        # Initialize model if River is available
+        if ML_AVAILABLE:
+            self._model = anomaly.HalfSpaceTrees(
+                n_trees=n_trees,
+                height=height,
+                window_size=256,
+            )
 
     @property
     def ml_available(self) -> bool:
@@ -144,23 +163,37 @@ class MLPatternAnalyzer:
 
     @property
     def is_trained(self) -> bool:
-        """Check if the model has been trained."""
-        return ML_AVAILABLE and self._model is not None
+        """Check if the model has enough data to make predictions.
+
+        With streaming ML, we're always learning. We consider it 'trained'
+        after processing enough samples.
+        """
+        return ML_AVAILABLE and self._samples_processed >= MIN_SAMPLES_FOR_ML
 
     @property
     def last_trained(self) -> datetime | None:
-        """Get the timestamp of the last training."""
-        return self._last_trained
+        """Get the timestamp of when training threshold was reached.
+
+        With streaming ML, there's no discrete training. Return None
+        to indicate continuous learning.
+        """
+        return None  # Streaming ML - always learning
 
     @property
     def sample_count(self) -> int:
-        """Get the number of stored events."""
-        return len(self._events)
+        """Get the number of processed samples."""
+        return self._samples_processed
 
     @property
     def cross_sensor_patterns(self) -> dict[tuple[str, str], CrossSensorPattern]:
         """Get cross-sensor patterns."""
         return self._cross_sensor_patterns
+
+    def _get_entity_index(self, entity_id: str) -> int:
+        """Get or create a numeric index for an entity."""
+        if entity_id not in self._entity_indices:
+            self._entity_indices[entity_id] = len(self._entity_indices)
+        return self._entity_indices[entity_id]
 
     def record_event(
         self,
@@ -169,7 +202,7 @@ class MLPatternAnalyzer:
         old_state: str | None = None,
         new_state: str | None = None,
     ) -> None:
-        """Record a state change event."""
+        """Record a state change event and update the model."""
         event = StateChangeEvent(
             entity_id=entity_id,
             timestamp=timestamp,
@@ -180,6 +213,13 @@ class MLPatternAnalyzer:
 
         # Update cross-sensor correlations
         self._update_cross_sensor_patterns(event)
+
+        # Update the streaming ML model
+        if ML_AVAILABLE and self._model is not None:
+            features = self._extract_features(event)
+            # Learn from this event (streaming update)
+            self._model.learn_one(features)
+            self._samples_processed += 1
 
         # Track last change time per entity
         self._entity_last_change[entity_id] = timestamp
@@ -227,25 +267,25 @@ class MLPatternAnalyzer:
         # Add to recent window
         self._recent_events_window.append(new_event)
 
-    def _extract_features(self, event: StateChangeEvent) -> Any:
-        """Extract features from a state change event for ML model."""
-        if not ML_AVAILABLE:
-            return None
+    def _extract_features(self, event: StateChangeEvent) -> dict[str, float]:
+        """Extract features from a state change event for the ML model.
 
+        River uses dict-based features instead of numpy arrays.
+        """
         ts = event.timestamp
 
         # Time-based features
         hour = ts.hour
         minute_bucket = ts.minute // 15
         day_of_week = ts.weekday()
-        is_weekend = 1 if day_of_week >= 5 else 0
+        is_weekend = 1.0 if day_of_week >= 5 else 0.0
 
         # Time since last activity for this entity
         last_change = self._entity_last_change.get(event.entity_id)
         if last_change and last_change < ts:
             time_since_last = (ts - last_change).total_seconds()
         else:
-            time_since_last = 0
+            time_since_last = 0.0
 
         # Cap at 24 hours and normalize
         time_since_last = min(time_since_last, 86400) / 86400
@@ -257,86 +297,84 @@ class MLPatternAnalyzer:
             if e.entity_id == event.entity_id and e.timestamp >= hour_ago
         )
 
-        # Entity index (for multi-entity patterns)
-        entities = sorted(set(e.entity_id for e in self._events[-1000:]))
-        entity_idx = entities.index(event.entity_id) if event.entity_id in entities else 0
-        entity_idx_normalized = entity_idx / max(1, len(entities) - 1) if len(entities) > 1 else 0
+        # Entity index (normalized)
+        entity_idx = self._get_entity_index(event.entity_id)
+        total_entities = max(1, len(self._entity_indices))
+        entity_idx_normalized = entity_idx / total_entities
 
-        return np.array([
-            hour / 23.0,                    # Normalized hour
-            minute_bucket / 3.0,            # Normalized 15-min bucket
-            day_of_week / 6.0,              # Normalized day
-            is_weekend,                     # Weekend flag
-            time_since_last,                # Normalized time since last
-            min(recent_count, 20) / 20.0,   # Normalized recent activity
-            entity_idx_normalized,          # Entity identifier
-        ])
+        return {
+            "hour": hour / 23.0,
+            "minute_bucket": minute_bucket / 3.0,
+            "day_of_week": day_of_week / 6.0,
+            "is_weekend": is_weekend,
+            "time_since_last": time_since_last,
+            "recent_activity": min(recent_count, 20) / 20.0,
+            "entity_idx": entity_idx_normalized,
+        }
 
     def train(self) -> bool:
-        """Train the Isolation Forest model on collected data."""
-        if not ML_AVAILABLE:
-            _LOGGER.debug("ML not available - scikit-learn not installed")
+        """Train the model on historical data.
+
+        With River's streaming approach, we can replay historical events
+        to warm up the model. This is called when loading saved data.
+        """
+        if not ML_AVAILABLE or self._model is None:
+            _LOGGER.debug("ML not available - River not installed")
             return False
 
         if len(self._events) < MIN_SAMPLES_FOR_ML:
             _LOGGER.debug(
-                "Not enough samples for ML training: %d < %d",
+                "Not enough samples for ML: %d < %d",
                 len(self._events),
                 MIN_SAMPLES_FOR_ML,
             )
             return False
 
-        # Build entity lookup for feature extraction
+        # Reset model and replay events
+        self._model = anomaly.HalfSpaceTrees(
+            n_trees=self._n_trees,
+            height=self._height,
+            window_size=256,
+        )
+        self._samples_processed = 0
         self._entity_last_change.clear()
 
-        # Extract features from all events
-        features = []
+        # Replay all events to train the model
         for event in self._events:
-            feat = self._extract_features(event)
-            features.append(feat)
+            features = self._extract_features(event)
+            self._model.learn_one(features)
+            self._samples_processed += 1
             self._entity_last_change[event.entity_id] = event.timestamp
 
-        feature_matrix = np.array(features)
-
-        # Train Isolation Forest
-        self._model = IsolationForest(
-            contamination=self._contamination,
-            random_state=42,
-            n_estimators=100,
-            max_samples="auto",
-        )
-        self._model.fit(feature_matrix)
-        self._last_trained = datetime.now()
-
         _LOGGER.info(
-            "Trained Isolation Forest on %d samples with contamination %.2f",
-            len(features),
-            self._contamination,
+            "Trained Half-Space Trees on %d samples (streaming model)",
+            self._samples_processed,
         )
         return True
 
     def check_anomaly(self, event: StateChangeEvent) -> MLAnomalyResult | None:
-        """Check if an event is anomalous using the trained model."""
-        if not self.is_trained:
+        """Check if an event is anomalous using the streaming model."""
+        if not self.is_trained or self._model is None:
             return None
 
         features = self._extract_features(event)
-        if features is None:
-            return None
 
-        features = features.reshape(1, -1)
-        prediction = self._model.predict(features)[0]
-        score = self._model.decision_function(features)[0]
+        # Get anomaly score (0 to 1, higher = more anomalous)
+        score = self._model.score_one(features)
 
-        if prediction == -1:  # Anomaly detected
+        # Use contamination as threshold
+        # Higher contamination = lower threshold = more anomalies flagged
+        threshold = 1.0 - self._contamination
+
+        if score > threshold:
             return MLAnomalyResult(
                 is_anomaly=True,
                 entity_id=event.entity_id,
                 anomaly_score=score,
-                anomaly_type="isolation_forest",
+                anomaly_type="half_space_trees",
                 description=(
                     f"Unusual activity pattern detected for {event.entity_id} "
-                    f"(ML score: {score:.3f})"
+                    f"(ML score: {score:.3f}, threshold: {threshold:.3f})"
                 ),
                 timestamp=event.timestamp,
             )
@@ -353,7 +391,7 @@ class MLPatternAnalyzer:
             check_window = self._cross_sensor_window
 
         anomalies: list[MLAnomalyResult] = []
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Get strong patterns (correlation > 0.5)
         strong_patterns = [
@@ -385,7 +423,7 @@ class MLPatternAnalyzer:
                         MLAnomalyResult(
                             is_anomaly=True,
                             entity_id=pattern.entity_b,
-                            anomaly_score=-0.5,
+                            anomaly_score=0.5,
                             anomaly_type="missing_correlation",
                             description=(
                                 f"Expected {pattern.entity_b} to change after "
@@ -409,7 +447,7 @@ class MLPatternAnalyzer:
                             MLAnomalyResult(
                                 is_anomaly=True,
                                 entity_id=pattern.entity_a,
-                                anomaly_score=-0.5,
+                                anomaly_score=0.5,
                                 anomaly_type="missing_correlation",
                                 description=(
                                     f"Expected {pattern.entity_a} to change before "
@@ -444,7 +482,7 @@ class MLPatternAnalyzer:
 
     def prune_old_events(self, max_age_days: int = 30) -> int:
         """Remove events older than the specified age."""
-        cutoff = datetime.now() - timedelta(days=max_age_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         original_count = len(self._events)
         self._events = [e for e in self._events if e.timestamp >= cutoff]
         pruned = original_count - len(self._events)
@@ -460,9 +498,10 @@ class MLPatternAnalyzer:
                 f"{k[0]}|{k[1]}": v.to_dict()
                 for k, v in self._cross_sensor_patterns.items()
             },
-            "last_trained": self._last_trained.isoformat() if self._last_trained else None,
+            "samples_processed": self._samples_processed,
             "contamination": self._contamination,
             "cross_sensor_window_seconds": self._cross_sensor_window.total_seconds(),
+            "entity_indices": self._entity_indices,
         }
 
     @classmethod
@@ -492,13 +531,18 @@ class MLPatternAnalyzer:
                     pattern_data
                 )
 
-        # Restore last trained time
-        last_trained = data.get("last_trained")
-        if last_trained:
-            analyzer._last_trained = datetime.fromisoformat(last_trained)
+        # Restore entity indices
+        analyzer._entity_indices = data.get("entity_indices", {})
+
+        # Restore sample count
+        analyzer._samples_processed = data.get("samples_processed", 0)
 
         # Rebuild entity last change map
         for event in analyzer._events:
             analyzer._entity_last_change[event.entity_id] = event.timestamp
+
+        # Retrain the model with historical data if we have enough
+        if len(analyzer._events) >= MIN_SAMPLES_FOR_ML:
+            analyzer.train()
 
         return analyzer

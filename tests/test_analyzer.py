@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -83,24 +83,24 @@ class TestIntervalFunctions:
 
     def test_get_interval_index_midnight(self) -> None:
         """Test interval index at midnight."""
-        ts = datetime(2024, 1, 15, 0, 0, 0)
+        ts = datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
         assert _get_interval_index(ts) == 0
 
     def test_get_interval_index_noon(self) -> None:
         """Test interval index at noon."""
-        ts = datetime(2024, 1, 15, 12, 0, 0)
+        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         assert _get_interval_index(ts) == 48  # 12 hours * 4 intervals
 
     def test_get_interval_index_end_of_day(self) -> None:
         """Test interval index at 23:45."""
-        ts = datetime(2024, 1, 15, 23, 45, 0)
+        ts = datetime(2024, 1, 15, 23, 45, 0, tzinfo=timezone.utc)
         assert _get_interval_index(ts) == 95
 
     def test_get_interval_index_within_interval(self) -> None:
         """Test interval index at 9:07 (should be same as 9:00)."""
-        ts1 = datetime(2024, 1, 15, 9, 0, 0)
-        ts2 = datetime(2024, 1, 15, 9, 7, 0)
-        ts3 = datetime(2024, 1, 15, 9, 14, 59)
+        ts1 = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2024, 1, 15, 9, 7, 0, tzinfo=timezone.utc)
+        ts3 = datetime(2024, 1, 15, 9, 14, 59, tzinfo=timezone.utc)
         assert _get_interval_index(ts1) == _get_interval_index(ts2)
         assert _get_interval_index(ts2) == _get_interval_index(ts3)
 
@@ -125,7 +125,7 @@ class TestEntityPattern:
     def test_record_activity_monday(self) -> None:
         """Test recording activity on Monday."""
         pattern = EntityPattern(entity_id="sensor.test")
-        ts = datetime(2024, 1, 15, 9, 0, 0)  # Monday
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)  # Monday
         assert ts.weekday() == 0  # Verify it's Monday
 
         pattern.record_activity(ts)
@@ -141,7 +141,7 @@ class TestEntityPattern:
     def test_record_activity_weekend(self) -> None:
         """Test recording activity on Saturday."""
         pattern = EntityPattern(entity_id="sensor.test")
-        ts = datetime(2024, 1, 20, 14, 30, 0)  # Saturday
+        ts = datetime(2024, 1, 20, 14, 30, 0, tzinfo=timezone.utc)  # Saturday
         assert ts.weekday() == 5  # Verify it's Saturday
 
         pattern.record_activity(ts)
@@ -152,7 +152,7 @@ class TestEntityPattern:
     def test_get_expected_activity(self) -> None:
         """Test getting expected activity."""
         pattern = EntityPattern(entity_id="sensor.test")
-        ts = datetime(2024, 1, 15, 9, 0, 0)  # Monday 9:00
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)  # Monday 9:00
 
         # Record multiple observations
         for _ in range(5):
@@ -166,7 +166,7 @@ class TestEntityPattern:
     def test_get_time_description(self) -> None:
         """Test time description generation."""
         pattern = EntityPattern(entity_id="sensor.test")
-        ts = datetime(2024, 1, 15, 9, 15, 0)  # Monday 9:15
+        ts = datetime(2024, 1, 15, 9, 15, 0, tzinfo=timezone.utc)  # Monday 9:15
 
         desc = pattern.get_time_description(ts)
         assert "monday" in desc
@@ -175,7 +175,7 @@ class TestEntityPattern:
     def test_to_dict_and_from_dict(self) -> None:
         """Test serialization round-trip."""
         pattern = EntityPattern(entity_id="sensor.test")
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
         pattern.record_activity(ts)
 
         # Serialize
@@ -217,7 +217,7 @@ class TestPatternAnalyzer:
     def test_record_state_change(self) -> None:
         """Test recording state changes."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         analyzer.record_state_change("sensor.test", ts)
 
@@ -227,7 +227,7 @@ class TestPatternAnalyzer:
     def test_daily_count_tracking(self) -> None:
         """Test daily count tracking."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
-        ts = datetime.now()
+        ts = datetime.now(timezone.utc)
 
         analyzer.record_state_change("sensor.test", ts)
         analyzer.record_state_change("sensor.test", ts)
@@ -247,7 +247,7 @@ class TestPatternAnalyzer:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record data from 3 days ago
-        ts = datetime.now() - timedelta(days=3)
+        ts = datetime.now(timezone.utc) - timedelta(days=3)
         analyzer.record_state_change("sensor.test", ts)
 
         confidence = analyzer.get_confidence()
@@ -259,7 +259,7 @@ class TestPatternAnalyzer:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record data from 10 days ago
-        ts = datetime.now() - timedelta(days=10)
+        ts = datetime.now(timezone.utc) - timedelta(days=10)
         analyzer.record_state_change("sensor.test", ts)
 
         assert analyzer.is_learning_complete()
@@ -269,7 +269,7 @@ class TestPatternAnalyzer:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record recent data (still learning)
-        ts = datetime.now()
+        ts = datetime.now(timezone.utc)
         analyzer.record_state_change("sensor.test", ts)
 
         anomalies = analyzer.check_for_anomalies()
@@ -285,8 +285,8 @@ class TestPatternAnalyzer:
         """Test getting last activity time."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
-        ts1 = datetime(2024, 1, 15, 9, 0, 0)
-        ts2 = datetime(2024, 1, 15, 10, 0, 0)
+        ts1 = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
 
         analyzer.record_state_change("sensor.test1", ts1)
         analyzer.record_state_change("sensor.test2", ts2)
@@ -296,7 +296,7 @@ class TestPatternAnalyzer:
     def test_to_dict_and_from_dict(self) -> None:
         """Test serialization round-trip."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
         analyzer.record_state_change("sensor.test", ts)
 
         # Serialize
@@ -323,7 +323,7 @@ class TestAnomalyDetection:
             expected_mean=2.0,
             expected_std=0.5,
             actual_value=5.0,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             time_slot="monday 09:00",
             description="Test anomaly",
         )
@@ -336,7 +336,7 @@ class TestAnomalyDetection:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=1)
 
         # Build baseline over "past days"
-        base_ts = datetime.now() - timedelta(days=2)
+        base_ts = datetime.now(timezone.utc) - timedelta(days=2)
         for day_offset in range(2):
             ts = base_ts + timedelta(days=day_offset)
             # Record 1 activity per interval normally
@@ -344,7 +344,7 @@ class TestAnomalyDetection:
 
         # Now the analyzer should have learned the pattern
         # Simulate current interval with many more activities
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for _ in range(10):
             analyzer.record_state_change("sensor.test", now)
 
@@ -371,7 +371,7 @@ class TestElderCareFunctions:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record multiple activities throughout the day
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for i in range(10):
             ts = now - timedelta(hours=i)
             analyzer.record_state_change("sensor.motion", ts)
@@ -393,7 +393,7 @@ class TestElderCareFunctions:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record recent activity
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         analyzer.record_state_change("sensor.motion", now - timedelta(minutes=5))
 
         context = analyzer.get_time_since_activity_context()
@@ -418,7 +418,7 @@ class TestElderCareFunctions:
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
         # Record some activity today
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for i in range(5):
             analyzer.record_state_change("sensor.motion", now - timedelta(minutes=i*10))
 
@@ -440,7 +440,7 @@ class TestElderCareFunctions:
         """Test entity status with monitored entities."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         analyzer.record_state_change("sensor.motion", now)
         analyzer.record_state_change("sensor.door", now - timedelta(hours=2))
 
@@ -465,7 +465,7 @@ class TestElderCareFunctions:
         """Test welfare status with recent activity."""
         analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         analyzer.record_state_change("sensor.motion", now)
 
         welfare = analyzer.get_welfare_status()

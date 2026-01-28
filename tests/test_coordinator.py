@@ -10,6 +10,7 @@ import pytest
 
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import DOMAIN
+from custom_components.behaviour_monitor.ml_analyzer import ML_AVAILABLE
 
 
 class TestBehaviourMonitorCoordinator:
@@ -29,7 +30,8 @@ class TestBehaviourMonitorCoordinator:
         assert coordinator.analyzer is not None
         assert coordinator.ml_analyzer is not None
         assert coordinator.monitored_entities == {"sensor.test1", "sensor.test2"}
-        assert coordinator.ml_enabled
+        # ML is only enabled if both config requests it AND River is installed
+        assert coordinator.ml_enabled == ML_AVAILABLE
 
     def test_monitored_entities(self, coordinator: BehaviourMonitorCoordinator) -> None:
         """Test monitored entities property."""
@@ -218,7 +220,8 @@ class TestBehaviourMonitorCoordinator:
         assert "enabled" in ml_status
         assert "trained" in ml_status
         assert "sample_count" in ml_status
-        assert ml_status["enabled"] is True
+        # ML is only enabled if River is installed
+        assert ml_status["enabled"] == ML_AVAILABLE
 
     @pytest.mark.asyncio
     async def test_send_notification(
@@ -294,8 +297,9 @@ class TestCoordinatorMLIntegration:
     def test_ml_enabled_property(
         self, coordinator_with_ml: BehaviourMonitorCoordinator
     ) -> None:
-        """Test ML enabled property when ML is on."""
-        assert coordinator_with_ml.ml_enabled is True
+        """Test ML enabled property when ML is configured on."""
+        # ML is only truly enabled if both config requests it AND River is installed
+        assert coordinator_with_ml.ml_enabled == ML_AVAILABLE
 
     def test_ml_disabled_property(
         self, coordinator_without_ml: BehaviourMonitorCoordinator

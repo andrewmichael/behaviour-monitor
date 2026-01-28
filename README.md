@@ -5,10 +5,11 @@ A Home Assistant custom integration that learns entity state patterns and detect
 ## Features
 
 - **Statistical Pattern Learning**: Tracks state changes in 15-minute buckets with per-weekday distinction (672 buckets per entity)
-- **Machine Learning** (optional): Isolation Forest for multivariate anomaly detection
+- **Machine Learning** (optional): Half-Space Trees for streaming anomaly detection using River
 - **Cross-Sensor Correlation**: Learns relationships between sensors (e.g., "motion sensor usually triggers before light turns on")
 - **Hybrid Detection**: Combines Z-score statistics with ML for comprehensive anomaly detection
 - **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
+- **Attribute Tracking**: Optionally track attribute changes, not just state changes
 - **Notifications**: Sends persistent notifications with severity levels for unusual activity patterns
 - **HACS Compatible**: Install via HACS for easy updates
 
@@ -58,28 +59,46 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 
 ### Enabling ML Features (Optional)
 
-ML features require scikit-learn. **The integration works perfectly without it** using statistical analysis only. Most users won't need ML - statistical Z-score detection is effective for pattern anomaly detection.
+ML features require the River library. **The integration works perfectly without it** using statistical analysis only. Most users won't need ML - statistical Z-score detection is effective for pattern anomaly detection.
 
-**Home Assistant Core (x86/amd64):**
+**Home Assistant Core (any platform):**
 ```bash
-pip install scikit-learn numpy
+pip install river
 ```
 
 **Home Assistant OS / Supervised / Container:**
 
-Installing scikit-learn on Home Assistant OS can be challenging because:
-- Pre-built wheels may not exist for your architecture (especially ARM/Raspberry Pi)
-- Building from source requires compilation tools not available in the container
+1. Install the **SSH & Web Terminal** add-on from the Add-on Store (or **Advanced SSH & Web Terminal** from the community add-ons)
 
-If you want to try:
+2. Configure the add-on to disable "Protection mode" (required to access the HA container)
+
+3. Start the add-on and open the terminal
+
+4. Run the following command:
+   ```bash
+   docker exec -it homeassistant pip install river
+   ```
+
+5. Restart Home Assistant for the changes to take effect
+
+**Alternative method using the Terminal & SSH add-on:**
 ```bash
-# Via SSH & Web Terminal add-on
-docker exec -it homeassistant pip install scikit-learn numpy
+# If you have the Terminal & SSH add-on with protection mode disabled:
+ha core exec -it bash
+pip install river
+exit
+ha core restart
 ```
 
-**If installation fails**, the integration will still work with statistical analysis only. The statistical detection (Z-score) is reliable and doesn't require any additional dependencies.
+**Note:** The River library will need to be reinstalled after Home Assistant OS updates, as the container is recreated. Consider adding this to your startup automation or checking the ML Status sensor after updates.
 
-If scikit-learn is not installed, the integration will log a warning and automatically disable ML features.
+River is designed for streaming data and works well on Home Assistant OS because:
+- It has pre-built wheels for multiple Python versions including 3.13
+- It doesn't require compilation of C extensions (unlike scikit-learn)
+- It uses incremental/streaming learning which is ideal for Home Assistant's event-driven architecture
+- Package size is small (~2.5MB) compared to scikit-learn (~25MB+)
+
+If River is not installed, the integration will log a warning and automatically disable ML features. Statistical analysis will continue to work.
 
 ## Configuration
 
@@ -96,9 +115,10 @@ If scikit-learn is not installed, the integration will log a warning and automat
 | Sensitivity | Anomaly detection threshold (Low=3σ, Medium=2σ, High=1σ) | Medium |
 | Learning period | Days before statistical anomaly detection activates | 7 days |
 | Enable notifications | Send persistent notifications when anomalies are detected | Yes |
-| Enable ML | Enable Isolation Forest machine learning (requires scikit-learn) | Yes |
-| ML retrain period | How often to retrain the ML model | 14 days |
+| Enable ML | Enable Half-Space Trees machine learning (requires River) | Yes |
+| ML retrain period | How often to replay historical data for model warmup | 14 days |
 | Cross-sensor window | Time window for detecting sensor correlations | 300 seconds |
+| Track attributes | Also track attribute changes, not just state changes | Yes |
 
 ## Sensors
 
@@ -114,6 +134,7 @@ The integration creates the following sensors:
 | `sensor.behaviour_monitor_baseline_confidence` | Progress of statistical pattern learning (0-100%) |
 | `sensor.behaviour_monitor_daily_activity_count` | Total state changes recorded today |
 | `sensor.behaviour_monitor_cross_sensor_patterns` | Number of detected cross-sensor correlations |
+| `sensor.behaviour_monitor_ml_status` | ML status: "Trained", "Learning", or "Disabled" |
 
 ### Elder Care Sensors
 
@@ -125,6 +146,13 @@ The integration creates the following sensors:
 | `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention") |
 
 ### Sensor Attributes
+
+**ML Status** sensor includes:
+- `enabled`: Whether ML is enabled in config AND River is available
+- `trained`: Whether the model has processed enough samples (100+)
+- `sample_count`: Number of events processed by the ML model
+- `samples_needed`: Events needed before ML becomes active
+- `scikit_learn_available`: Whether River library is installed (legacy name)
 
 **Welfare Status** sensor includes:
 - `reasons`: List of reasons for current status
@@ -184,9 +212,9 @@ Sensitivity levels:
 - **Medium (2σ)**: Moderate anomalies (~5% false positive rate)
 - **High (1σ)**: Any deviation (~32% false positive rate)
 
-### Machine Learning (Isolation Forest)
+### Machine Learning (Half-Space Trees)
 
-When ML is enabled and scikit-learn is installed, the integration uses Isolation Forest for anomaly detection based on:
+When ML is enabled and River is installed, the integration uses Half-Space Trees (HST) for streaming anomaly detection. Unlike batch-trained models, HST learns incrementally from each event:
 
 | Feature | Description |
 |---------|-------------|
@@ -198,7 +226,11 @@ When ML is enabled and scikit-learn is installed, the integration uses Isolation
 | Recent activity rate | Activity count in last hour |
 | Entity identifier | Normalized entity index |
 
-The model is automatically retrained at the configured interval (default: 2 weeks). First training occurs after 100 state change events.
+**Streaming vs Batch Learning:**
+- The model starts learning immediately from the first event
+- Each event updates the model incrementally (no "training" step needed)
+- The model becomes effective after ~100 events
+- Historical data can be replayed to warm up the model after restarts
 
 ### Cross-Sensor Correlation
 
@@ -219,7 +251,7 @@ When a sensor triggers but its correlated sensor doesn't respond within the expe
 
 Both statistical and ML anomalies are reported:
 - **Statistical**: Quick, explainable (Z-score), works immediately after learning period
-- **ML**: Catches complex multivariate patterns, requires training data (100+ events)
+- **ML**: Catches complex multivariate patterns, learns continuously from each event
 
 ## Notifications
 
@@ -243,36 +275,44 @@ Data persists across Home Assistant restarts.
 
 This usually means a Python dependency is missing. Check the Home Assistant logs for details.
 
-If you see `ModuleNotFoundError: No module named 'sklearn'`:
-- This is expected if scikit-learn isn't installed
-- The integration should still work with statistical analysis only
-- To enable ML, install scikit-learn (see [Enabling ML Features](#enabling-ml-features-optional))
-
 ### ML Features Not Working
 
-Check the `ml_status` attribute on the `baseline_confidence` sensor:
-- `enabled`: Whether ML is enabled in config AND scikit-learn is available
-- `trained`: Whether the model has been trained (requires 100+ events)
+Check the `ml_status` sensor or the `ml_status` attribute on the `baseline_confidence` sensor:
+- `enabled`: Whether ML is enabled in config AND River is available
+- `trained`: Whether the model has processed enough events (100+)
 - `sample_count`: Number of recorded events
+
+If River is not installed, you'll see a warning in the logs:
+```
+Behaviour Monitor: ML features DISABLED - River library not installed.
+Statistical analysis will still work. To enable ML, install: pip install river
+```
 
 ### No Anomalies Detected
 
 - Check `baseline_confidence` sensor - must reach 100% before detection starts
 - Verify monitored entities are actually changing state
 - Consider adjusting sensitivity level
+- Check if "Track attributes" is enabled if your entities only change attributes
+
+### Activity Not Being Tracked
+
+- Ensure the entity is in the monitored entities list
+- Check if "Track attributes" is enabled - some entities only change attributes, not state
+- Look at debug logs to see if events are being received
 
 ## Requirements
 
 - Home Assistant 2024.1.0 or newer
 - Recorder integration (dependency, enabled by default)
-- **Optional**: scikit-learn, numpy (for ML features)
+- **Optional**: River (for ML features) - `pip install river`
 
 ## Hardware Notes
 
 - Works well on Raspberry Pi 4+ and x86 systems
 - Statistical analysis works on all hardware
-- Pi 3: ML training may be slow - consider disabling ML or using longer retrain periods
-- First ML training occurs after 100 state change events
+- River's streaming ML is lightweight and works on all platforms
+- ML becomes effective after ~100 state change events
 
 ## Development
 
@@ -285,10 +325,30 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements-test.txt
+pip install river  # Optional, for ML tests
 
 # Run tests
 PYTHONPATH=. pytest tests/ -v
 ```
+
+## Changelog
+
+### v2.3.0
+- Replaced scikit-learn with River for ML features
+- ML now uses streaming Half-Space Trees instead of batch-trained Isolation Forest
+- Better compatibility with Home Assistant OS and Python 3.13
+- No compilation required for ML features
+
+### v2.2.x
+- Added attribute tracking option
+- Fixed options flow for entity configuration changes
+- Added ML Status sensor
+- Elder care sensors and welfare monitoring
+
+### v2.0.0
+- Initial release with statistical and ML-based anomaly detection
+- Elder care monitoring features
+- Cross-sensor correlation
 
 ## License
 

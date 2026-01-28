@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-import numpy as np
 import pytest
 
 from custom_components.behaviour_monitor.ml_analyzer import (
+    ML_AVAILABLE,
     CrossSensorPattern,
     MLAnomalyResult,
     MLPatternAnalyzer,
@@ -20,7 +20,7 @@ class TestStateChangeEvent:
 
     def test_creation(self) -> None:
         """Test event creation."""
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
         event = StateChangeEvent(
             entity_id="sensor.test",
             timestamp=ts,
@@ -34,7 +34,7 @@ class TestStateChangeEvent:
 
     def test_to_dict(self) -> None:
         """Test conversion to dictionary."""
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
         event = StateChangeEvent(
             entity_id="sensor.test",
             timestamp=ts,
@@ -51,13 +51,13 @@ class TestStateChangeEvent:
         """Test creation from dictionary."""
         data = {
             "entity_id": "sensor.test",
-            "timestamp": "2024-01-15T09:00:00",
+            "timestamp": "2024-01-15T09:00:00+00:00",
             "old_state": "off",
             "new_state": "on",
         }
         event = StateChangeEvent.from_dict(data)
         assert event.entity_id == "sensor.test"
-        assert event.timestamp == datetime(2024, 1, 15, 9, 0, 0)
+        assert event.timestamp == datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
 
 class TestCrossSensorPattern:
@@ -139,7 +139,7 @@ class TestMLPatternAnalyzer:
     def test_record_event(self) -> None:
         """Test recording events."""
         analyzer = MLPatternAnalyzer()
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         analyzer.record_event(
             entity_id="sensor.test",
@@ -148,12 +148,18 @@ class TestMLPatternAnalyzer:
             new_state="on",
         )
 
-        assert analyzer.sample_count == 1
+        # Sample count only increments if ML (River) is available
+        if ML_AVAILABLE:
+            assert analyzer.sample_count == 1
+        else:
+            assert analyzer.sample_count == 0
+        # Events are always stored regardless of ML availability
+        assert len(analyzer._events) == 1
 
     def test_cross_sensor_pattern_detection(self) -> None:
         """Test cross-sensor pattern detection."""
         analyzer = MLPatternAnalyzer(cross_sensor_window_seconds=60)
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Record co-occurring events
         for i in range(20):
@@ -175,7 +181,7 @@ class TestMLPatternAnalyzer:
         analyzer = MLPatternAnalyzer()
 
         # Add only a few events
-        ts = datetime(2024, 1, 15, 9, 0, 0)
+        ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
         for i in range(10):
             analyzer.record_event("sensor.test", ts + timedelta(minutes=i))
 
@@ -183,10 +189,11 @@ class TestMLPatternAnalyzer:
         assert not result  # Should fail - not enough samples
         assert not analyzer.is_trained
 
+    @pytest.mark.skipif(not ML_AVAILABLE, reason="River not installed")
     def test_train_with_sufficient_samples(self) -> None:
         """Test training succeeds with sufficient samples."""
         analyzer = MLPatternAnalyzer()
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Add enough events
         for i in range(150):
@@ -196,23 +203,25 @@ class TestMLPatternAnalyzer:
         result = analyzer.train()
         assert result  # Should succeed
         assert analyzer.is_trained
-        assert analyzer.last_trained is not None
+        # Note: With streaming ML (River), last_trained is always None
+        # as training happens incrementally
 
     def test_check_anomaly_untrained(self) -> None:
         """Test anomaly check returns None when untrained."""
         analyzer = MLPatternAnalyzer()
         event = StateChangeEvent(
             entity_id="sensor.test",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
 
         result = analyzer.check_anomaly(event)
         assert result is None
 
+    @pytest.mark.skipif(not ML_AVAILABLE, reason="River not installed")
     def test_check_anomaly_trained(self) -> None:
         """Test anomaly check works when trained."""
         analyzer = MLPatternAnalyzer(contamination=0.1)
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Build training data - need at least 100 samples
         # Record multiple events per day to reach the minimum
@@ -221,9 +230,9 @@ class TestMLPatternAnalyzer:
                 ts = base_ts + timedelta(days=day, hours=hour_offset)
                 analyzer.record_event("sensor.test", ts)
 
-        # Train
-        result = analyzer.train()
-        assert result is True
+        # Train (replay historical data)
+        train_result = analyzer.train()
+        assert train_result is True
         assert analyzer.is_trained
 
         # Check normal event (similar time)
@@ -231,7 +240,7 @@ class TestMLPatternAnalyzer:
             entity_id="sensor.test",
             timestamp=base_ts + timedelta(days=21),  # Same time, different day
         )
-        result = analyzer.check_anomaly(normal_event)
+        check_result = analyzer.check_anomaly(normal_event)
         # Normal events might or might not be flagged depending on model
 
         # Check anomalous event (very different time)
@@ -240,14 +249,14 @@ class TestMLPatternAnalyzer:
             timestamp=base_ts + timedelta(days=21, hours=12),  # Noon instead of 9 AM
         )
         # Result could be an anomaly or None
-        result = analyzer.check_anomaly(anomalous_event)
-        if result:
-            assert isinstance(result, MLAnomalyResult)
+        check_result = analyzer.check_anomaly(anomalous_event)
+        if check_result:
+            assert isinstance(check_result, MLAnomalyResult)
 
     def test_get_strong_patterns(self) -> None:
         """Test getting strong patterns."""
         analyzer = MLPatternAnalyzer(cross_sensor_window_seconds=60)
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Create a strong correlation pattern
         for i in range(30):
@@ -263,7 +272,7 @@ class TestMLPatternAnalyzer:
     def test_prune_old_events(self) -> None:
         """Test pruning old events."""
         analyzer = MLPatternAnalyzer()
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Add old events
         for i in range(50):
@@ -275,15 +284,17 @@ class TestMLPatternAnalyzer:
             recent_ts = now - timedelta(days=i)
             analyzer.record_event("sensor.test", recent_ts)
 
-        initial_count = analyzer.sample_count
-        assert initial_count == 100
+        initial_event_count = len(analyzer._events)
+        assert initial_event_count == 100
 
         # Prune events older than 30 days
         pruned = analyzer.prune_old_events(max_age_days=30)
 
         assert pruned > 0
-        assert analyzer.sample_count < initial_count
-        assert analyzer.sample_count == 30  # Only last 30 days remain
+        assert len(analyzer._events) < initial_event_count
+        assert len(analyzer._events) == 30  # Only last 30 days remain
+        # Note: sample_count tracks total samples ever processed by ML model,
+        # it doesn't decrease when pruning events
 
     def test_to_dict_and_from_dict(self) -> None:
         """Test serialization round-trip."""
@@ -291,7 +302,7 @@ class TestMLPatternAnalyzer:
             contamination=0.1,
             cross_sensor_window_seconds=120,
         )
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Record some events
         for i in range(10):
@@ -317,7 +328,7 @@ class TestMLPatternAnalyzer:
     def test_cross_sensor_missing_correlation(self) -> None:
         """Test detection of missing correlation."""
         analyzer = MLPatternAnalyzer(cross_sensor_window_seconds=60)
-        base_ts = datetime(2024, 1, 15, 9, 0, 0)
+        base_ts = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
         # Build strong correlation pattern
         for i in range(50):
@@ -326,7 +337,7 @@ class TestMLPatternAnalyzer:
             analyzer.record_event("sensor.b", ts + timedelta(seconds=5))
 
         # Now simulate A triggering but B not following
-        recent_ts = datetime.now() - timedelta(seconds=30)
+        recent_ts = datetime.now(timezone.utc) - timedelta(seconds=30)
         recent_events = [
             StateChangeEvent(entity_id="sensor.a", timestamp=recent_ts),
         ]
@@ -351,7 +362,7 @@ class TestMLAnomalyResult:
             anomaly_score=-0.5,
             anomaly_type="isolation_forest",
             description="Test anomaly",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             related_entities=["sensor.other"],
         )
         assert result.is_anomaly
@@ -368,7 +379,7 @@ class TestMLAnomalyResult:
             anomaly_score=-0.3,
             anomaly_type="missing_correlation",
             description="Expected sensor.b to follow sensor.a",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             related_entities=["sensor.a", "sensor.b"],
         )
         assert result.is_anomaly

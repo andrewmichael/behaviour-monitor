@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 # 15-minute intervals per day (96 buckets)
@@ -287,7 +287,7 @@ class PatternAnalyzer:
 
     def get_current_interval_activity(self) -> dict[str, int]:
         """Get activity counts for the current 15-minute interval."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         current_interval = _get_interval_index(now)
         current_day = now.weekday()
 
@@ -301,14 +301,14 @@ class PatternAnalyzer:
 
     def get_daily_count(self, entity_id: str) -> int:
         """Get today's activity count for an entity."""
-        today = datetime.now().date()
+        today = datetime.now(timezone.utc).date()
         if self._daily_count_date != today:
             return 0
         return self._daily_counts.get(entity_id, 0)
 
     def get_total_daily_count(self) -> int:
         """Get total activity count across all entities today."""
-        today = datetime.now().date()
+        today = datetime.now(timezone.utc).date()
         if self._daily_count_date != today:
             return 0
         return sum(self._daily_counts.values())
@@ -328,7 +328,7 @@ class PatternAnalyzer:
         if min_first_obs is None:
             return 0.0
 
-        days_of_data = (datetime.now() - min_first_obs).days
+        days_of_data = (datetime.now(timezone.utc) - min_first_obs).days
         confidence = min(100.0, (days_of_data / self._learning_period_days) * 100)
         return confidence
 
@@ -341,7 +341,7 @@ class PatternAnalyzer:
         if not self._patterns:
             return 0.0
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         total_expected = 0.0
         total_actual = 0.0
 
@@ -371,7 +371,7 @@ class PatternAnalyzer:
         if current_interval_activity is None:
             current_interval_activity = self.get_current_interval_activity()
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         anomalies: list[AnomalyResult] = []
 
         for entity_id, pattern in self._patterns.items():
@@ -440,7 +440,7 @@ class PatternAnalyzer:
         If entity_id is None, calculates across all entities.
         Returns average time between state changes based on learned patterns.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         day_of_week = now.weekday()
 
         if entity_id:
@@ -482,7 +482,7 @@ class PatternAnalyzer:
                 "concern_level": 0.0,
             }
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         time_since = (now - last_activity).total_seconds()
         typical_interval = self.get_typical_interval()
 
@@ -522,7 +522,7 @@ class PatternAnalyzer:
 
         Returns expected vs actual activity counts up to current time.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         day_of_week = now.weekday()
         current_interval = _get_interval_index(now)
 
@@ -571,7 +571,7 @@ class PatternAnalyzer:
 
     def get_entity_status(self) -> list[dict[str, Any]]:
         """Get status for each monitored entity for elder care dashboard."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         entity_statuses = []
 
         for entity_id, pattern in self._patterns.items():

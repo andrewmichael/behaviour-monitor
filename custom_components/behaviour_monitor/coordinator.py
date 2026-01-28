@@ -11,6 +11,7 @@ from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .analyzer import AnomalyResult, PatternAnalyzer
 from .const import (
@@ -83,13 +84,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Log ML status clearly
         if self._enable_ml:
             _LOGGER.info(
-                "Behaviour Monitor: ML features ENABLED (scikit-learn available)"
+                "Behaviour Monitor: ML features ENABLED (River library available)"
             )
         elif ml_requested and not ML_AVAILABLE:
             _LOGGER.warning(
-                "Behaviour Monitor: ML features DISABLED - scikit-learn not installed. "
+                "Behaviour Monitor: ML features DISABLED - River library not installed. "
                 "Statistical analysis will still work. "
-                "To enable ML, install: pip install scikit-learn numpy"
+                "To enable ML, install: pip install river"
             )
         else:
             _LOGGER.info(
@@ -238,7 +239,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Check if retrain period has passed
         retrain_delta = timedelta(days=self._retrain_period_days)
-        if datetime.now() - last_trained > retrain_delta:
+        if dt_util.now() - last_trained > retrain_delta:
             _LOGGER.info(
                 "Retraining ML model (last trained: %s, period: %d days)",
                 last_trained.isoformat(),
@@ -297,7 +298,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 new_state.state,
             )
 
-        timestamp = datetime.now()
+        timestamp = dt_util.now()
 
         # Record in statistical analyzer
         self._analyzer.record_state_change(entity_id, timestamp)
@@ -555,7 +556,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"({routine.get('actual_today', 0)} of ~{routine.get('expected_by_now', 0):.0f} expected)\n\n"
             f"**Last Activity:** {activity.get('time_since_formatted', 'Unknown')} "
             f"(usually every {activity.get('typical_interval_formatted', 'Unknown')})\n\n"
-            f"**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"**Time:** {dt_util.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
         await self.hass.services.async_call(
