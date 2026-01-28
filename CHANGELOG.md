@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-01-28
+
+### Fixed
+- output sensor for status or training, and allow more than one mobile service
+
 ## [2.4.4] - 2026-01-28
 
 ### Fixed

@@ -10,5 +10,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/your-repo/behaviour-monitor/issues",
   "requirements": [],
-  "version": "2.4.4"
+  "version": "2.4.5"
 }
