@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Behaviour Monitor Setup",
+        "description": "Configure Behaviour Monitor to learn entity state patterns and detect anomalies using statistical analysis and machine learning.",
+        "data": {
+          "monitored_entities": "Entities to monitor",
+          "sensitivity": "Anomaly detection sensitivity",
+          "learning_period": "Statistical learning period",
+          "enable_notifications": "Enable anomaly notifications",
+          "enable_ml": "Enable machine learning",
+          "retrain_period": "ML retrain period",
+          "cross_sensor_window": "Cross-sensor correlation window"
+        },
+        "data_description": {
+          "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
+          "sensitivity": "Higher sensitivity detects smaller deviations. Low = 3σ (extreme only), Medium = 2σ, High = 1σ (any deviation).",
+          "learning_period": "Number of days to collect data before statistical anomaly detection activates.",
+          "enable_notifications": "Send persistent notifications when anomalies are detected.",
+          "enable_ml": "Enable Isolation Forest ML for advanced pattern detection and cross-sensor correlation analysis.",
+          "retrain_period": "How often to retrain the ML model with new data.",
+          "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors."
+        }
+      }
+    },
+    "error": {
+      "no_entities_selected": "Please select at least one entity to monitor."
+    },
+    "abort": {
+      "already_configured": "This combination of entities is already being monitored."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Behaviour Monitor Options",
+        "description": "Update Behaviour Monitor configuration.",
+        "data": {
+          "monitored_entities": "Entities to monitor",
+          "sensitivity": "Anomaly detection sensitivity",
+          "learning_period": "Statistical learning period",
+          "enable_notifications": "Enable anomaly notifications",
+          "enable_ml": "Enable machine learning",
+          "retrain_period": "ML retrain period",
+          "cross_sensor_window": "Cross-sensor correlation window"
+        }
+      }
+    },
+    "error": {
+      "no_entities_selected": "Please select at least one entity to monitor."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "last_activity": {
+        "name": "Last Activity"
+      },
+      "activity_score": {
+        "name": "Activity Score"
+      },
+      "anomaly_detected": {
+        "name": "Anomaly Detected"
+      },
+      "baseline_confidence": {
+        "name": "Baseline Confidence"
+      },
+      "daily_activity_count": {
+        "name": "Daily Activity Count"
+      },
+      "cross_sensor_patterns": {
+        "name": "Cross-Sensor Patterns"
+      }
+    }
+  }
+}
