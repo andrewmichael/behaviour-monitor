@@ -265,7 +265,7 @@ class BehaviourMonitorSensor(
             name="Behaviour Monitor",
             manufacturer="Custom Integration",
             model="Pattern Analyzer",
-            sw_version="2.5.0",
+            sw_version="2.5.1",
         )
 
     @property
