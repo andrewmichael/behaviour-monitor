@@ -564,14 +564,22 @@ class MLPatternAnalyzer:
         # Restore sample count
         analyzer._samples_processed = data.get("samples_processed", 0)
 
-        # Restore timestamps
+        # Restore timestamps (ensure timezone awareness)
         became_effective = data.get("became_effective_at")
         if became_effective:
-            analyzer._became_effective_at = datetime.fromisoformat(became_effective)
+            dt = datetime.fromisoformat(became_effective)
+            # Add UTC timezone if naive
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            analyzer._became_effective_at = dt
 
         last_warmup = data.get("last_warmup")
         if last_warmup:
-            analyzer._last_warmup = datetime.fromisoformat(last_warmup)
+            dt = datetime.fromisoformat(last_warmup)
+            # Add UTC timezone if naive
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            analyzer._last_warmup = dt
 
         # Rebuild entity last change map
         for event in analyzer._events:
