@@ -28,25 +28,28 @@ A Home Assistant custom integration that learns entity state patterns and detect
 
 ### Enabling ML Features (Optional)
 
-ML features require scikit-learn. The integration works without it (statistical analysis only).
+ML features require scikit-learn. **The integration works perfectly without it** using statistical analysis only. Most users won't need ML - statistical Z-score detection is effective for pattern anomaly detection.
 
-**Home Assistant Core:**
+**Home Assistant Core (x86/amd64):**
 ```bash
 pip install scikit-learn numpy
 ```
 
-**Home Assistant OS / Supervised:**
+**Home Assistant OS / Supervised / Container:**
+
+Installing scikit-learn on Home Assistant OS can be challenging because:
+- Pre-built wheels may not exist for your architecture (especially ARM/Raspberry Pi)
+- Building from source requires compilation tools not available in the container
+
+If you want to try:
 ```bash
 # Via SSH & Web Terminal add-on
 docker exec -it homeassistant pip install scikit-learn numpy
 ```
 
-**Home Assistant Container:**
-```bash
-docker exec -it homeassistant pip install scikit-learn numpy
-```
+**If installation fails**, the integration will still work with statistical analysis only. The statistical detection (Z-score) is reliable and doesn't require any additional dependencies.
 
-If scikit-learn is not installed, the integration will log a warning and disable ML features automatically.
+If scikit-learn is not installed, the integration will log a warning and automatically disable ML features.
 
 ## Configuration
 
