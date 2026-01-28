@@ -147,6 +147,8 @@ class MLPatternAnalyzer:
         self._entity_last_change: dict[str, datetime] = {}
         self._recent_events_window: list[StateChangeEvent] = []
         self._entity_indices: dict[str, int] = {}
+        self._became_effective_at: datetime | None = None  # When model reached min samples
+        self._last_warmup: datetime | None = None  # When train() was last called
 
         # Initialize model if River is available
         if ML_AVAILABLE:
@@ -172,12 +174,13 @@ class MLPatternAnalyzer:
 
     @property
     def last_trained(self) -> datetime | None:
-        """Get the timestamp of when training threshold was reached.
+        """Get the timestamp of when the model became effective.
 
-        With streaming ML, there's no discrete training. Return None
-        to indicate continuous learning.
+        With streaming ML, this returns when the model first reached
+        the minimum sample threshold, or when it was last warmed up
+        via train() after loading from storage.
         """
-        return None  # Streaming ML - always learning
+        return self._last_warmup or self._became_effective_at
 
     @property
     def sample_count(self) -> int:
@@ -220,6 +223,15 @@ class MLPatternAnalyzer:
             # Learn from this event (streaming update)
             self._model.learn_one(features)
             self._samples_processed += 1
+
+            # Track when model first became effective
+            if (self._became_effective_at is None and
+                    self._samples_processed >= MIN_SAMPLES_FOR_ML):
+                self._became_effective_at = timestamp
+                _LOGGER.info(
+                    "ML model became effective after %d samples",
+                    self._samples_processed,
+                )
 
         # Track last change time per entity
         self._entity_last_change[entity_id] = timestamp
@@ -346,8 +358,15 @@ class MLPatternAnalyzer:
             self._samples_processed += 1
             self._entity_last_change[event.entity_id] = event.timestamp
 
+        # Record warmup timestamp
+        self._last_warmup = datetime.now(timezone.utc)
+
+        # Set became_effective if not already set
+        if self._became_effective_at is None and self._samples_processed >= MIN_SAMPLES_FOR_ML:
+            self._became_effective_at = self._last_warmup
+
         _LOGGER.info(
-            "Trained Half-Space Trees on %d samples (streaming model)",
+            "Warmed up Half-Space Trees on %d samples (streaming model)",
             self._samples_processed,
         )
         return True
@@ -502,6 +521,14 @@ class MLPatternAnalyzer:
             "contamination": self._contamination,
             "cross_sensor_window_seconds": self._cross_sensor_window.total_seconds(),
             "entity_indices": self._entity_indices,
+            "became_effective_at": (
+                self._became_effective_at.isoformat()
+                if self._became_effective_at else None
+            ),
+            "last_warmup": (
+                self._last_warmup.isoformat()
+                if self._last_warmup else None
+            ),
         }
 
     @classmethod
@@ -537,11 +564,20 @@ class MLPatternAnalyzer:
         # Restore sample count
         analyzer._samples_processed = data.get("samples_processed", 0)
 
+        # Restore timestamps
+        became_effective = data.get("became_effective_at")
+        if became_effective:
+            analyzer._became_effective_at = datetime.fromisoformat(became_effective)
+
+        last_warmup = data.get("last_warmup")
+        if last_warmup:
+            analyzer._last_warmup = datetime.fromisoformat(last_warmup)
+
         # Rebuild entity last change map
         for event in analyzer._events:
             analyzer._entity_last_change[event.entity_id] = event.timestamp
 
-        # Retrain the model with historical data if we have enough
+        # Warm up the model with historical data if we have enough
         if len(analyzer._events) >= MIN_SAMPLES_FOR_ML:
             analyzer.train()
 
