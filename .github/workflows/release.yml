@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Verify manifest version matches tag
+        run: |
+          MANIFEST_VERSION=$(jq -r '.version' custom_components/behaviour_monitor/manifest.json)
+          TAG_VERSION=${{ steps.version.outputs.version }}
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: manifest.json version ($MANIFEST_VERSION) does not match tag version ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed: $MANIFEST_VERSION"
+
+      - name: Create zip for HACS
+        run: |
+          cd custom_components
+          zip -r ../behaviour_monitor.zip behaviour_monitor
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: behaviour_monitor.zip
+          body: |
+            ## Installation
+
+            ### HACS (Recommended)
+            1. Open HACS in Home Assistant
+            2. Go to Integrations
+            3. Add this repository as a custom repository
+            4. Search for "Behaviour Monitor" and install
+
+            ### Manual
+            1. Download `behaviour_monitor.zip` from this release
+            2. Extract to `custom_components/behaviour_monitor/` in your HA config directory
+            3. Restart Home Assistant
+
+            ### ML Features (Optional)
+            To enable ML-based anomaly detection, SSH into your HA OS and run:
+            ```bash
+            docker exec -it homeassistant pip install river
+            ```

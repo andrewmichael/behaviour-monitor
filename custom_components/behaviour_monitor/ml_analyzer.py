@@ -46,9 +46,12 @@ class StateChangeEvent:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StateChangeEvent:
         """Create from dictionary."""
+        ts = datetime.fromisoformat(data["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
         return cls(
             entity_id=data["entity_id"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=ts,
             old_state=data.get("old_state"),
             new_state=data.get("new_state"),
         )

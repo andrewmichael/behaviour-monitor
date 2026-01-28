@@ -163,12 +163,18 @@ class EntityPattern:
         pattern.total_observations = data.get("total_observations", 0)
 
         first_obs = data.get("first_observation")
-        pattern.first_observation = (
-            datetime.fromisoformat(first_obs) if first_obs else None
-        )
+        if first_obs:
+            dt = datetime.fromisoformat(first_obs)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            pattern.first_observation = dt
 
         last_obs = data.get("last_observation")
-        pattern.last_observation = datetime.fromisoformat(last_obs) if last_obs else None
+        if last_obs:
+            dt = datetime.fromisoformat(last_obs)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            pattern.last_observation = dt
 
         return pattern
 
