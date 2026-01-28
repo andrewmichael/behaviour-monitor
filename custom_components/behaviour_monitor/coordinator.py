@@ -70,6 +70,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._recent_ml_anomalies: list[MLAnomalyResult] = []
         self._recent_events: list[StateChangeEvent] = []
         self._last_welfare_status: str | None = None
+        self._last_notification_time: datetime | None = None
+        self._last_notification_type: str | None = None
 
         # Get configuration
         sensitivity_key = entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY)
@@ -479,6 +481,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "routine": routine_progress,
             "activity_context": activity_context,
             "entity_status": entity_status,
+            # Notification tracking
+            "last_notification": {
+                "timestamp": (
+                    self._last_notification_time.isoformat()
+                    if self._last_notification_time
+                    else None
+                ),
+                "type": self._last_notification_type,
+            },
         }
 
     async def _send_notification(self, anomalies: list[AnomalyResult]) -> None:
@@ -542,6 +553,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "notification_id": notification_id,
             },
         )
+
+        # Track notification time
+        self._last_notification_time = dt_util.now()
+        self._last_notification_type = "statistical"
 
         _LOGGER.info(
             "Sent notification for %d anomalies (highest severity: %s)",
@@ -610,6 +625,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "notification_id": notification_id,
             },
         )
+
+        # Track notification time
+        self._last_notification_time = dt_util.now()
+        self._last_notification_type = "ml"
 
         _LOGGER.info("Sent ML notification for %d anomalies", len(anomalies))
 
@@ -687,6 +706,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "notification_id": notification_id,
             },
         )
+
+        # Track notification time
+        self._last_notification_time = dt_util.now()
+        self._last_notification_type = "welfare"
 
         _LOGGER.info("Sent welfare notification: %s - %s", status, welfare_status.get("summary", ""))
 

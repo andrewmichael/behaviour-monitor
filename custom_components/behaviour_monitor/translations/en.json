@@ -84,6 +84,9 @@
       },
       "ml_training_remaining": {
         "name": "ML Training Remaining"
+      },
+      "last_notification": {
+        "name": "Last Notification"
       }
     }
   }

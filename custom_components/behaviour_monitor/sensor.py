@@ -209,6 +209,20 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "first_event": data.get("ml_training", {}).get("first_event"),
         },
     ),
+    BehaviourMonitorSensorDescription(
+        key="last_notification",
+        name="Last Notification",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:bell-ring",
+        value_fn=lambda data: (
+            datetime.fromisoformat(data["last_notification"]["timestamp"])
+            if data.get("last_notification", {}).get("timestamp")
+            else None
+        ),
+        extra_attrs_fn=lambda coord, data: {
+            "type": data.get("last_notification", {}).get("type"),
+        },
+    ),
 )
 
 
