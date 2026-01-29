@@ -110,15 +110,21 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         name="ML Status",
         icon="mdi:brain",
         value_fn=lambda data: (
-            "Trained" if data.get("ml_status", {}).get("trained", False)
+            # Check if fully ready (both samples AND learning period complete)
+            "Ready" if data.get("ml_training", {}).get("complete", False)
+            # Model has samples but learning period not elapsed
+            else "Trained (learning)" if data.get("ml_status", {}).get("trained", False)
+            # Still collecting samples
             else "Learning" if data.get("ml_status", {}).get("enabled", False)
             else "Disabled"
         ),
         extra_attrs_fn=lambda coord, data: {
             "enabled": data.get("ml_status", {}).get("enabled", False),
             "trained": data.get("ml_status", {}).get("trained", False),
+            "ready": data.get("ml_training", {}).get("complete", False),
             "sample_count": data.get("ml_status", {}).get("sample_count", 0),
             "samples_needed": max(0, 100 - data.get("ml_status", {}).get("sample_count", 0)),
+            "learning_period_complete": data.get("ml_training", {}).get("days_remaining", 1) == 0,
             "last_trained": data.get("ml_status", {}).get("last_trained"),
             "next_retrain": data.get("ml_status", {}).get("next_retrain"),
             "scikit_learn_available": coord.ml_analyzer.ml_available if coord else False,

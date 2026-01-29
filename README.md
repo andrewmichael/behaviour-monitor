@@ -116,9 +116,11 @@ If River is not installed, the integration will log a warning and automatically 
 | Learning period | Days before statistical anomaly detection activates | 7 days |
 | Enable notifications | Send persistent notifications when anomalies are detected | Yes |
 | Enable ML | Enable Half-Space Trees machine learning (requires River) | Yes |
+| ML learning period | Days before ML notifications are sent (requires 100+ samples too) | 7 days |
 | ML retrain period | How often to replay historical data for model warmup | 14 days |
 | Cross-sensor window | Time window for detecting sensor correlations | 300 seconds |
 | Track attributes | Also track attribute changes, not just state changes | Yes |
+| Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
 
 ## Sensors
 
@@ -134,7 +136,10 @@ The integration creates the following sensors:
 | `sensor.behaviour_monitor_baseline_confidence` | Progress of statistical pattern learning (0-100%) |
 | `sensor.behaviour_monitor_daily_activity_count` | Total state changes recorded today |
 | `sensor.behaviour_monitor_cross_sensor_patterns` | Number of detected cross-sensor correlations |
-| `sensor.behaviour_monitor_ml_status` | ML status: "Trained", "Learning", or "Disabled" |
+| `sensor.behaviour_monitor_ml_status` | ML status: "Ready", "Trained (learning)", "Learning", or "Disabled" |
+| `sensor.behaviour_monitor_statistical_training_remaining` | Time remaining until statistical learning completes |
+| `sensor.behaviour_monitor_ml_training_remaining` | Time remaining until ML learning completes |
+| `sensor.behaviour_monitor_last_notification` | Timestamp of the last notification sent |
 
 ### Elder Care Sensors
 
@@ -147,12 +152,22 @@ The integration creates the following sensors:
 
 ### Sensor Attributes
 
-**ML Status** sensor includes:
+**ML Status** sensor values:
+| Value | Meaning |
+|-------|---------|
+| `Ready` | Both 100+ samples AND learning period complete - will send notifications |
+| `Trained (learning)` | Has 100+ samples but learning period not elapsed - won't send notifications yet |
+| `Learning` | Still collecting samples (< 100) |
+| `Disabled` | ML disabled or River not installed |
+
+**ML Status** sensor attributes:
 - `enabled`: Whether ML is enabled in config AND River is available
 - `trained`: Whether the model has processed enough samples (100+)
+- `ready`: Whether ML is fully ready to send notifications (samples + learning period)
 - `sample_count`: Number of events processed by the ML model
 - `samples_needed`: Events needed before ML becomes active
-- `scikit_learn_available`: Whether River library is installed (legacy name)
+- `learning_period_complete`: Whether the configured learning days have passed
+- `scikit_learn_available`: Whether River library is installed
 
 **Welfare Status** sensor includes:
 - `reasons`: List of reasons for current status
@@ -191,6 +206,24 @@ The integration creates the following sensors:
 
 **Cross-Sensor Patterns** sensor includes:
 - `cross_sensor_patterns`: List of learned correlations with strength and timing
+
+**Statistical Training Remaining** sensor includes:
+- `complete`: Whether statistical learning is complete
+- `days_remaining`: Days until learning period completes
+- `days_elapsed`: Days since first observation
+- `total_days`: Configured learning period in days
+- `first_observation`: Timestamp of first recorded event
+
+**ML Training Remaining** sensor includes:
+- `complete`: Whether ML is fully ready (samples + time)
+- `status`: Current status description
+- `days_remaining`: Days until learning period completes
+- `samples_remaining`: Samples needed to reach 100
+- `samples_processed`: Current sample count
+- `first_event`: Timestamp of first ML event
+
+**Last Notification** sensor includes:
+- `type`: Type of last notification sent (`statistical`, `ml`, or `welfare`)
 
 ## How It Works
 
