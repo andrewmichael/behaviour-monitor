@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-01-29
+
+### Fixed
+- ml learning status must take samples and window into consideration
+
 ## [2.5.1] - 2026-01-28
 
 ### Fixed
