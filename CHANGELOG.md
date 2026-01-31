@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-01-31
+
+### Added
+- add logo files for HACS branding
+
+### Fixed
+- add dark mode logos for HACS
+
 ## [2.5.6] - 2026-01-31
 
 ### Fixed
