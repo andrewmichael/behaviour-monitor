@@ -127,7 +127,7 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "learning_period_complete": data.get("ml_training", {}).get("days_remaining", 1) == 0,
             "last_trained": data.get("ml_status", {}).get("last_trained"),
             "next_retrain": data.get("ml_status", {}).get("next_retrain"),
-            "scikit_learn_available": coord.ml_analyzer.ml_available if coord else False,
+            "ml_available": coord.ml_analyzer.ml_available if coord else False,
         },
     ),
     # Elder Care Sensors

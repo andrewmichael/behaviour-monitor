@@ -167,7 +167,7 @@ The integration creates the following sensors:
 - `sample_count`: Number of events processed by the ML model
 - `samples_needed`: Events needed before ML becomes active
 - `learning_period_complete`: Whether the configured learning days have passed
-- `scikit_learn_available`: Whether River library is installed
+- `ml_available`: Whether ML library is installed
 
 **Welfare Status** sensor includes:
 - `reasons`: List of reasons for current status
