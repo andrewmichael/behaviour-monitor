@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-02-01
+
+### Added
+- add holiday mode and visitor snooze controls
+
 ## [2.7.0] - 2026-02-01
 
 ### Added
