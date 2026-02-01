@@ -72,6 +72,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_welfare_status: str | None = None
         self._last_notification_time: datetime | None = None
         self._last_notification_type: str | None = None
+        self._holiday_mode: bool = False
+        self._snooze_until: datetime | None = None
 
         # Get configuration
         sensitivity_key = entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY)
@@ -156,6 +158,46 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Check if ML is enabled."""
         return self._enable_ml
 
+    @property
+    def holiday_mode(self) -> bool:
+        """Check if holiday mode is enabled."""
+        return self._holiday_mode
+
+    @property
+    def snooze_until(self) -> datetime | None:
+        """Get the snooze until timestamp."""
+        return self._snooze_until
+
+    def is_snoozed(self) -> bool:
+        """Check if currently snoozed."""
+        if self._snooze_until is None:
+            return False
+        return dt_util.now() < self._snooze_until
+
+    def get_snooze_duration_key(self) -> str:
+        """Get the current snooze duration key."""
+        from .const import SNOOZE_DURATIONS, SNOOZE_OFF
+
+        if not self.is_snoozed():
+            return SNOOZE_OFF
+
+        # Calculate remaining time
+        remaining = (self._snooze_until - dt_util.now()).total_seconds()
+
+        # Find closest duration key
+        closest_key = SNOOZE_OFF
+        min_diff = float("inf")
+
+        for key, duration in SNOOZE_DURATIONS.items():
+            if key == SNOOZE_OFF:
+                continue
+            diff = abs(remaining - duration)
+            if diff < min_diff:
+                min_diff = diff
+                closest_key = key
+
+        return closest_key
+
     async def async_setup(self) -> None:
         """Set up the coordinator."""
         # Load stored statistical data
@@ -178,10 +220,28 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._last_notification_type = coordinator_state.get("last_notification_type")
                 self._last_welfare_status = coordinator_state.get("last_welfare_status")
 
+                # Restore holiday mode
+                self._holiday_mode = coordinator_state.get("holiday_mode", False)
+
+                # Restore snooze (check if not expired)
+                snooze_until_str = coordinator_state.get("snooze_until")
+                if snooze_until_str:
+                    snooze_dt = datetime.fromisoformat(snooze_until_str)
+                    if snooze_dt.tzinfo is None:
+                        snooze_dt = snooze_dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                    # Only restore if not expired
+                    if snooze_dt > dt_util.now():
+                        self._snooze_until = snooze_dt
+                    else:
+                        self._snooze_until = None
+                        _LOGGER.debug("Snooze expired, not restoring")
+
                 _LOGGER.debug(
-                    "Loaded coordinator state: last_notification=%s, last_welfare=%s",
+                    "Loaded coordinator state: last_notification=%s, last_welfare=%s, holiday_mode=%s, snoozed=%s",
                     self._last_notification_time,
                     self._last_welfare_status,
+                    self._holiday_mode,
+                    self.is_snoozed(),
                 )
             else:
                 # Old format - stored_data is the analyzer dict directly
@@ -267,6 +327,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ),
                 "last_notification_type": self._last_notification_type,
                 "last_welfare_status": self._last_welfare_status,
+                "holiday_mode": self._holiday_mode,
+                "snooze_until": (
+                    self._snooze_until.isoformat()
+                    if self._snooze_until
+                    else None
+                ),
             },
         }
         await self._store.async_save(storage_data)
@@ -299,16 +365,56 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._ml_analyzer.prune_old_events(max_age_days=self._retrain_period_days * 2)
             self._ml_analyzer.train()
 
+    async def async_enable_holiday_mode(self) -> None:
+        """Enable holiday mode - stops all tracking and learning."""
+        self._holiday_mode = True
+        await self._save_data()
+        _LOGGER.info("Holiday mode enabled - all tracking paused")
+
+    async def async_disable_holiday_mode(self) -> None:
+        """Disable holiday mode - resumes normal operation."""
+        self._holiday_mode = False
+        await self._save_data()
+        _LOGGER.info("Holiday mode disabled - tracking resumed")
+
+    async def async_snooze(self, duration_key: str) -> None:
+        """Snooze notifications for a specified duration."""
+        from .const import SNOOZE_DURATIONS, SNOOZE_LABELS
+
+        duration_seconds = SNOOZE_DURATIONS.get(duration_key, 0)
+        if duration_seconds == 0:
+            await self.async_clear_snooze()
+            return
+
+        self._snooze_until = dt_util.now() + timedelta(seconds=duration_seconds)
+        await self._save_data()
+        _LOGGER.info(
+            "Notifications snoozed for %s until %s",
+            SNOOZE_LABELS.get(duration_key, duration_key),
+            self._snooze_until.isoformat(),
+        )
+
+    async def async_clear_snooze(self) -> None:
+        """Clear snooze - resume normal notifications."""
+        self._snooze_until = None
+        await self._save_data()
+        _LOGGER.info("Snooze cleared - notifications resumed")
+
     @callback
     def _handle_state_changed(self, event: Event) -> None:
         """Handle state change events."""
+        # Check if holiday mode is enabled - if so, ignore all state changes
+        if self._holiday_mode:
+            return
+
         entity_id = event.data.get("entity_id")
 
         # Debug: log all state changes to help diagnose issues
         _LOGGER.debug(
-            "State change event received: entity=%s, monitored=%s",
+            "State change event received: entity=%s, monitored=%s, snoozed=%s",
             entity_id,
             entity_id in self._monitored_entities,
+            self.is_snoozed(),
         )
 
         if entity_id not in self._monitored_entities:
@@ -350,19 +456,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         timestamp = dt_util.now()
 
-        # Record in statistical analyzer
-        self._analyzer.record_state_change(entity_id, timestamp)
+        # Check if snoozed
+        is_snoozed = self.is_snoozed()
 
-        # Record in ML analyzer
+        # During snooze: only track events (for ML history), don't update patterns
+        if not is_snoozed:
+            # Record in statistical analyzer (updates patterns)
+            self._analyzer.record_state_change(entity_id, timestamp)
+
+        # Always record ML events (even when snoozed) to maintain history
+        # But don't train the model during snooze
         if self._enable_ml:
-            self._ml_analyzer.record_event(
-                entity_id=entity_id,
-                timestamp=timestamp,
-                old_state=old_state.state,
-                new_state=new_state.state,
-            )
-
-            # Track recent events for cross-sensor analysis
+            # Track the event but don't call record_event (which trains the model)
+            # Instead, just add to recent events
             ml_event = StateChangeEvent(
                 entity_id=entity_id,
                 timestamp=timestamp,
@@ -375,12 +481,23 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cutoff = timestamp - timedelta(seconds=self._cross_sensor_window * 2)
             self._recent_events = [e for e in self._recent_events if e.timestamp >= cutoff]
 
+            # Only record in ML analyzer (which updates patterns) if not snoozed
+            if not is_snoozed:
+                self._ml_analyzer.record_event(
+                    entity_id=entity_id,
+                    timestamp=timestamp,
+                    old_state=old_state.state,
+                    new_state=new_state.state,
+                )
+
+        snooze_status = " [SNOOZED - patterns not updated]" if is_snoozed else ""
         _LOGGER.info(
-            "Behaviour Monitor: Recorded state change for %s: %s -> %s (daily total: %d)",
+            "Behaviour Monitor: Recorded state change for %s: %s -> %s (daily total: %d)%s",
             entity_id,
             old_state.state,
             new_state.state,
             self._analyzer.get_total_daily_count(),
+            snooze_status,
         )
 
         # Trigger an update to refresh sensors
@@ -388,16 +505,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data and check for anomalies."""
-        # Check for statistical anomalies
-        stat_anomalies = self._analyzer.check_for_anomalies()
+        # Skip anomaly detection if holiday mode or snoozed
+        skip_anomaly_detection = self._holiday_mode or self.is_snoozed()
+
+        # Check for statistical anomalies (unless skipped)
+        stat_anomalies = [] if skip_anomaly_detection else self._analyzer.check_for_anomalies()
 
         if stat_anomalies:
             self._recent_anomalies = stat_anomalies
 
-        # Check for ML anomalies
+        # Check for ML anomalies (unless skipped)
         ml_anomalies: list[MLAnomalyResult] = []
 
-        if self._enable_ml:
+        if self._enable_ml and not skip_anomaly_detection:
             # Check if we need to retrain
             await self._check_retrain()
 
@@ -421,7 +541,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         all_anomalies_detected = len(stat_anomalies) > 0 or len(ml_anomalies) > 0
 
         # Send notifications only after respective learning periods complete
-        if self._enable_notifications:
+        # Skip notifications if holiday mode or snoozed
+        if self._enable_notifications and not skip_anomaly_detection:
             # Determine if any learning is complete
             stat_learning_complete = self._analyzer.is_learning_complete()
 
@@ -530,6 +651,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ),
                 "type": self._last_notification_type,
             },
+            # Holiday mode and snooze status
+            "holiday_mode": self._holiday_mode,
+            "snooze_active": self.is_snoozed(),
+            "snooze_until": (
+                self._snooze_until.isoformat()
+                if self._snooze_until
+                else None
+            ),
         }
 
     async def _send_notification(self, anomalies: list[AnomalyResult]) -> None:

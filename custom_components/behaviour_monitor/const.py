@@ -96,3 +96,45 @@ WELFARE_OK: Final = "ok"
 WELFARE_CHECK: Final = "check_recommended"
 WELFARE_CONCERN: Final = "concern"
 WELFARE_ALERT: Final = "alert"
+
+# Holiday mode and snooze
+ATTR_HOLIDAY_MODE: Final = "holiday_mode"
+ATTR_SNOOZE_UNTIL: Final = "snooze_until"
+ATTR_SNOOZE_ACTIVE: Final = "snooze_active"
+
+# Snooze duration options
+SNOOZE_OFF: Final = "off"
+SNOOZE_1_HOUR: Final = "1_hour"
+SNOOZE_2_HOURS: Final = "2_hours"
+SNOOZE_4_HOURS: Final = "4_hours"
+SNOOZE_1_DAY: Final = "1_day"
+
+SNOOZE_DURATIONS: Final = {
+    SNOOZE_OFF: 0,
+    SNOOZE_1_HOUR: 3600,      # 1 hour in seconds
+    SNOOZE_2_HOURS: 7200,     # 2 hours
+    SNOOZE_4_HOURS: 14400,    # 4 hours
+    SNOOZE_1_DAY: 86400,      # 24 hours
+}
+
+SNOOZE_OPTIONS: Final = [
+    SNOOZE_OFF,
+    SNOOZE_1_HOUR,
+    SNOOZE_2_HOURS,
+    SNOOZE_4_HOURS,
+    SNOOZE_1_DAY,
+]
+
+SNOOZE_LABELS: Final = {
+    SNOOZE_OFF: "Off",
+    SNOOZE_1_HOUR: "1 Hour",
+    SNOOZE_2_HOURS: "2 Hours",
+    SNOOZE_4_HOURS: "4 Hours",
+    SNOOZE_1_DAY: "1 Day",
+}
+
+# Services
+SERVICE_ENABLE_HOLIDAY_MODE: Final = "enable_holiday_mode"
+SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
+SERVICE_SNOOZE: Final = "snooze"
+SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"

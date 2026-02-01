@@ -1,0 +1,42 @@
+# Services for Behaviour Monitor integration
+
+enable_holiday_mode:
+  name: Enable Holiday Mode
+  description: >
+    Enable holiday mode. All tracking, learning, and notifications are paused.
+    Use this when the monitored person is away on vacation to prevent false
+    anomalies and welfare alerts.
+
+disable_holiday_mode:
+  name: Disable Holiday Mode
+  description: >
+    Disable holiday mode and resume normal tracking, learning, and notifications.
+
+snooze:
+  name: Snooze Notifications
+  description: >
+    Temporarily pause anomaly detection and notifications for a specified duration.
+    State tracking continues but statistical patterns and ML models are not updated.
+    Use this when visitors are present or during unusual but expected activity.
+  fields:
+    duration:
+      name: Duration
+      description: How long to snooze notifications
+      required: true
+      example: "2_hours"
+      selector:
+        select:
+          options:
+            - label: "1 Hour"
+              value: "1_hour"
+            - label: "2 Hours"
+              value: "2_hours"
+            - label: "4 Hours"
+              value: "4_hours"
+            - label: "1 Day"
+              value: "1_day"
+
+clear_snooze:
+  name: Clear Snooze
+  description: >
+    Clear active snooze and immediately resume anomaly detection and notifications.

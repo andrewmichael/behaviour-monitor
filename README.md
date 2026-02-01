@@ -9,6 +9,8 @@ A Home Assistant custom integration that learns entity state patterns and detect
 - **Cross-Sensor Correlation**: Learns relationships between sensors (e.g., "motion sensor usually triggers before light turns on")
 - **Hybrid Detection**: Combines Z-score statistics with ML for comprehensive anomaly detection
 - **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
+- **Holiday Mode**: Completely pause tracking and notifications when person is away
+- **Visitor Snooze**: Temporarily pause learning and alerts during expected unusual activity
 - **Attribute Tracking**: Optionally track attribute changes, not just state changes
 - **Notifications**: Sends persistent notifications with severity levels for unusual activity patterns
 - **HACS Compatible**: Install via HACS for easy updates
@@ -122,9 +124,161 @@ If River is not installed, the integration will log a warning and automatically 
 | Track attributes | Also track attribute changes, not just state changes | Yes |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
 
-## Sensors
+## Holiday Mode and Visitor Snooze
 
-The integration creates the following sensors:
+The integration provides two modes for managing tracking during exceptional circumstances:
+
+### 🏖️ Holiday Mode
+
+**Complete pause** - Use when the monitored person is away on vacation or extended absence.
+
+**What it does:**
+- ✋ Stops all state tracking (state changes completely ignored)
+- ✋ Pauses all pattern learning (no baseline updates)
+- ✋ Disables all anomaly detection
+- ✋ Suppresses all notifications
+- 🔄 Persists across Home Assistant reboots
+
+**How to use:**
+```yaml
+# Via service
+service: behaviour_monitor.enable_holiday_mode
+
+# Or toggle the switch entity
+entity_id: switch.behaviour_monitor_holiday_mode
+```
+
+**Use cases:**
+- Person on vacation for a week
+- Extended hospital stay
+- Visiting family for several days
+- Any time absence is expected and normal
+
+### 🔕 Visitor/Snooze Mode
+
+**Temporary pause** - Use when unusual but expected activity occurs (visitors, care workers, etc.)
+
+**What it does:**
+- ✅ Continues state tracking (events are logged)
+- ✋ Pauses pattern learning (baseline not affected by visitor activity)
+- ✋ Disables anomaly detection
+- ✋ Suppresses notifications
+- ⏰ Auto-expires after selected duration
+- 🔄 Persists across reboots (with expiration check)
+
+**Available durations:**
+- 1 Hour
+- 2 Hours
+- 4 Hours
+- 1 Day
+
+**How to use:**
+```yaml
+# Via service
+service: behaviour_monitor.snooze
+data:
+  duration: "4_hours"  # Options: 1_hour, 2_hours, 4_hours, 1_day
+
+# Clear snooze early
+service: behaviour_monitor.clear_snooze
+
+# Or use the select entity
+entity_id: select.behaviour_monitor_snooze_notifications
+```
+
+**Use cases:**
+- Overnight guests staying
+- Care worker visit (2-4 hours)
+- Family gathering
+- Maintenance/repair personnel
+- Any temporary unusual activity
+
+### Example Automations
+
+**Auto-enable holiday mode from calendar:**
+```yaml
+automation:
+  - alias: "Enable Holiday Mode on Vacation"
+    trigger:
+      - platform: calendar
+        event: start
+        entity_id: calendar.vacation
+    action:
+      - service: behaviour_monitor.enable_holiday_mode
+
+  - alias: "Disable Holiday Mode After Vacation"
+    trigger:
+      - platform: calendar
+        event: end
+        entity_id: calendar.vacation
+    action:
+      - service: behaviour_monitor.disable_holiday_mode
+```
+
+**Snooze during care worker visit:**
+```yaml
+automation:
+  - alias: "Snooze for Care Worker"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.care_worker_present
+        to: "on"
+    action:
+      - service: behaviour_monitor.snooze
+        data:
+          duration: "4_hours"
+```
+
+**Dashboard card:**
+```yaml
+type: entities
+title: Behaviour Monitor Controls
+entities:
+  - entity: switch.behaviour_monitor_holiday_mode
+    name: Holiday Mode
+    icon: mdi:beach
+  - entity: select.behaviour_monitor_snooze_notifications
+    name: Snooze Duration
+    icon: mdi:bell-sleep
+```
+
+For detailed documentation, see [HOLIDAY_SNOOZE_MODE.md](HOLIDAY_SNOOZE_MODE.md).
+
+## Services
+
+The integration provides the following services:
+
+| Service | Description |
+|---------|-------------|
+| `behaviour_monitor.enable_holiday_mode` | Enable holiday mode - completely pause all tracking and notifications |
+| `behaviour_monitor.disable_holiday_mode` | Disable holiday mode - resume normal operation |
+| `behaviour_monitor.snooze` | Snooze notifications for specified duration (requires `duration` parameter) |
+| `behaviour_monitor.clear_snooze` | Clear active snooze - immediately resume notifications |
+
+**Service call examples:**
+```yaml
+# Enable holiday mode
+service: behaviour_monitor.enable_holiday_mode
+
+# Snooze for 2 hours
+service: behaviour_monitor.snooze
+data:
+  duration: "2_hours"
+
+# Clear snooze
+service: behaviour_monitor.clear_snooze
+```
+
+## Sensors & Controls
+
+The integration creates the following sensors and control entities:
+
+### Control Entities
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `switch.behaviour_monitor_holiday_mode` | Switch | Enable/disable holiday mode (complete pause of all tracking) |
+| `select.behaviour_monitor_snooze_notifications` | Select | Choose snooze duration (Off, 1hr, 2hr, 4hr, 1 day) |
 
 ### Core Sensors
 
@@ -482,10 +636,21 @@ mode: single
 
 ## Data Storage
 
-- Statistical patterns: `.storage/behaviour_monitor.{entry_id}`
-- ML data and events: `.storage/behaviour_monitor_ml.{entry_id}`
+The integration stores data in Home Assistant's `.storage` directory:
 
-Data persists across Home Assistant restarts.
+- **Statistical patterns & coordinator state**: `.storage/behaviour_monitor.{entry_id}.json`
+  - 672 time buckets per entity (15-min intervals × 7 days)
+  - Daily activity counts (persists across same-day reboots)
+  - Notification tracking history
+  - Holiday mode status
+  - Snooze status and expiration time
+
+- **ML data and events**: `.storage/behaviour_monitor_ml.{entry_id}.json`
+  - Historical state change events
+  - Cross-sensor correlation patterns
+  - ML model sample count and training timestamps
+
+All data persists across Home Assistant restarts. Daily counts are only restored if from the same day (resets automatically at midnight).
 
 ## Troubleshooting
 
@@ -518,6 +683,26 @@ Statistical analysis will still work. To enable ML, install: pip install river
 - Ensure the entity is in the monitored entities list
 - Check if "Track attributes" is enabled - some entities only change attributes, not state
 - Look at debug logs to see if events are being received
+- **Check if Holiday Mode is enabled** - all tracking is paused when ON
+- **Check if Snoozed** - pattern learning is paused during snooze
+
+### Holiday Mode or Snooze Not Working
+
+**Holiday Mode not pausing:**
+- Verify `switch.behaviour_monitor_holiday_mode` shows "on"
+- Check logs - should see no "Recorded state change" messages when ON
+- Verify coordinator data: `holiday_mode` should be `true`
+
+**Snooze not pausing:**
+- Verify `select.behaviour_monitor_snooze_notifications` shows selected duration
+- Check sensor attributes for `snooze_active: true` and `snooze_until` timestamp
+- Check logs - should show "[SNOOZED - patterns not updated]" suffix
+- Verify snooze hasn't expired (check current time vs `snooze_until`)
+
+**Modes not persisting after reboot:**
+- Check `.storage/behaviour_monitor.{entry_id}.json` exists and contains `coordinator` section
+- Verify file permissions allow Home Assistant to write
+- Check startup logs for "Loaded coordinator state" message
 
 ## Requirements
 
