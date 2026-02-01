@@ -1,5 +1,10 @@
 name: Release
 
+# Workflow: Test → Version Bump → Create Release
+# 1. Run tests first (required to pass)
+# 2. If tests pass, analyze commits and bump version based on conventional commits
+# 3. If version was bumped, create GitHub release with changelog and zip
+
 on:
   push:
     branches:
@@ -21,9 +26,67 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    # Don't run on version bump commits (prevents infinite loop)
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        id: test
+        run: |
+          python -m pytest tests/ -v --tb=short 2>&1 | tee test_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Test Summary
+        if: always()
+        run: |
+          # Extract test results from pytest output
+          SUMMARY=$(grep -E "^=.*passed" test_output.txt || echo "")
+
+          if [ "${{ steps.test.outputs.exit_code }}" == "0" ]; then
+            echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ -n "$SUMMARY" ]; then
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Proceeding with version bump and release..." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Tests failed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ -n "$SUMMARY" ]; then
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Version bump and release will not proceed." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
   version-bump:
     name: Version Bump
     runs-on: ubuntu-latest
+    needs: test
     # Don't run on version bump commits (prevents infinite loop)
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     outputs:
@@ -227,13 +290,17 @@ jobs:
       - name: Summary
         run: |
           if [ "${{ steps.bump.outputs.bump_type }}" == "none" ]; then
-            echo "### No version bump needed" >> $GITHUB_STEP_SUMMARY
-            echo "No conventional commit prefixes found in recent commits." >> $GITHUB_STEP_SUMMARY
+            echo "### ℹ️ No version bump needed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Tests passed, but no conventional commit prefixes found in recent commits." >> $GITHUB_STEP_SUMMARY
           else
-            echo "### Version bumped! 🎉" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎉 Version bumped!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Previous:** ${{ steps.current.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **New:** ${{ steps.new_version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Bump type:** ${{ steps.bump.outputs.bump_type }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📦 GitHub release will be created next..." >> $GITHUB_STEP_SUMMARY
           fi
 
   create-release:
