@@ -35,11 +35,11 @@ from .const import (
 from .coordinator import BehaviourMonitorCoordinator
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True)
 class BehaviourMonitorSensorDescription(SensorEntityDescription):
     """Describes a Behaviour Monitor sensor."""
 
-    value_fn: Callable[[dict[str, Any]], Any]
+    value_fn: Callable[[dict[str, Any]], Any] = None  # type: ignore[assignment]
     extra_attrs_fn: Callable[[BehaviourMonitorCoordinator, dict[str, Any]], dict[str, Any]] | None = None
 
 
