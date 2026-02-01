@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-02-01
+
+### Fixed
+- capture test results in same step to avoid file access issues
+- capture test results in same step to avoid file access issues
+- enable tests to run without Home Assistant installation
+
 ## [2.8.0] - 2026-02-01
 
 ### Added
