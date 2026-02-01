@@ -40,7 +40,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -51,23 +50,29 @@ jobs:
       - name: Run tests
         id: test
         run: |
+          set +e  # Don't exit on error
           python -m pytest tests/ -v --tb=short 2>&1 | tee test_output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          # Extract summary line for later use
+          SUMMARY=$(grep -E "^=.*passed" test_output.txt 2>/dev/null || echo "No summary found")
+          echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+
+          exit $TEST_EXIT_CODE
 
       - name: Test Summary
         if: always()
         run: |
-          # Extract test results from pytest output
-          SUMMARY=$(grep -E "^=.*passed" test_output.txt || echo "")
+          EXIT_CODE="${{ steps.test.outputs.exit_code }}"
+          SUMMARY="${{ steps.test.outputs.summary }}"
 
-          if [ "${{ steps.test.outputs.exit_code }}" == "0" ]; then
+          if [ "$EXIT_CODE" == "0" ]; then
             echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            if [ -n "$SUMMARY" ]; then
-              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-              echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
-              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            fi
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Proceeding with version bump and release..." >> $GITHUB_STEP_SUMMARY
           else
@@ -80,7 +85,6 @@ jobs:
             fi
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ Version bump and release will not proceed." >> $GITHUB_STEP_SUMMARY
-            exit 1
           fi
 
   version-bump:
