@@ -564,3 +564,262 @@ class TestCoordinatorStatePersistence:
         # Verify timestamp was restored with timezone
         assert coordinator._last_notification_time is not None
         assert coordinator._last_notification_time.tzinfo is not None
+
+
+class TestCoordinatorHolidayMode:
+    """Tests for coordinator holiday mode functionality."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    def test_holiday_mode_property_default_false(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test holiday mode is False by default."""
+        assert coordinator.holiday_mode is False
+
+    @pytest.mark.asyncio
+    async def test_async_enable_holiday_mode(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test enabling holiday mode."""
+        await coordinator.async_enable_holiday_mode()
+
+        assert coordinator.holiday_mode is True
+
+    @pytest.mark.asyncio
+    async def test_async_disable_holiday_mode(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test disabling holiday mode."""
+        await coordinator.async_enable_holiday_mode()
+        assert coordinator.holiday_mode is True
+
+        await coordinator.async_disable_holiday_mode()
+        assert coordinator.holiday_mode is False
+
+    def test_holiday_mode_prevents_state_recording(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """Test holiday mode prevents state changes from being recorded."""
+        # Enable holiday mode
+        coordinator._holiday_mode = True
+
+        event = MagicMock()
+        event.data = {
+            "entity_id": "sensor.test1",
+            "old_state": MagicMock(state="off"),
+            "new_state": MagicMock(state="on"),
+        }
+
+        initial_patterns = len(coordinator.analyzer.patterns)
+        coordinator._handle_state_changed(event)
+
+        # Should not have recorded pattern due to holiday mode
+        assert len(coordinator.analyzer.patterns) == initial_patterns
+
+    @pytest.mark.asyncio
+    async def test_holiday_mode_persists_across_save_load(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that holiday mode state survives save/load cycle."""
+        # Enable holiday mode
+        await coordinator.async_enable_holiday_mode()
+
+        # Save
+        saved_data = None
+
+        async def capture_save(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture_save):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                await coordinator._save_data()
+
+        # Create new coordinator and load
+        new_coordinator = BehaviourMonitorCoordinator(
+            coordinator.hass, coordinator._entry
+        )
+
+        with patch.object(new_coordinator._store, "async_load", return_value=saved_data):
+            with patch.object(new_coordinator._ml_store, "async_load", return_value=None):
+                await new_coordinator.async_setup()
+
+        # Verify holiday mode was restored
+        assert new_coordinator.holiday_mode is True
+
+
+class TestCoordinatorSnooze:
+    """Tests for coordinator snooze functionality."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    def test_is_snoozed_default_false(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test is_snoozed returns False by default."""
+        assert coordinator.is_snoozed() is False
+
+    def test_get_snooze_duration_key_when_not_snoozed(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test get_snooze_duration_key returns 'off' when not snoozed."""
+        from custom_components.behaviour_monitor.const import SNOOZE_OFF
+
+        assert coordinator.get_snooze_duration_key() == SNOOZE_OFF
+
+    @pytest.mark.asyncio
+    async def test_async_snooze_1_hour(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test snoozing for 1 hour."""
+        from custom_components.behaviour_monitor.const import SNOOZE_1_HOUR
+
+        await coordinator.async_snooze(SNOOZE_1_HOUR)
+
+        assert coordinator.is_snoozed() is True
+        assert coordinator.get_snooze_duration_key() == SNOOZE_1_HOUR
+        assert coordinator.snooze_until is not None
+
+    @pytest.mark.asyncio
+    async def test_async_snooze_2_hours(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test snoozing for 2 hours."""
+        from custom_components.behaviour_monitor.const import SNOOZE_2_HOURS
+
+        await coordinator.async_snooze(SNOOZE_2_HOURS)
+
+        assert coordinator.is_snoozed() is True
+        assert coordinator.get_snooze_duration_key() == SNOOZE_2_HOURS
+
+    @pytest.mark.asyncio
+    async def test_async_snooze_4_hours(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test snoozing for 4 hours."""
+        from custom_components.behaviour_monitor.const import SNOOZE_4_HOURS
+
+        await coordinator.async_snooze(SNOOZE_4_HOURS)
+
+        assert coordinator.is_snoozed() is True
+        assert coordinator.get_snooze_duration_key() == SNOOZE_4_HOURS
+
+    @pytest.mark.asyncio
+    async def test_async_snooze_1_day(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test snoozing for 1 day."""
+        from custom_components.behaviour_monitor.const import SNOOZE_1_DAY
+
+        await coordinator.async_snooze(SNOOZE_1_DAY)
+
+        assert coordinator.is_snoozed() is True
+        assert coordinator.get_snooze_duration_key() == SNOOZE_1_DAY
+
+    @pytest.mark.asyncio
+    async def test_async_snooze_off_clears_snooze(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that snoozing with 'off' key clears the snooze."""
+        from custom_components.behaviour_monitor.const import SNOOZE_OFF, SNOOZE_1_HOUR
+
+        # First snooze
+        await coordinator.async_snooze(SNOOZE_1_HOUR)
+        assert coordinator.is_snoozed() is True
+
+        # Snooze with "off" should clear
+        await coordinator.async_snooze(SNOOZE_OFF)
+        assert coordinator.is_snoozed() is False
+
+    @pytest.mark.asyncio
+    async def test_async_clear_snooze(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test clearing snooze."""
+        from custom_components.behaviour_monitor.const import SNOOZE_1_HOUR, SNOOZE_OFF
+
+        # First snooze
+        await coordinator.async_snooze(SNOOZE_1_HOUR)
+        assert coordinator.is_snoozed() is True
+
+        # Clear snooze
+        await coordinator.async_clear_snooze()
+        assert coordinator.is_snoozed() is False
+        assert coordinator.get_snooze_duration_key() == SNOOZE_OFF
+
+    @pytest.mark.asyncio
+    async def test_snooze_prevents_pattern_updates(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """Test that snooze prevents pattern updates but allows state tracking."""
+        from custom_components.behaviour_monitor.const import SNOOZE_1_HOUR
+
+        # Set snooze using the proper method
+        await coordinator.async_snooze(SNOOZE_1_HOUR)
+
+        event = MagicMock()
+        event.data = {
+            "entity_id": "sensor.test1",
+            "old_state": MagicMock(state="off"),
+            "new_state": MagicMock(state="on"),
+        }
+
+        initial_patterns = len(coordinator.analyzer.patterns)
+        coordinator._handle_state_changed(event)
+
+        # Should not have updated patterns due to snooze
+        assert len(coordinator.analyzer.patterns) == initial_patterns
+
+    @pytest.mark.asyncio
+    async def test_snooze_persists_across_save_load(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that snooze state survives save/load cycle."""
+        from datetime import timezone
+        from custom_components.behaviour_monitor.const import SNOOZE_1_HOUR
+
+        # Set snooze
+        await coordinator.async_snooze(SNOOZE_1_HOUR)
+        snooze_time = coordinator.snooze_until
+
+        # Save
+        saved_data = None
+
+        async def capture_save(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture_save):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                await coordinator._save_data()
+
+        # Create new coordinator and load
+        new_coordinator = BehaviourMonitorCoordinator(
+            coordinator.hass, coordinator._entry
+        )
+
+        # Patch dt_util to use timezone-aware datetimes throughout
+        mock_now = datetime.now(timezone.utc)
+        with patch("custom_components.behaviour_monitor.coordinator.dt_util.DEFAULT_TIME_ZONE", timezone.utc):
+            with patch("custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=mock_now):
+                with patch.object(new_coordinator._store, "async_load", return_value=saved_data):
+                    with patch.object(new_coordinator._ml_store, "async_load", return_value=None):
+                        await new_coordinator.async_setup()
+
+                # Verify snooze was restored (keep patches active for is_snoozed check)
+                assert new_coordinator.is_snoozed() is True
+                assert new_coordinator.get_snooze_duration_key() == SNOOZE_1_HOUR
+                assert new_coordinator.snooze_until is not None
+
+
