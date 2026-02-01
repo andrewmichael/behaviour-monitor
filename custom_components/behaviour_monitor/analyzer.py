@@ -750,6 +750,12 @@ class PatternAnalyzer:
             },
             "sensitivity_threshold": self._sensitivity_threshold,
             "learning_period_days": self._learning_period_days,
+            "daily_counts": self._daily_counts,
+            "daily_count_date": (
+                self._daily_count_date.isoformat()
+                if self._daily_count_date
+                else None
+            ),
         }
 
     @classmethod
@@ -770,5 +776,19 @@ class PatternAnalyzer:
         patterns_data = data.get("patterns", {})
         for entity_id, pattern_data in patterns_data.items():
             analyzer._patterns[entity_id] = EntityPattern.from_dict(pattern_data)
+
+        # Restore daily counts only if they're from today
+        daily_count_date_str = data.get("daily_count_date")
+        if daily_count_date_str:
+            saved_date = datetime.fromisoformat(daily_count_date_str)
+            if saved_date.tzinfo is None:
+                saved_date = saved_date.replace(tzinfo=timezone.utc)
+
+            today = datetime.now(timezone.utc).date()
+            if saved_date.date() == today:
+                # Same day - restore the counts
+                analyzer._daily_counts = data.get("daily_counts", {})
+                analyzer._daily_count_date = today
+            # else: different day, keep counts empty (already initialized)
 
         return analyzer

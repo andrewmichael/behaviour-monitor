@@ -336,3 +336,231 @@ class TestCoordinatorMLIntegration:
 
         mock_stat_save.assert_called_once()
         mock_ml_save.assert_not_called()
+
+
+class TestCoordinatorStatePersistence:
+    """Tests for coordinator state persistence across reboots."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    @pytest.mark.asyncio
+    async def test_coordinator_state_saved_in_new_format(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that coordinator state is saved in new format with both analyzer and coordinator sections."""
+        from datetime import timezone
+
+        # Set some coordinator state
+        coordinator._last_notification_time = datetime.now(timezone.utc)
+        coordinator._last_notification_type = "statistical"
+        coordinator._last_welfare_status = "ok"
+
+        saved_data = None
+
+        async def capture_save(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture_save):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                await coordinator._save_data()
+
+        # Verify new format structure
+        assert saved_data is not None
+        assert "analyzer" in saved_data
+        assert "coordinator" in saved_data
+
+        # Verify coordinator state is included
+        coord_state = saved_data["coordinator"]
+        assert coord_state["last_notification_time"] is not None
+        assert coord_state["last_notification_type"] == "statistical"
+        assert coord_state["last_welfare_status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_coordinator_state_restored_from_new_format(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that coordinator state is restored when loading new format."""
+        from datetime import timezone
+
+        # Create data in new format
+        test_time = datetime.now(timezone.utc)
+        new_format_data = {
+            "analyzer": {
+                "patterns": {},
+                "sensitivity_threshold": 2.0,
+                "learning_period_days": 7,
+                "daily_counts": {},
+                "daily_count_date": None,
+            },
+            "coordinator": {
+                "last_notification_time": test_time.isoformat(),
+                "last_notification_type": "welfare",
+                "last_welfare_status": "concern",
+            },
+        }
+
+        with patch.object(coordinator._store, "async_load", return_value=new_format_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        # Verify coordinator state was restored
+        assert coordinator._last_notification_time is not None
+        assert coordinator._last_notification_type == "welfare"
+        assert coordinator._last_welfare_status == "concern"
+
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_with_old_format(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test backward compatibility with old format (direct analyzer dict)."""
+        # Create data in old format (just analyzer dict, no coordinator section)
+        old_format_data = {
+            "patterns": {},
+            "sensitivity_threshold": 2.0,
+            "learning_period_days": 7,
+            # No "analyzer" or "coordinator" keys - this is the analyzer dict directly
+        }
+
+        with patch.object(coordinator._store, "async_load", return_value=old_format_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        # Should load without error
+        assert coordinator.analyzer is not None
+        # Coordinator state should be at defaults
+        assert coordinator._last_notification_time is None
+        assert coordinator._last_notification_type is None
+        assert coordinator._last_welfare_status is None
+
+    @pytest.mark.asyncio
+    async def test_notification_tracking_persists_across_save_load(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that notification tracking survives save/load cycle."""
+        from datetime import timezone
+
+        # Set notification tracking
+        test_time = datetime.now(timezone.utc)
+        coordinator._last_notification_time = test_time
+        coordinator._last_notification_type = "statistical"
+
+        # Save
+        saved_data = None
+
+        async def capture_save(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture_save):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                await coordinator._save_data()
+
+        # Create new coordinator and load
+        new_coordinator = BehaviourMonitorCoordinator(
+            coordinator.hass, coordinator._entry
+        )
+
+        with patch.object(new_coordinator._store, "async_load", return_value=saved_data):
+            with patch.object(new_coordinator._ml_store, "async_load", return_value=None):
+                await new_coordinator.async_setup()
+
+        # Verify notification tracking was restored
+        assert new_coordinator._last_notification_time is not None
+        assert new_coordinator._last_notification_type == "statistical"
+
+    @pytest.mark.asyncio
+    async def test_welfare_status_persists_across_save_load(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that welfare status tracking survives save/load cycle."""
+        # Set welfare status
+        coordinator._last_welfare_status = "alert"
+
+        # Save
+        saved_data = None
+
+        async def capture_save(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture_save):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                await coordinator._save_data()
+
+        # Create new coordinator and load
+        new_coordinator = BehaviourMonitorCoordinator(
+            coordinator.hass, coordinator._entry
+        )
+
+        with patch.object(new_coordinator._store, "async_load", return_value=saved_data):
+            with patch.object(new_coordinator._ml_store, "async_load", return_value=None):
+                await new_coordinator.async_setup()
+
+        # Verify welfare status was restored
+        assert new_coordinator._last_welfare_status == "alert"
+
+    @pytest.mark.asyncio
+    async def test_empty_coordinator_state_handles_none_values(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that None values in coordinator state are handled correctly."""
+        new_format_data = {
+            "analyzer": {
+                "patterns": {},
+                "sensitivity_threshold": 2.0,
+                "learning_period_days": 7,
+                "daily_counts": {},
+                "daily_count_date": None,
+            },
+            "coordinator": {
+                "last_notification_time": None,
+                "last_notification_type": None,
+                "last_welfare_status": None,
+            },
+        }
+
+        with patch.object(coordinator._store, "async_load", return_value=new_format_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        # Should handle None values gracefully
+        assert coordinator._last_notification_time is None
+        assert coordinator._last_notification_type is None
+        assert coordinator._last_welfare_status is None
+
+    @pytest.mark.asyncio
+    async def test_notification_time_timezone_handling(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Test that notification time handles timezones correctly on restore."""
+        from datetime import timezone
+
+        test_time = datetime.now(timezone.utc)
+        new_format_data = {
+            "analyzer": {
+                "patterns": {},
+                "sensitivity_threshold": 2.0,
+                "learning_period_days": 7,
+                "daily_counts": {},
+                "daily_count_date": None,
+            },
+            "coordinator": {
+                "last_notification_time": test_time.isoformat(),
+                "last_notification_type": "ml",
+                "last_welfare_status": "ok",
+            },
+        }
+
+        with patch.object(coordinator._store, "async_load", return_value=new_format_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        # Verify timestamp was restored with timezone
+        assert coordinator._last_notification_time is not None
+        assert coordinator._last_notification_time.tzinfo is not None

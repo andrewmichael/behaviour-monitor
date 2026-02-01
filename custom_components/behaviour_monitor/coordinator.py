@@ -161,8 +161,35 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Load stored statistical data
         stored_data = await self._store.async_load()
         if stored_data:
+            # Handle both old format (direct analyzer dict) and new format (with coordinator state)
+            if "analyzer" in stored_data:
+                # New format with coordinator state
+                analyzer_data = stored_data["analyzer"]
+                coordinator_state = stored_data.get("coordinator", {})
+
+                # Restore coordinator state
+                last_notif_time = coordinator_state.get("last_notification_time")
+                if last_notif_time:
+                    dt = datetime.fromisoformat(last_notif_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                    self._last_notification_time = dt
+
+                self._last_notification_type = coordinator_state.get("last_notification_type")
+                self._last_welfare_status = coordinator_state.get("last_welfare_status")
+
+                _LOGGER.debug(
+                    "Loaded coordinator state: last_notification=%s, last_welfare=%s",
+                    self._last_notification_time,
+                    self._last_welfare_status,
+                )
+            else:
+                # Old format - stored_data is the analyzer dict directly
+                analyzer_data = stored_data
+                _LOGGER.debug("Loaded data in old format (analyzer only)")
+
             self._analyzer = PatternAnalyzer.from_dict(
-                stored_data,
+                analyzer_data,
                 sensitivity_threshold=SENSITIVITY_THRESHOLDS.get(
                     self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY), 2.0
                 ),
@@ -229,7 +256,20 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _save_data(self) -> None:
         """Save pattern data to storage."""
-        await self._store.async_save(self._analyzer.to_dict())
+        # Save both analyzer and coordinator state
+        storage_data = {
+            "analyzer": self._analyzer.to_dict(),
+            "coordinator": {
+                "last_notification_time": (
+                    self._last_notification_time.isoformat()
+                    if self._last_notification_time
+                    else None
+                ),
+                "last_notification_type": self._last_notification_type,
+                "last_welfare_status": self._last_welfare_status,
+            },
+        }
+        await self._store.async_save(storage_data)
 
         if self._enable_ml:
             await self._ml_store.async_save(self._ml_analyzer.to_dict())

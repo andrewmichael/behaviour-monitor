@@ -492,3 +492,150 @@ class TestElderCareFunctions:
         assert "minute" in _format_duration(120)
         assert "hours" in _format_duration(7200)
         assert "days" in _format_duration(172800)
+
+
+class TestDailyCountsPersistence:
+    """Tests for daily counts persistence across reboots."""
+
+    def test_daily_counts_saved_in_to_dict(self) -> None:
+        """Test that daily counts are included in serialization."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        now = datetime.now(timezone.utc)
+
+        # Record some activities today
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test2", now)
+
+        # Serialize
+        data = analyzer.to_dict()
+
+        # Verify daily counts are in the serialized data
+        assert "daily_counts" in data
+        assert "daily_count_date" in data
+        assert data["daily_counts"]["sensor.test1"] == 2
+        assert data["daily_counts"]["sensor.test2"] == 1
+        assert data["daily_count_date"] is not None
+
+    def test_daily_counts_restored_same_day(self) -> None:
+        """Test that daily counts are restored when loading data from same day."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        now = datetime.now(timezone.utc)
+
+        # Record activities
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test2", now)
+
+        # Serialize and deserialize
+        data = analyzer.to_dict()
+        restored = PatternAnalyzer.from_dict(data)
+
+        # Daily counts should be restored
+        assert restored.get_daily_count("sensor.test1") == 2
+        assert restored.get_daily_count("sensor.test2") == 1
+        assert restored.get_total_daily_count() == 3
+
+    def test_daily_counts_not_restored_different_day(self) -> None:
+        """Test that daily counts are NOT restored when loading data from different day."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+
+        # Record activities yesterday
+        analyzer.record_state_change("sensor.test1", yesterday)
+        analyzer.record_state_change("sensor.test1", yesterday)
+
+        # Serialize
+        data = analyzer.to_dict()
+
+        # Manually set the date to yesterday in the serialized data
+        data["daily_count_date"] = yesterday.isoformat()
+
+        # Deserialize
+        restored = PatternAnalyzer.from_dict(data)
+
+        # Daily counts should be 0 (not restored from yesterday)
+        assert restored.get_daily_count("sensor.test1") == 0
+        assert restored.get_total_daily_count() == 0
+
+    def test_backward_compatibility_no_daily_counts(self) -> None:
+        """Test backward compatibility with old format that doesn't have daily counts."""
+        # Create data in old format (without daily_counts)
+        old_format_data = {
+            "patterns": {},
+            "sensitivity_threshold": 2.0,
+            "learning_period_days": 7,
+            # No daily_counts or daily_count_date
+        }
+
+        # Should load without error
+        restored = PatternAnalyzer.from_dict(old_format_data)
+
+        # Daily counts should be empty
+        assert restored.get_total_daily_count() == 0
+
+    def test_daily_counts_persist_across_multiple_saves(self) -> None:
+        """Test that daily counts accumulate correctly across multiple save/load cycles."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        now = datetime.now(timezone.utc)
+
+        # First batch of activities
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test2", now)
+
+        # Save and restore
+        data1 = analyzer.to_dict()
+        analyzer = PatternAnalyzer.from_dict(data1)
+
+        # Record more activities
+        analyzer.record_state_change("sensor.test1", now)
+        analyzer.record_state_change("sensor.test3", now)
+
+        # Counts should have accumulated
+        assert analyzer.get_daily_count("sensor.test1") == 2
+        assert analyzer.get_daily_count("sensor.test2") == 1
+        assert analyzer.get_daily_count("sensor.test3") == 1
+        assert analyzer.get_total_daily_count() == 4
+
+    def test_daily_count_date_timezone_handling(self) -> None:
+        """Test that daily count date handles timezones correctly."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        now = datetime.now(timezone.utc)
+
+        analyzer.record_state_change("sensor.test1", now)
+
+        # Serialize and deserialize
+        data = analyzer.to_dict()
+        restored = PatternAnalyzer.from_dict(data)
+
+        # Should restore correctly with timezone awareness
+        assert restored.get_daily_count("sensor.test1") == 1
+
+    def test_routine_progress_uses_persisted_daily_counts(self) -> None:
+        """Test that routine progress calculation uses persisted daily counts."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=7)
+        now = datetime.now(timezone.utc)
+
+        # Build some baseline over past days
+        for days_ago in range(7):
+            ts = now - timedelta(days=days_ago)
+            for _ in range(5):
+                analyzer.record_state_change("sensor.test1", ts)
+
+        # Record activities today
+        for _ in range(3):
+            analyzer.record_state_change("sensor.test1", now)
+
+        # Get progress before save
+        progress_before = analyzer.get_routine_progress()
+        actual_before = progress_before["actual_today"]
+
+        # Save and restore
+        data = analyzer.to_dict()
+        restored = PatternAnalyzer.from_dict(data)
+
+        # Progress should match
+        progress_after = restored.get_routine_progress()
+        actual_after = progress_after["actual_today"]
+
+        assert actual_before == actual_after == 3
