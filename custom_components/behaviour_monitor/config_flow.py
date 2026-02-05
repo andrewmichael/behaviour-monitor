@@ -321,7 +321,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_TRACK_ATTRIBUTES, default=current_track_attributes
                 ): BooleanSelector(),
-                vol.Optional(CONF_NOTIFY_SERVICES): TextSelector(
+                vol.Optional(
+                    CONF_NOTIFY_SERVICES, default=current_notify_services
+                ): TextSelector(
                     TextSelectorConfig(
                         type=TextSelectorType.TEXT,
                         multiple=True,
@@ -330,15 +332,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             }
         )
 
-        # Provide suggested values for form fields (pre-populates form)
-        # but doesn't force defaults during validation
-        suggested_values = {
-            CONF_NOTIFY_SERVICES: current_notify_services,
-        }
-
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
-            suggested_values=suggested_values,
             errors=errors,
         )
