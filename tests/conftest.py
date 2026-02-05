@@ -51,7 +51,7 @@ def _setup_ha_mocks():
             if domain is not None:
                 cls.domain = domain
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None):
+        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
             """Mock show form method (not actually async despite the name)."""
             return {
                 "type": "form",
@@ -59,6 +59,7 @@ def _setup_ha_mocks():
                 "data_schema": data_schema,
                 "errors": errors or {},
                 "description_placeholders": description_placeholders,
+                "suggested_values": suggested_values,
             }
 
         def async_create_entry(self, title, data, description=None, description_placeholders=None):
@@ -84,7 +85,7 @@ def _setup_ha_mocks():
         def __init__(self):
             pass
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None):
+        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
             """Mock show form method."""
             return {
                 "type": "form",
@@ -92,6 +93,7 @@ def _setup_ha_mocks():
                 "data_schema": data_schema,
                 "errors": errors or {},
                 "description_placeholders": description_placeholders,
+                "suggested_values": suggested_values,
             }
 
         def async_create_entry(self, title="", data=None):
