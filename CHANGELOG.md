@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.3] - 2026-02-05
+
+### Fixed
+- preserve notification services when updating config options
+
 ## [2.8.2] - 2026-02-01
 
 ### Changed
