@@ -321,9 +321,7 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_TRACK_ATTRIBUTES, default=current_track_attributes
                 ): BooleanSelector(),
-                vol.Optional(
-                    CONF_NOTIFY_SERVICES, default=current_notify_services
-                ): TextSelector(
+                vol.Optional(CONF_NOTIFY_SERVICES): TextSelector(
                     TextSelectorConfig(
                         type=TextSelectorType.TEXT,
                         multiple=True,
@@ -334,6 +332,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=data_schema,
+            data_schema=self.add_suggested_values_to_schema(
+                data_schema,
+                {CONF_NOTIFY_SERVICES: current_notify_services},
+            ),
             errors=errors,
         )

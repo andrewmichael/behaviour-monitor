@@ -51,6 +51,12 @@ def _setup_ha_mocks():
             if domain is not None:
                 cls.domain = domain
 
+        def add_suggested_values_to_schema(self, data_schema, suggested_values):
+            """Mock add suggested values to schema method."""
+            # Simply return the schema unchanged for testing purposes
+            # The actual HA implementation modifies the schema to include suggested values
+            return data_schema
+
         def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
             """Mock show form method (not actually async despite the name)."""
             return {
@@ -84,6 +90,12 @@ def _setup_ha_mocks():
         """Mock OptionsFlow base class."""
         def __init__(self):
             pass
+
+        def add_suggested_values_to_schema(self, data_schema, suggested_values):
+            """Mock add suggested values to schema method."""
+            # Simply return the schema unchanged for testing purposes
+            # The actual HA implementation modifies the schema to include suggested values
+            return data_schema
 
         def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
             """Mock show form method."""
