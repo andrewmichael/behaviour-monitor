@@ -202,10 +202,20 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             if not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
             else:
+                # Merge user input with existing data to preserve all fields
+                updated_data = dict(self._config_entry.data)
+                updated_data.update(user_input)
+
+                # Explicitly handle optional fields that might be cleared
+                # If notify_services is not in user_input (field was cleared),
+                # set it to empty list
+                if CONF_NOTIFY_SERVICES not in user_input:
+                    updated_data[CONF_NOTIFY_SERVICES] = []
+
                 # Update the config entry data (not just options)
                 self.hass.config_entries.async_update_entry(
                     self._config_entry,
-                    data=user_input,
+                    data=updated_data,
                 )
                 return self.async_create_entry(title="", data={})
 
