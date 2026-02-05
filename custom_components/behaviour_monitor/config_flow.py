@@ -206,10 +206,13 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 updated_data = dict(self._config_entry.data)
                 updated_data.update(user_input)
 
-                # Explicitly handle optional fields that might be cleared
-                # If notify_services is not in user_input (field was cleared),
-                # set it to empty list
+                # Explicitly handle optional fields that might be missing or empty
+                # When notify_services field is cleared, it may be missing from
+                # user_input entirely - set it to empty list
                 if CONF_NOTIFY_SERVICES not in user_input:
+                    updated_data[CONF_NOTIFY_SERVICES] = []
+                elif not user_input.get(CONF_NOTIFY_SERVICES):
+                    # Field is present but empty/None - explicitly set to empty list
                     updated_data[CONF_NOTIFY_SERVICES] = []
 
                 # Update the config entry data (not just options)
@@ -318,16 +321,24 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_TRACK_ATTRIBUTES, default=current_track_attributes
                 ): BooleanSelector(),
-                vol.Optional(
-                    CONF_NOTIFY_SERVICES, default=current_notify_services
-                ): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
+                vol.Optional(CONF_NOTIFY_SERVICES): TextSelector(
+                    TextSelectorConfig(
+                        type=TextSelectorType.TEXT,
+                        multiple=True,
+                    )
                 ),
             }
         )
 
+        # Provide suggested values for form fields (pre-populates form)
+        # but doesn't force defaults during validation
+        suggested_values = {
+            CONF_NOTIFY_SERVICES: current_notify_services,
+        }
+
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
+            suggested_values=suggested_values,
             errors=errors,
         )
