@@ -550,11 +550,11 @@ class PatternAnalyzer:
             concern_level = 0.0
 
         # Determine status
-        if concern_level < 1.5:
+        if concern_level < 2.0:  # was 1.5 — tolerates up to 2x the typical interval before flagging
             status = "normal"
-        elif concern_level < 2.5:
+        elif concern_level < 3.5:  # was 2.5 — wider window before recommending a check
             status = "check_recommended"
-        elif concern_level < 4.0:
+        elif concern_level < 6.0:  # was 4.0 — requires 6x typical interval for concern
             status = "concern"
         else:
             status = "alert"
