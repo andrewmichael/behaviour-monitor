@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.6] - 2026-02-05
+
+### Fixed
+- use add_suggested_values_to_schema for notification persistence
+
 ## [2.8.5] - 2026-02-05
 
 ### Fixed
