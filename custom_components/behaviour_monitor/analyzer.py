@@ -615,9 +615,9 @@ class PatternAnalyzer:
             "time_of_day": _interval_to_time_str(current_interval),
             "day_name": DAY_NAMES[day_of_week],
             "status": (
-                "on_track" if progress >= 70
-                else "below_normal" if progress >= 40
-                else "concerning" if progress >= 20
+                "on_track" if progress >= 50  # was 70 — more tolerant of routine variance
+                else "below_normal" if progress >= 25  # was 40 — wider normal range
+                else "concerning" if progress >= 10  # was 20 — requires more significant deviation
                 else "alert"
             ),
             "summary": (
@@ -664,9 +664,9 @@ class PatternAnalyzer:
                 "z_score": round(z_score, 2),
                 "severity": _get_severity(z_score),
                 "status": (
-                    "normal" if z_score < 1.5
-                    else "attention" if z_score < 2.5
-                    else "concern" if z_score < 3.5
+                    "normal" if z_score < 2.5  # was 1.5 — more tolerant of minor deviations
+                    else "attention" if z_score < 3.5  # was 2.5 — requires larger deviation for attention
+                    else "concern" if z_score < 4.5  # was 3.5 — higher threshold for concern
                     else "alert"
                 ),
             })
@@ -711,11 +711,11 @@ class PatternAnalyzer:
         elif routine_progress["status"] in ["concerning", "alert"]:
             welfare = WELFARE_CONCERN
             reasons.append(f"Daily routine only {routine_progress['progress_percent']:.0f}% complete")
-        elif activity_context["status"] == "check_recommended" or attention_count > 1:
+        elif activity_context["status"] == "check_recommended" or attention_count > 2:  # was > 1 — requires 3+ sensors
             welfare = WELFARE_CHECK
             if activity_context["status"] == "check_recommended":
                 reasons.append("Longer than usual since last activity")
-            if attention_count > 1:
+            if attention_count > 2:  # was > 1
                 reasons.append(f"{attention_count} sensors need attention")
         else:
             welfare = WELFARE_OK
