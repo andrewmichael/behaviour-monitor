@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.8] - 2026-02-12
+
+### Fixed
+- further reduce welfare status sensitivity thresholds
+
 ## [2.8.7] - 2026-02-06
 
 ### Fixed
