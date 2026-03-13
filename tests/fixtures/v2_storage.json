@@ -1,0 +1,22 @@
+{
+  "analyzer": {
+    "patterns": {
+      "sensor.test1": {
+        "entity_id": "sensor.test1",
+        "buckets": {}
+      }
+    },
+    "learning_start": "2024-01-01T00:00:00",
+    "learning_period_days": 7
+  },
+  "coordinator": {
+    "last_notification_time": null,
+    "last_notification_type": null,
+    "last_welfare_status": null,
+    "holiday_mode": false,
+    "snooze_until": null,
+    "notification_cooldowns": {},
+    "welfare_consecutive_cycles": 0,
+    "welfare_pending_status": null
+  }
+}

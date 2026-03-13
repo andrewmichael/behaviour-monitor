@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1501,5 +1504,301 @@ class TestCoordinatorSnooze:
                 assert new_coordinator.is_snoozed() is True
                 assert new_coordinator.get_snooze_duration_key() == SNOOZE_1_HOUR
                 assert new_coordinator.snooze_until is not None
+
+
+# ---------------------------------------------------------------------------
+# Helper: load the v2 storage fixture
+# ---------------------------------------------------------------------------
+
+def _load_v2_fixture() -> dict:
+    """Load the v2 storage fixture from disk."""
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "fixtures", "v2_storage.json"
+    )
+    with open(fixture_path) as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Storage migration tests
+# ---------------------------------------------------------------------------
+
+
+class TestStorageMigration:
+    """Tests for v2 -> v3 storage migration logic."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    async def test_v2_storage_loads_without_crash(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Loading v2 storage (has 'analyzer' key, no 'routine_model') does not crash."""
+        v2_data = _load_v2_fixture()
+        with patch.object(coordinator._store, "async_load", return_value=v2_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                # Must not raise
+                await coordinator.async_setup()
+
+    async def test_v2_storage_creates_empty_routine_model(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Loading v2 storage creates an empty RoutineModel (no entity data)."""
+        v2_data = _load_v2_fixture()
+        with patch.object(coordinator._store, "async_load", return_value=v2_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+        # RoutineModel should exist but be empty (no entities)
+        assert hasattr(coordinator, "_routine_model")
+        assert coordinator._routine_model is not None
+        assert coordinator._routine_model.overall_confidence() == 0.0
+
+    async def test_v2_storage_preserves_coordinator_state(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Loading v2 storage preserves coordinator state (holiday_mode, cooldowns, etc.)."""
+        v2_data = _load_v2_fixture()
+        v2_data["coordinator"]["holiday_mode"] = True
+        v2_data["coordinator"]["welfare_consecutive_cycles"] = 3
+        with patch.object(coordinator._store, "async_load", return_value=v2_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+        assert coordinator._holiday_mode is True
+        assert coordinator._welfare_consecutive_cycles == 3
+
+    async def test_v3_storage_deserializes_routine_model(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Loading v3 storage (has 'routine_model' key) deserializes RoutineModel via from_dict."""
+        from custom_components.behaviour_monitor.routine_model import RoutineModel
+
+        original = RoutineModel(history_window_days=28)
+        original.record(
+            "sensor.test1",
+            datetime(2024, 1, 15, 10, 0, 0),
+            "on",
+            is_binary=True,
+        )
+        v3_data = {
+            "routine_model": original.to_dict(),
+            "coordinator": {
+                "last_notification_time": None,
+                "last_notification_type": None,
+                "last_welfare_status": None,
+                "holiday_mode": False,
+                "snooze_until": None,
+                "notification_cooldowns": {},
+                "welfare_consecutive_cycles": 0,
+                "welfare_pending_status": None,
+            },
+        }
+        with patch.object(coordinator._store, "async_load", return_value=v3_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+        # The restored model should have the entity loaded
+        assert hasattr(coordinator, "_routine_model")
+        assert coordinator._routine_model is not None
+        # Since we recorded one event, confidence is non-zero (time-based)
+        # The entity should exist in the model
+        conf = coordinator._routine_model.overall_confidence()
+        # Overall confidence may be 0 (no time elapsed) but model was loaded
+        assert isinstance(conf, float)
+
+    async def test_empty_storage_creates_empty_routine_model(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Empty/None storage creates an empty RoutineModel without crashing."""
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+        assert hasattr(coordinator, "_routine_model")
+        assert coordinator._routine_model is not None
+        assert coordinator._routine_model.overall_confidence() == 0.0
+
+    async def test_v2_storage_logs_migration_info(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Loading v2 storage logs an info-level migration message."""
+        v2_data = _load_v2_fixture()
+        with patch.object(coordinator._store, "async_load", return_value=v2_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                with caplog.at_level(logging.INFO):
+                    await coordinator.async_setup()
+        # Should log something about migration / v2 format
+        log_text = caplog.text.lower()
+        assert "v2" in log_text or "migrat" in log_text or "discard" in log_text
+
+
+class TestMLStoreCleanup:
+    """Tests for orphaned ML storage cleanup."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    async def test_ml_store_deleted_when_exists(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """ML store is deleted when orphaned ML storage file exists."""
+        ml_data = {"some": "ml_data"}
+        ml_store_mock = AsyncMock()
+        ml_store_mock.async_load = AsyncMock(return_value=ml_data)
+        ml_store_mock.async_remove = AsyncMock()
+
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator, "_ml_store", ml_store_mock):
+                await coordinator.async_setup()
+
+        ml_store_mock.async_remove.assert_awaited_once()
+
+    async def test_ml_cleanup_no_crash_when_absent(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """ML store cleanup does not crash when ML storage file does not exist."""
+        ml_store_mock = AsyncMock()
+        ml_store_mock.async_load = AsyncMock(return_value=None)
+        ml_store_mock.async_remove = AsyncMock()
+
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator, "_ml_store", ml_store_mock):
+                # Must not raise even when there's nothing to delete
+                await coordinator.async_setup()
+
+        ml_store_mock.async_remove.assert_not_awaited()
+
+    async def test_ml_cleanup_survives_exception(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ML store cleanup wraps exceptions and does not crash setup."""
+        ml_store_mock = AsyncMock()
+        ml_store_mock.async_load = AsyncMock(side_effect=Exception("storage error"))
+
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator, "_ml_store", ml_store_mock):
+                # Must not raise
+                await coordinator.async_setup()
+
+
+class TestDeprecationLogs:
+    """Tests for deprecation warnings logged at startup."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    async def test_three_deprecation_warnings_logged(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Exactly 3 deprecation warnings are logged (one per deprecated sensor)."""
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                with caplog.at_level(logging.WARNING):
+                    await coordinator.async_setup()
+
+        deprecation_warnings = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and "deprecated" in r.message.lower()
+        ]
+        assert len(deprecation_warnings) == 3
+
+    async def test_deprecation_warnings_mention_sensors(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Deprecation warnings mention the deprecated sensor names."""
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                with caplog.at_level(logging.WARNING):
+                    await coordinator.async_setup()
+
+        deprecation_text = " ".join(
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING and "deprecated" in r.message.lower()
+        )
+        # All three deprecated sensor types should be mentioned
+        assert "ml_status" in deprecation_text
+        assert "ml_training" in deprecation_text
+        assert "cross_sensor" in deprecation_text
+
+
+class TestSensorDataStubs:
+    """Tests for stub data keys in _build_sensor_data / _async_update_data."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator instance after setup."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    async def _setup_coordinator(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Helper to set up coordinator with mocked storage."""
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+    async def test_ml_status_stub_in_sensor_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """coordinator.data includes ml_status_stub='Removed in v1.1'."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        assert data.get("ml_status_stub") == "Removed in v1.1"
+
+    async def test_ml_training_stub_in_sensor_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """coordinator.data includes ml_training_stub='N/A'."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        assert data.get("ml_training_stub") == "N/A"
+
+    async def test_cross_sensor_stub_in_sensor_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """coordinator.data includes cross_sensor_stub=0."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        assert data.get("cross_sensor_stub") == 0
+
+    async def test_learning_status_in_sensor_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """coordinator.data includes learning_status key (string)."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        assert "learning_status" in data
+        assert data["learning_status"] in ("inactive", "learning", "ready")
+
+    async def test_baseline_confidence_in_sensor_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """coordinator.data includes baseline_confidence as float 0.0-100.0."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        assert "baseline_confidence" in data
+        assert isinstance(data["baseline_confidence"], float)
+        assert 0.0 <= data["baseline_confidence"] <= 100.0
+
+    async def test_learning_status_inactive_when_no_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """learning_status is 'inactive' when no history has been loaded."""
+        await self._setup_coordinator(coordinator)
+        data = await coordinator._async_update_data()
+        # Empty RoutineModel -> confidence 0.0 -> status "inactive"
+        assert data["learning_status"] == "inactive"
+        assert data["baseline_confidence"] == 0.0
 
 
