@@ -114,7 +114,7 @@ If River is not installed, the integration will log a warning and automatically 
 | Option | Description | Default |
 |--------|-------------|---------|
 | Entities to monitor | Select entities whose state changes should be tracked | Required |
-| Sensitivity | Anomaly detection threshold (Low=3σ, Medium=2σ, High=1σ) | Medium |
+| Sensitivity | Anomaly detection threshold (Low=3σ, Medium=2.5σ, High=1σ) | Medium |
 | Learning period | Days before statistical anomaly detection activates | 7 days |
 | Enable notifications | Send persistent notifications when anomalies are detected | Yes |
 | Enable ML | Enable Half-Space Trees machine learning (requires River) | Yes |
@@ -122,6 +122,8 @@ If River is not installed, the integration will log a warning and automatically 
 | ML retrain period | How often to replay historical data for model warmup | 14 days |
 | Cross-sensor window | Time window for detecting sensor correlations | 300 seconds |
 | Track attributes | Also track attribute changes, not just state changes | Yes |
+| Notification cooldown | Minutes before re-alerting the same entity | 30 minutes |
+| Minimum notification severity | Minimum anomaly severity to trigger a notification (minor/moderate/significant/critical) | significant |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
 
 ## Holiday Mode and Visitor Snooze
@@ -396,7 +398,7 @@ Z-score = |actual - expected_mean| / standard_deviation
 
 Sensitivity levels:
 - **Low (3σ)**: Only extreme anomalies (~0.3% false positive rate)
-- **Medium (2σ)**: Moderate anomalies (~5% false positive rate)
+- **Medium (2.5σ)**: Moderate anomalies (~1.2% false positive rate)
 - **High (1σ)**: Any deviation (~32% false positive rate)
 
 ### Machine Learning (Half-Space Trees)
