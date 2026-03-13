@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 03-01-PLAN.md (RoutineModel)
-last_updated: "2026-03-13T19:31:54.929Z"
+stopped_at: Completed 03-02-PLAN.md (Migration and Sensor Deprecation)
+last_updated: "2026-03-13T19:37:36.869Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -45,6 +45,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 03-01]: Population stdev (sqrt(M2/count)) for ActivitySlot numeric — appropriate for 56-item bounded window
 - [Phase 03-01]: MIN_SLOT_OBSERVATIONS=4 sparse slot guard: expected_gap_seconds and slot_distribution return None below threshold
 - [Phase 03-01]: ISO timestamp strings in deque (not datetime objects) — zero HA dependency in routine_model.py confirmed
+- [Phase 03]: ML constants kept in const.py until coordinator is rewritten in Plan 03
+- [Phase 03]: async_migrate_entry uses dict copy + pop pattern, never mutates config_entry.data directly, per HA developer docs
 
 ### Blockers/Concerns
 
@@ -59,6 +61,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T19:31:54.926Z
-Stopped at: Completed 03-01-PLAN.md (RoutineModel)
+Last session: 2026-03-13T19:37:36.865Z
+Stopped at: Completed 03-02-PLAN.md (Migration and Sensor Deprecation)
 Resume file: None

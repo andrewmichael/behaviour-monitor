@@ -27,8 +27,8 @@ Requirements for Detection Rebuild milestone. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: System migrates from v2 z-score storage format to new routine format and cleans up orphaned ML storage files
-- [ ] **INFRA-02**: ML-specific sensor entities (ml_status, ml_training_remaining, cross_sensor_patterns) are preserved as deprecated stubs with safe default states
+- [x] **INFRA-01**: System migrates from v2 z-score storage format to new routine format and cleans up orphaned ML storage files
+- [x] **INFRA-02**: ML-specific sensor entities (ml_status, ml_training_remaining, cross_sensor_patterns) are preserved as deprecated stubs with safe default states
 - [ ] **INFRA-03**: Config flow UI includes options for history window length, inactivity alert multiplier, and drift sensitivity
 
 ## v2 Requirements
@@ -70,8 +70,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DRIFT-01 | Phase 4 | Pending |
 | DRIFT-02 | Phase 4 | Pending |
 | DRIFT-03 | Phase 4 | Pending |
-| INFRA-01 | Phase 3 | Pending |
-| INFRA-02 | Phase 3 | Pending |
+| INFRA-01 | Phase 3 | Complete |
+| INFRA-02 | Phase 3 | Complete |
 | INFRA-03 | Phase 5 | Pending |
 
 **Coverage:**
