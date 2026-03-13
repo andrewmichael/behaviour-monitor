@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 03-03-PLAN.md (Coordinator migration, ML cleanup, recorder bootstrap)
-last_updated: "2026-03-13T19:40:53.872Z"
+stopped_at: Completed 03-04-PLAN.md (Config key fix for RoutineModel history window + partial history confidence tests)
+last_updated: "2026-03-13T19:57:25.863Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 4
+  completed_plans: 4
   percent: 0
 ---
 
@@ -49,6 +49,7 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 03]: async_migrate_entry uses dict copy + pop pattern, never mutates config_entry.data directly, per HA developer docs
 - [Phase 03]: Bootstrap only runs when RoutineModel._entities is empty — prevents re-bootstrap on every startup
 - [Phase 03]: Guard _bootstrap_from_recorder on recorder_get_instance only (not state_changes_fn) for test patchability
+- [Phase 03]: CONF_HISTORY_WINDOW_DAYS is the correct config key for RoutineModel history window; CONF_LEARNING_PERIOD retained only for PatternAnalyzer (statistical learning period)
 
 ### Blockers/Concerns
 
@@ -63,6 +64,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T19:40:53.869Z
-Stopped at: Completed 03-03-PLAN.md (Coordinator migration, ML cleanup, recorder bootstrap)
+Last session: 2026-03-13T19:57:25.859Z
+Stopped at: Completed 03-04-PLAN.md (Config key fix for RoutineModel history window + partial history confidence tests)
 Resume file: None
