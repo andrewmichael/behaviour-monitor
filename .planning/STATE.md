@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 04-01-PLAN.md (alert types + acute detector)
-last_updated: "2026-03-13T20:52:21.188Z"
+stopped_at: Completed 04-02-PLAN.md (drift detector)
+last_updated: "2026-03-13T20:58:42.363Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -52,6 +52,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 03]: CONF_HISTORY_WINDOW_DAYS is the correct config key for RoutineModel history window; CONF_LEARNING_PERIOD retained only for PatternAnalyzer (statistical learning period)
 - [Phase 04-01]: Severity ratio relative to threshold: LOW/MEDIUM/HIGH based on elapsed/threshold ratio, not elapsed/expected_gap
 - [Phase 04-01]: AcuteDetector per-entity counter dicts reset to 0 on every not-met code path (research Pitfall 2 compliance)
+- [Phase 04-detection-engines]: Stdev=0 fallback to max(1.0, baseline_mean*0.1): preserves sensitivity for low-count signals; avoids infinite z-scores on constant signals
+- [Phase 04-detection-engines]: reset() preserves last_update_date: prevents double-processing same day if reset_entity() and check() called in same coordinator cycle
 
 ### Blockers/Concerns
 
@@ -66,6 +68,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T20:52:21.184Z
-Stopped at: Completed 04-01-PLAN.md (alert types + acute detector)
+Last session: 2026-03-13T20:58:42.359Z
+Stopped at: Completed 04-02-PLAN.md (drift detector)
 Resume file: None

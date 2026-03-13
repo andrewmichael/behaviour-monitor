@@ -21,9 +21,9 @@ Requirements for Detection Rebuild milestone. Each maps to roadmap phases.
 
 ### Drift Detection
 
-- [ ] **DRIFT-01**: System detects persistent changes in daily behavior metrics using CUSUM change point detection
-- [ ] **DRIFT-02**: User can call a routine_reset service to tell the model their routine changed intentionally, preventing false drift alerts
-- [ ] **DRIFT-03**: User can configure drift detection sensitivity in the config flow UI
+- [x] **DRIFT-01**: System detects persistent changes in daily behavior metrics using CUSUM change point detection
+- [x] **DRIFT-02**: User can call a routine_reset service to tell the model their routine changed intentionally, preventing false drift alerts
+- [x] **DRIFT-03**: User can configure drift detection sensitivity in the config flow UI
 
 ### Infrastructure
 
@@ -67,9 +67,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACUTE-01 | Phase 4 | Complete |
 | ACUTE-02 | Phase 4 | Complete |
 | ACUTE-03 | Phase 4 | Complete |
-| DRIFT-01 | Phase 4 | Pending |
-| DRIFT-02 | Phase 4 | Pending |
-| DRIFT-03 | Phase 4 | Pending |
+| DRIFT-01 | Phase 4 | Complete |
+| DRIFT-02 | Phase 4 | Complete |
+| DRIFT-03 | Phase 4 | Complete |
 | INFRA-01 | Phase 3 | Complete |
 | INFRA-02 | Phase 3 | Complete |
 | INFRA-03 | Phase 5 | Pending |

@@ -20,7 +20,7 @@
 **Milestone Goal:** Replace z-score/ML analyzers with routine-based detection — acute events and drift tracking — so anomaly alerts represent genuinely unusual behavior rather than bucket-based statistical noise.
 
 - [x] **Phase 3: Foundation and Routine Model** - Migrate storage, stub deprecated sensors, and build the per-entity baseline learning engine (completed 2026-03-13)
-- [ ] **Phase 4: Detection Engines** - Build acute and drift detectors as pure-Python, HA-free components against the routine model API
+- [x] **Phase 4: Detection Engines** - Build acute and drift detectors as pure-Python, HA-free components against the routine model API (completed 2026-03-13)
 - [ ] **Phase 5: Integration** - Wire detection engines into coordinator, extend config flow, verify full sensor data contract
 
 ## Phase Details
@@ -53,7 +53,7 @@ Plans:
   3. No acute alert fires from a single observation — the detector requires multiple consecutive polling cycles of sustained evidence before producing a result
   4. Drift detection identifies a persistent shift in daily activity rates using CUSUM — a minimum evidence window of several days is required before an alert is produced
   5. Calling the routine_reset service clears the drift accumulator for an entity, so a voluntary routine change (e.g., started working from home) does not continue triggering drift alerts
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 04-01-PLAN.md — Alert result types, const.py detection constants, and AcuteDetector TDD (inactivity + unusual-time)
@@ -76,5 +76,5 @@ Plans:
 | 1. Coordinator Suppression | v1.0 | 2/2 | Complete | 2026-03-13 |
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
 | 3. Foundation and Routine Model | 4/4 | Complete   | 2026-03-13 | - |
-| 4. Detection Engines | v1.1 | 0/2 | Planning complete | - |
+| 4. Detection Engines | 2/2 | Complete   | 2026-03-13 | - |
 | 5. Integration | v1.1 | 0/? | Not started | - |
