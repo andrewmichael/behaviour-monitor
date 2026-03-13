@@ -121,6 +121,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         if self._unsub_state_changed:
             self._unsub_state_changed()
+            self._unsub_state_changed = None
         await self._save_data()
 
     async def _save_data(self) -> None:
