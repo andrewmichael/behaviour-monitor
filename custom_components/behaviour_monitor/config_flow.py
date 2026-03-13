@@ -29,8 +29,10 @@ from .const import (
     CONF_ENABLE_ML,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_LEARNING_PERIOD,
+    CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
+    CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
@@ -39,7 +41,9 @@ from .const import (
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
+    DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_ML_LEARNING_PERIOD,
+    DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
@@ -48,6 +52,10 @@ from .const import (
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
     SENSITIVITY_MEDIUM,
+    SEVERITY_CRITICAL,
+    SEVERITY_MINOR,
+    SEVERITY_MODERATE,
+    SEVERITY_SIGNIFICANT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,6 +177,40 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): TextSelector(
                     TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
                 ),
+                vol.Required(
+                    CONF_NOTIFICATION_COOLDOWN, default=DEFAULT_NOTIFICATION_COOLDOWN
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=5,
+                        max=240,
+                        step=5,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="minutes",
+                    )
+                ),
+                vol.Required(
+                    CONF_MIN_NOTIFICATION_SEVERITY,
+                    default=DEFAULT_MIN_NOTIFICATION_SEVERITY,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {"value": SEVERITY_MINOR, "label": "Minor (1.5 sigma+)"},
+                            {
+                                "value": SEVERITY_MODERATE,
+                                "label": "Moderate (2.5 sigma+)",
+                            },
+                            {
+                                "value": SEVERITY_SIGNIFICANT,
+                                "label": "Significant (3.5 sigma+) - recommended",
+                            },
+                            {
+                                "value": SEVERITY_CRITICAL,
+                                "label": "Critical (4.5 sigma+) - very quiet",
+                            },
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }
         )
 
@@ -250,6 +292,12 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_notify_services = self._config_entry.data.get(
             CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
         )
+        current_cooldown = self._config_entry.data.get(
+            CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN
+        )
+        current_min_severity = self._config_entry.data.get(
+            CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
+        )
 
         data_schema = vol.Schema(
             {
@@ -325,6 +373,39 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                     TextSelectorConfig(
                         type=TextSelectorType.TEXT,
                         multiple=True,
+                    )
+                ),
+                vol.Required(
+                    CONF_NOTIFICATION_COOLDOWN, default=current_cooldown
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=5,
+                        max=240,
+                        step=5,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="minutes",
+                    )
+                ),
+                vol.Required(
+                    CONF_MIN_NOTIFICATION_SEVERITY, default=current_min_severity
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {"value": SEVERITY_MINOR, "label": "Minor (1.5 sigma+)"},
+                            {
+                                "value": SEVERITY_MODERATE,
+                                "label": "Moderate (2.5 sigma+)",
+                            },
+                            {
+                                "value": SEVERITY_SIGNIFICANT,
+                                "label": "Significant (3.5 sigma+) - recommended",
+                            },
+                            {
+                                "value": SEVERITY_CRITICAL,
+                                "label": "Critical (4.5 sigma+) - very quiet",
+                            },
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
             }
