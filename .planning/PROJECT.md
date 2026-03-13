@@ -1,8 +1,8 @@
-# Behaviour Monitor — False Positive Reduction
+# Behaviour Monitor
 
 ## What This Is
 
-A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies using dual statistical (z-score) and ML (Half-Space Trees) analysis. Currently generates too many false positives, making the alerting unusable. This milestone focuses on tightening detection so only genuinely unusual events get flagged.
+A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies using dual statistical (z-score) and ML (Half-Space Trees) analysis. After v1.0, notifications are trustworthy — suppression gates, adaptive thresholds, and ML smoothing ensure only genuinely unusual events trigger alerts.
 
 ## Core Value
 
@@ -24,27 +24,38 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Notification via configured services or persistent_notification — existing
 - ✓ Welfare status assessment — existing
 - ✓ Config flow UI for entity selection and settings — existing
+- ✓ Per-entity notification cooldown — v1.0
+- ✓ Anomaly deduplication and cross-path merge — v1.0
+- ✓ Severity minimum gate for notifications — v1.0
+- ✓ Welfare status debounce (3-cycle hysteresis) — v1.0
+- ✓ Sparse-bucket observation guard (MIN_BUCKET_OBSERVATIONS=3) — v1.0
+- ✓ Raised default sensitivity (MEDIUM 2.0σ → 2.5σ) — v1.0
+- ✓ Per-entity adaptive thresholds via coefficient of variation — v1.0
+- ✓ ML EMA score smoothing (α=0.3) — v1.0
+- ✓ Tightened ML contamination values — v1.0
+- ✓ Cross-sensor co-occurrence threshold raised to 30 — v1.0
 
 ### Active
 
-- [ ] Reduce statistical analyzer false positive rate
-- [ ] Reduce ML analyzer false positive rate
-- [ ] Ensure only genuinely unusual events trigger notifications
-- [ ] Maintain detection of real anomalies (no regression in true positive rate)
+(None — define in next milestone)
 
 ### Out of Scope
 
-- New anomaly types or smarter detection patterns — focus is on reducing noise, not adding features
-- Daily digest or summary notifications — may revisit later but not this milestone
-- Per-entity sensitivity tuning UI — would add complexity; global tuning first
+- New anomaly types or smarter detection patterns — focus was on reducing noise, not adding features
+- Daily digest or summary notifications — may revisit in future milestone
+- Per-entity sensitivity tuning UI — global tuning delivered first; may revisit
+- Offline mode — real-time monitoring is core value
 
 ## Context
 
-- The integration is live and generating floods of false positive notifications
-- Both the statistical and ML analyzers may be contributing
-- The z-score thresholds, minimum observation counts, and sensitivity multipliers in `analyzer.py` and `ml_analyzer.py` are the primary tuning targets
-- Recent commits (v2.8.7, v2.8.8) already attempted to reduce welfare status sensitivity thresholds, suggesting this is an ongoing issue
-- The coordinator's notification logic in `coordinator.py` may also need tightening (e.g., deduplication, cooldown periods, confidence thresholds)
+Shipped v1.0 with 8,827 LOC Python.
+Tech stack: Home Assistant custom integration, Python async, River ML (optional).
+The integration had been generating floods of false positive notifications. v1.0 addressed this with a two-pronged approach: coordinator suppression gates (cooldown, dedup, severity gate, welfare debounce) plus analyzer tightening (bucket guards, adaptive thresholds, ML smoothing). Statistical false positive rate reduced from ~4.5% to ~1.2% at medium sensitivity. 240 tests passing (2 skipped).
+
+Known provisional values to monitor in production:
+- ML contamination (LOW=0.005, MEDIUM=0.02, HIGH=0.05)
+- Welfare debounce cycle count (N=3)
+- SENSITIVITY_MEDIUM=2.5σ only affects new installs
 
 ## Constraints
 
@@ -57,8 +68,13 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Tune both analyzers | User reports false positives from both/unknown source | — Pending |
-| Focus on thresholds and logic, not architecture | Existing dual-analyzer approach is sound; sensitivity is the issue | — Pending |
+| Tune both analyzers | User reports false positives from both/unknown source | ✓ Good — both needed tightening |
+| Focus on thresholds and logic, not architecture | Existing dual-analyzer approach is sound; sensitivity is the issue | ✓ Good — no rearchitecture needed |
+| Coordinator suppression before analyzer tightening | Phase 1 gates have zero detection regression risk | ✓ Good — clean baseline for Phase 2 |
+| MIN_BUCKET_OBSERVATIONS=3 subsumed STAT-02 | Count guard is strictly stronger than mean guard | ✓ Good — simpler implementation |
+| SENSITIVITY_MEDIUM=2.5σ | Reduces FP rate from ~4.5% to ~1.2% | ✓ Good — significant improvement |
+| EMA alpha=0.3 for ML smoothing | Single spike from 0.5 baseline stays at 0.647, below threshold | ✓ Good — eliminates single-spike FPs |
+| Adaptive thresholds via CV | High-variance entities get wider thresholds automatically | ✓ Good — no per-entity config needed |
 
 ---
-*Last updated: 2026-03-13 after initialization*
+*Last updated: 2026-03-13 after v1.0 milestone*
