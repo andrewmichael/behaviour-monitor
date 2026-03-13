@@ -79,11 +79,9 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         icon="mdi:brain",
         value_fn=lambda data: round(data.get("confidence", 0), 1),
         extra_attrs_fn=lambda coord, data: {
-            ATTR_LEARNING_PROGRESS: (
-                "complete" if coord.analyzer.is_learning_complete() else "learning"
-            ),
+            ATTR_LEARNING_PROGRESS: data.get("learning_status", "learning"),
             ATTR_ML_STATUS: data.get("ml_status", {}),
-            ATTR_LAST_RETRAIN: data.get("ml_status", {}).get("last_trained"),
+            ATTR_LAST_RETRAIN: None,  # No ML retraining in v1.1
         },
     ),
     BehaviourMonitorSensorDescription(
