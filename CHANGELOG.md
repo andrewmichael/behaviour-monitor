@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.11] - 2026-03-13
+
+### Fixed
+- prevent double-remove of state change listener on shutdown
+
 ## [2.8.10] - 2026-03-13
 
 ### Changed
