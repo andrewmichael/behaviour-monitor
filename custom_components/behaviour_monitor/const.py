@@ -161,3 +161,27 @@ SERVICE_ENABLE_HOLIDAY_MODE: Final = "enable_holiday_mode"
 SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
+
+# ---------------------------------------------------------------------------
+# Detection engine constants (v1.1)
+# ---------------------------------------------------------------------------
+
+# Inactivity detector: elapsed must exceed this multiple of expected gap to alert
+DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
+
+# Number of consecutive polling cycles evidence must persist before an alert fires
+SUSTAINED_EVIDENCE_CYCLES: Final = 3
+
+# Minimum days of observations before drift detection activates
+MIN_EVIDENCE_DAYS: Final = 3
+
+# Minimum routine confidence before unusual-time alerts fire (Pitfall 6 guard)
+MINIMUM_CONFIDENCE_FOR_UNUSUAL_TIME: Final = 0.3
+
+# CUSUM parameters (k=allowance, h=threshold) keyed by sensitivity level
+# high=(0.25, 2.0): sensitive to small shifts; low=(1.0, 6.0): only large shifts
+CUSUM_PARAMS: Final = {
+    "high": (0.25, 2.0),
+    "medium": (0.5, 4.0),
+    "low": (1.0, 6.0),
+}
