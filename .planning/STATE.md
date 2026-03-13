@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 Phase: 1 of 2 (Coordinator Suppression — COMPLETE)
 Plan: 2 of 2 in current phase (01-02-PLAN.md complete)
 Status: Phase 1 complete — both plans done
-Last activity: 2026-03-13 — Plan 02 complete: _should_notify(), severity gate, per-entity cooldown, cross-path dedup, welfare debounce
+Last activity: 2026-03-13 - Completed quick task 1: fix lint warnings and stale config flow label
 
 Progress: [██████████] 100%
 
@@ -87,6 +87,12 @@ None yet.
 - Research flag: ML contamination optimal values (LOW: 0.005, MEDIUM: 0.02) are directionally correct but empirically determined — treat as provisional and monitor after Phase 2 ships
 - Research flag: Welfare debounce cycle count (N=3) may need tuning; document as a named constant, not a magic number
 - Research flag: Raising DEFAULT_SENSITIVITY only affects new installs; existing MEDIUM users will not benefit without manual reconfiguration or a migration step
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 1 | fix lint warnings and stale config flow label | 2026-03-13 | d02c5e2 | [1-fix-lint-warnings-and-stale-config-flow-](./quick/1-fix-lint-warnings-and-stale-config-flow-/) |
 
 ## Session Continuity
 
