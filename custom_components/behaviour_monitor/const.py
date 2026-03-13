@@ -25,7 +25,7 @@ SENSITIVITY_HIGH: Final = "high"
 
 SENSITIVITY_THRESHOLDS: Final = {
     SENSITIVITY_LOW: 3.0,      # 3σ - only flag extreme anomalies
-    SENSITIVITY_MEDIUM: 2.0,   # 2σ - flag moderate anomalies
+    SENSITIVITY_MEDIUM: 2.5,   # 2.5 sigma — ~1.2% false positive rate (was 2.0 = 4.5%)
     SENSITIVITY_HIGH: 1.0,     # 1σ - flag any deviation
 }
 

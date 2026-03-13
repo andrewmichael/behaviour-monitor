@@ -6,6 +6,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from unittest.mock import MagicMock
+
+from custom_components.behaviour_monitor.const import (
+    ML_CONTAMINATION,
+    ML_EMA_ALPHA,
+    MIN_CROSS_SENSOR_OCCURRENCES,
+    SENSITIVITY_HIGH,
+    SENSITIVITY_MEDIUM,
+)
 from custom_components.behaviour_monitor.ml_analyzer import (
     ML_AVAILABLE,
     CrossSensorPattern,
@@ -386,3 +395,158 @@ class TestMLAnomalyResult:
         assert result.entity_id is None
         assert result.anomaly_type == "missing_correlation"
         assert len(result.related_entities) == 2
+
+
+class TestCrossSensorGuard:
+    """Tests for MIN_CROSS_SENSOR_OCCURRENCES guard in check_cross_sensor_anomalies."""
+
+    def test_low_count_excluded(self) -> None:
+        """Pattern with co_occurrence_count below MIN_CROSS_SENSOR_OCCURRENCES is excluded.
+
+        count=20 produces correlation_strength > 0.5 (passes old hardcoded 10 filter),
+        but should be excluded by new threshold of 30.
+        """
+        analyzer = MLPatternAnalyzer(cross_sensor_window_seconds=60)
+
+        # count=20, consistency=0.9 → strength ≈ 0.548 (above 0.5 filter)
+        # but count=20 < MIN_CROSS_SENSOR_OCCURRENCES=30, so should be excluded
+        key = ("sensor.a", "sensor.b")
+        pattern = CrossSensorPattern(
+            entity_a="sensor.a",
+            entity_b="sensor.b",
+            co_occurrence_count=20,
+            avg_time_delta_seconds=5.0,
+            a_before_b_count=18,
+            b_before_a_count=2,
+        )
+        analyzer._cross_sensor_patterns[key] = pattern
+
+        # sensor.a fired 30s ago — enough time for expected_window (2x 5s = 10s) to pass
+        recent_ts = datetime.now(timezone.utc) - timedelta(seconds=30)
+        recent_events = [
+            StateChangeEvent(entity_id="sensor.a", timestamp=recent_ts),
+        ]
+
+        anomalies = analyzer.check_cross_sensor_anomalies(
+            recent_events,
+            check_window=timedelta(seconds=60),
+        )
+
+        # Pattern is excluded (count=20 < MIN_CROSS_SENSOR_OCCURRENCES=30)
+        assert anomalies == []
+
+    def test_high_count_included(self) -> None:
+        """Pattern with co_occurrence_count >= MIN_CROSS_SENSOR_OCCURRENCES passes the filter."""
+        analyzer = MLPatternAnalyzer(cross_sensor_window_seconds=60)
+
+        # Inject a pattern with 35 co-occurrences (above threshold of 30)
+        key = ("sensor.a", "sensor.b")
+        pattern = CrossSensorPattern(
+            entity_a="sensor.a",
+            entity_b="sensor.b",
+            co_occurrence_count=35,
+            avg_time_delta_seconds=5.0,
+            a_before_b_count=30,
+            b_before_a_count=5,
+        )
+        analyzer._cross_sensor_patterns[key] = pattern
+
+        # sensor.a fired recently — sensor.b did not
+        # We fire 61 seconds ago so expected_window (2x avg_delta=10s) has definitely passed
+        recent_ts = datetime.now(timezone.utc) - timedelta(seconds=61)
+        recent_events = [
+            StateChangeEvent(entity_id="sensor.a", timestamp=recent_ts),
+        ]
+
+        anomalies = analyzer.check_cross_sensor_anomalies(
+            recent_events,
+            check_window=timedelta(seconds=120),
+        )
+
+        # Pattern passes the filter — anomaly should be detected
+        assert len(anomalies) > 0
+        assert anomalies[0].anomaly_type == "missing_correlation"
+
+
+class TestMLContaminationConstants:
+    """Tests for ML_CONTAMINATION constant values."""
+
+    def test_medium_contamination_raised(self) -> None:
+        """ML_CONTAMINATION[SENSITIVITY_MEDIUM] should equal 0.02."""
+        assert ML_CONTAMINATION[SENSITIVITY_MEDIUM] == 0.02
+
+    def test_high_contamination_lowered(self) -> None:
+        """ML_CONTAMINATION[SENSITIVITY_HIGH] should equal 0.05."""
+        assert ML_CONTAMINATION[SENSITIVITY_HIGH] == 0.05
+
+
+class TestEMASmoothing:
+    """Tests for EMA-based score smoothing in check_anomaly()."""
+
+    def test_spike_suppressed(self) -> None:
+        """Single spike score should be smoothed and not produce an anomaly."""
+        # contamination=0.02 → threshold=0.98
+        analyzer = MLPatternAnalyzer(contamination=0.02)
+
+        # Seed warm EMA state: entity_id="sensor.test" has prior EMA of 0.5
+        # _score_ema doesn't exist yet — this will raise AttributeError (red phase)
+        analyzer._score_ema["sensor.test"] = 0.5  # type: ignore[attr-defined]
+
+        # Mock the ML model to return score=0.99
+        mock_model = MagicMock()
+        mock_model.score_one.return_value = 0.99
+        analyzer._model = mock_model
+        # Force is_trained check to pass
+        analyzer._samples_processed = 200
+
+        event = StateChangeEvent(
+            entity_id="sensor.test",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = analyzer.check_anomaly(event)
+
+        # smoothed = 0.3 * 0.99 + 0.7 * 0.5 = 0.297 + 0.35 = 0.647 < 0.98
+        assert result is None
+
+    def test_sustained_anomaly_detected(self) -> None:
+        """Repeated high scores should push EMA above threshold."""
+        # contamination=0.02 → threshold=0.98
+        analyzer = MLPatternAnalyzer(contamination=0.02)
+
+        # Mock the ML model to always return 0.99
+        mock_model = MagicMock()
+        mock_model.score_one.return_value = 0.99
+        analyzer._model = mock_model
+        analyzer._samples_processed = 200
+
+        ts_base = datetime.now(timezone.utc)
+        found_anomaly = False
+        for i in range(10):
+            event = StateChangeEvent(
+                entity_id="sensor.test",
+                timestamp=ts_base + timedelta(seconds=i),
+            )
+            result = analyzer.check_anomaly(event)
+            if result is not None:
+                found_anomaly = True
+                break
+
+        # After enough iterations EMA should converge above 0.98
+        assert found_anomaly, "Expected at least one anomaly after 10 consecutive high scores"
+
+    def test_ema_serialization(self) -> None:
+        """EMA state should survive to_dict()/from_dict() round-trip."""
+        analyzer = MLPatternAnalyzer(contamination=0.05)
+
+        # Set EMA state — _score_ema doesn't exist yet (red phase)
+        analyzer._score_ema = {"entity_a": 0.7, "entity_b": 0.3}  # type: ignore[attr-defined]
+
+        # Serialize
+        data = analyzer.to_dict()
+
+        # Deserialize
+        restored = MLPatternAnalyzer.from_dict(data)
+
+        # EMA state must be preserved
+        assert hasattr(restored, "_score_ema"), "_score_ema attribute missing after from_dict"
+        assert restored._score_ema == {"entity_a": 0.7, "entity_b": 0.3}
