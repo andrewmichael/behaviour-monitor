@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.10] - 2026-03-13
+
+### Changed
+- Documentation: change log
+- Documentation: update README and CHANGELOG for v1.1 detection rebuild
+
+### Fixed
+- replace hardcoded cwd paths in tests with dynamic Path resolution
+
 ### Added
 - **Routine Model**: Pure-Python baseline learning engine with 168 hour-of-day × day-of-week slots per entity, replacing the old 672 time-bucket z-score approach
 - **Acute Detection**: Inactivity alerts (no expected activity for configurable multiplier of learned interval) and unusual-time alerts (activity at rarely-seen times), both requiring sustained evidence across 3 consecutive polling cycles before firing
