@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 05-integration-01-PLAN.md
-last_updated: "2026-03-13T21:38:18.872Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-03-13T22:04:49.146Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
   percent: 0
 ---
 
@@ -56,6 +56,9 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 04-detection-engines]: reset() preserves last_update_date: prevents double-processing same day if reset_entity() and check() called in same coordinator cycle
 - [Phase 05-integration]: Legacy constants (SENSITIVITY_THRESHOLDS, ML_CONTAMINATION, etc.) retained in const.py until old analyzer/coordinator are replaced in Plan 02
 - [Phase 05-integration]: Migration chaining: v2->v3->v4 in single async_migrate_entry with independent version guards
+- [Phase 05-02]: get_snooze_duration_key() added to coordinator for select.py compat — was missing from initial rewrite
+- [Phase 05-02]: _parse_dt nested try/except: inner catches DEFAULT_TIME_ZONE MagicMock in test env — returns naive datetime as fallback
+- [Phase 05-02]: test_coordinator.py completely rewritten (2129->600 lines, 63 tests) — v1.0 API tests would all fail against v1.1
 
 ### Blockers/Concerns
 
@@ -70,6 +73,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T21:38:18.869Z
-Stopped at: Completed 05-integration-01-PLAN.md
+Last session: 2026-03-13T22:04:49.142Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
