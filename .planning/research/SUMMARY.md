@@ -1,181 +1,176 @@
 # Project Research Summary
 
-**Project:** Behaviour Monitor — False Positive Reduction Milestone
-**Domain:** Home Assistant anomaly detection / notification quality
+**Project:** Behaviour Monitor v1.1 Detection Rebuild
+**Domain:** Home Assistant custom integration — routine-based anomaly detection for welfare monitoring
 **Researched:** 2026-03-13
-**Confidence:** HIGH
+**Confidence:** HIGH (stack, architecture, pitfalls) / MEDIUM (feature thresholds, CUSUM parameter tuning)
 
 ## Executive Summary
 
-The Behaviour Monitor integration has a solid dual-analyzer architecture (z-score statistical detection + River HalfSpaceTrees ML) that is functionally correct. The false positive problem is not a design flaw — it is a set of three distinct, fixable gaps: no notification cooldown in the coordinator, sparse time-bucket z-scores that produce infinite values on regular entities, and sensitivity defaults calibrated for laboratory conditions rather than real home use. Research is grounded entirely in the codebase with HIGH confidence; no external tools were available but every finding is traceable to specific lines.
+The v1.1 rebuild replaces the existing z-score bucket analyzer and River ML engine with a two-engine routine-based detection system: acute inactivity detection (real-time, event-driven) and drift detection (gradual change, periodic CUSUM). Research confirms this is the correct direction — the existing 672-bucket approach suffered from fundamental sparsity problems that produced unstable statistics and unreliable detections. The replacement approach is well-documented in the IoT welfare monitoring literature, implementable in pure Python stdlib with no new dependencies, and architecturally cleaner than the 1,066-line monolithic coordinator it replaces.
 
-The recommended approach is a two-phase fix. Phase 1 targets the coordinator's notification dispatch — adding per-type cooldown, a minimum severity gate, and welfare status hysteresis. These changes are purely additive (no existing behavior removed) and will produce the most immediate user-visible improvement. Phase 2 tightens the analyzers themselves — minimum bucket observation guards to eliminate infinite z-scores, raised default sensitivity, tighter ML contamination, and cross-sensor correlation thresholds. Phase 2 reduces the volume of anomalies reaching the coordinator, complementing Phase 1's suppression logic.
+The recommended approach builds a layered system with strict separation of concerns: a `RoutineModel` (pure Python, HA-free) learns per-entity baselines from historical data; `AcuteDetector` and `DriftDetector` (also HA-free) consume the baseline; a thin coordinator orchestrator wires these to HA's event bus and sensor layer. This layering is the critical architectural improvement over v1.0 — it makes every detection component unit-testable without mocking HA infrastructure. The entire detection stack runs on Python stdlib alone, eliminating HACS installation friction and the River dependency.
 
-The primary risk is scatter-shot threshold bumping: the commit history already shows four rounds of threshold loosening (v2.8.6–v2.8.8) without root-cause isolation. That pattern must not continue. Each change in this milestone must be attributed to a specific detection path, and the `anomaly_detected` sensor state must be validated after every threshold change to prevent automation regressions.
-
----
+The primary risk is the transition itself, not the algorithm. Three migration hazards require explicit engineering: (1) cold start false negatives — the period after upgrade before any baseline is established when the system silently detects nothing; (2) storage migration failure — the v2 z-score storage format is incompatible with the new routine model and must be gracefully discarded, not deserialized; (3) sensor entity state contract changes — five ML-specific sensors must be deprecated in-place rather than removed, to preserve user automations. Each of these is a recoverable engineering task with a defined solution, not a research gap.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new dependencies are required. All false positive reduction work operates within the existing Python stack and River 0.19.0+ dependency. The four files that need changes are `coordinator.py`, `analyzer.py`, `ml_analyzer.py`, and `const.py`. All recommended threshold constants belong in `const.py` for testability — values buried inline in logic methods are the root cause of the current untraceable threshold drift.
+The entire detection rebuild uses Python stdlib only. `statistics.NormalDist` (Python 3.8+, present in all HA 2024.1.0+ environments) provides z-score computation for the routine model. `collections.deque(maxlen=N)` provides O(1) rolling windows without manual pruning. CUSUM drift detection is approximately 15 lines of pure arithmetic — no library required. The HA recorder integration (`homeassistant.components.recorder.history.get_significant_states`) is the stable interface for bootstrapping baseline history from existing HA state data on first startup.
 
 **Core technologies:**
-- `coordinator.py`: notification dispatch and deduplication — owns all send-or-suppress decisions
-- `analyzer.py`: z-score computation and bucket statistics — owns observation count guards and sensitivity thresholds
-- `ml_analyzer.py`: HalfSpaceTrees scoring and cross-sensor patterns — owns contamination threshold and correlation gates
-- `const.py`: single source of truth for all numeric constants — every tunable value must live here
+- `statistics.NormalDist` (stdlib): z-score for acute detection — zero install cost, `NormalDist.zscore()` available directly, Python 3.8+
+- `collections.deque(maxlen=N)` (stdlib): rolling observation windows — O(1) append/eviction, ideal for 4-week history
+- CUSUM algorithm (~15 lines, no imports): drift detection — streaming, O(1) per observation, no ruptures/numpy needed
+- `homeassistant.components.recorder.history`: bootstrap from existing state history — stable HA internal API, eliminates cold-start learning period for existing installations
+- `homeassistant.helpers.storage.Store`: persist learned routine models — already used in v1.0, same pattern carries forward
+- `async_track_state_change_event` (HA internal): entity-scoped event subscription — replaces deprecated `EVENT_STATE_CHANGED` bus listener, required for HA 2025.5+ compatibility
+
+**What NOT to use:** `ruptures` (requires numpy/scipy, batch-oriented not streaming), `numpy`/`scipy` (HA install conflicts, 60-200MB overhead), `river` (explicitly removed per project constraint), direct SQLAlchemy queries on HA DB (fragile across schema versions).
 
 ### Expected Features
 
-**Must have (table stakes):**
-- **Notification cooldown (per type)** — `_last_notification_time` exists but is never read before re-firing; an anomaly that persists 30 minutes currently sends 30 mobile pushes
-- **Minimum bucket observation count** — buckets with count < 4 produce wildly unstable z-scores; a bucket with count=1 produces `float("inf")` on any deviation, making perfectly regular entities the most alarming
-- **Severity minimum for notifications** — the severity classification system (`minor`/`moderate`/`significant`/`critical`) already exists but is unused in the notification path; `minor` anomalies (1.5–2.5σ) should update sensor state only, not push notifications
-- **Welfare status hysteresis** — status transitions at the boundary (ok ↔ check_recommended) oscillate, firing a notification on each crossing
+Research confirms the feature set is well-scoped and backed by welfare monitoring literature. Alert fatigue is identified as the primary failure mode for smart home welfare monitoring systems — users disable integrations when acute alerts fire too often. The core design principle must be: every alert represents something genuinely unusual.
 
-**Should have (differentiators):**
-- **Consecutive anomaly confirmation** — require 2+ consecutive detection cycles before raising an anomaly to notification-worthy (eliminates single-interval noise spikes)
-- **Cross-path deduplication** — when both statistical and ML paths flag the same entity in the same cycle, send one notification, not two
-- **Minimum mean activity guard** — buckets with mean < 0.3 events/interval generate high z-scores from single events; add a floor alongside the observation count guard
-- **Inactivity asymmetric threshold** — unusual inactivity is naturally more variable than activity; apply a 1.5× z-score multiplier for inactivity anomalies
+**Must have (v1.1 table stakes):**
+- Routine model — per-entity rolling baseline (binary: event intervals; numeric: mean/std) — foundation for both detection engines
+- Acute detection engine — sustained inactivity vs. learned typical interval; requires N consecutive coordinator cycles before firing, not single-point detection
+- Drift detection engine — CUSUM on per-entity daily activity rates; minimum 5–7 day evidence window before alerting
+- Rebuilt coordinator — re-implements all existing suppression logic (holiday, snooze, cooldown, welfare debounce)
+- Binary + numeric entity support — event-count/interval model for binary; mean/std model for numeric
+- Config flow extensions with migration — history window, inactivity multiplier, drift sensitivity; existing entries migrate gracefully
+- Sensor data dict compatibility — all 14 entity IDs preserved; ML-specific sensors deprecated in-place, not removed
+- Persistent routine model storage — survives HA restarts; users cannot wait 4 weeks to re-learn after a restart
+
+**Should have (v1.x differentiators):**
+- Day-of-week learned intervals — per-DOW variation prevents weekend/weekday false positives
+- Drift alert context detail — "no kettle activity for 5 days (was daily)" rather than generic notification
+- Confidence ramp-up during learning — suppress/weaken alerts during first half of learning window to prevent alert floods on fresh setup
+- Routine Reset service call — lets users acknowledge drift alerts and update the baseline to current behavior
 
 **Defer (v2+):**
-- Per-entity sensitivity tuning UI — out of scope per PROJECT.md; global threshold improvements achieve most benefit
-- User feedback / thumbs-up-down loop — requires persistent feedback storage and weeks of work
-- Seasonal/calendar awareness (school terms, regional holidays) — high complexity, adds new dependencies
-- Adaptive baselines (EWMA on bucket means) — significant architecture change not needed to solve the immediate flood
-- Daily digest / summary mode — explicitly deferred in PROJECT.md
+- Daily digest notification — adds scheduling complexity, out of scope per PROJECT.md
+- Per-entity sensitivity tuning UI — validate global sensitivity is sufficient first
+- Seasonal/calendar awareness — high complexity, uncertain value for primary use case
 
 ### Architecture Approach
 
-The existing architecture requires no structural changes. False positive reduction is a series of layered gates added at precisely-defined points in the existing pipeline. The guiding principle — **each component owns what it produces; the coordinator owns what gets sent** — is already correct and must be preserved. Threshold logic stays in the analyzers (not the coordinator), and coordinator-level concerns (cooldown, dedup, severity filter) stay in `_async_update_data()`.
+The new architecture decomposes the existing 1,066-line monolithic coordinator into five separate files with strict boundaries. Three files (`routine_model.py`, `acute_detector.py`, `drift_detector.py`) contain zero HA imports and are independently testable. A new `notification.py` extracts the ~400 lines of notification logic currently embedded in the coordinator. The rewritten `coordinator.py` becomes a thin orchestrator targeting under 350 lines. Detection operates on two timescales: acute checks happen inline with state change callbacks (O(1), synchronous); drift checks happen in the 60-second `_async_update_data` poll (O(history_days), async). This split prevents blocking HA's event loop.
 
-**Major components and where changes land:**
-1. `const.py` — add `MIN_BUCKET_OBSERVATIONS`, `MIN_MEAN_ACTIVITY_THRESHOLD`, `NOTIFICATION_COOLDOWN_SECONDS`, `MIN_NOTIFICATION_SEVERITY`, `WELFARE_STATUS_DEBOUNCE_CYCLES`, updated `SENSITIVITY_THRESHOLDS`, updated `ML_CONTAMINATION`
-2. `analyzer.py` — add observation count and mean activity guards in `check_for_anomalies()` before z-score computation
-3. `ml_analyzer.py` — raise `co_occurrence_count` minimum (10 → 20), raise `correlation_strength` minimum (0.5 → 0.6), widen expected window multiplier (2× → 3×)
-4. `coordinator.py` — add per-type cooldown guard before each `_send_*` call; add severity filter for stat anomalies; add welfare debounce state; add cross-path dedup check
+**Major components:**
+1. `RoutineModel` (`routine_model.py`) — learns per-entity baselines; provides `expected_gap_seconds()` and `daily_rate()` to detectors; pure Python; serializes to/from dict for persistence
+2. `AcuteDetector` (`acute_detector.py`) — real-time inactivity gap check against routine baseline; fires per state change event; pure Python
+3. `DriftDetector` (`drift_detector.py`) — per-entity CUSUM on daily activity rates; runs on 60s coordinator poll; pure Python
+4. `NotificationManager` (`notification.py`) — cooldown, deduplication, severity gate, welfare debounce, message construction; extracted from coordinator
+5. `BehaviourMonitorCoordinator` (`coordinator.py`) — HA lifecycle, event subscription, orchestration, persistence, sensor data dict assembly; delegates all domain logic above
 
-**Data flow with all gates active:**
-```
-check_for_anomalies()
-  [GATE 1] bucket.count < MIN_BUCKET_OBSERVATIONS → skip
-  [GATE 2] expected_mean < MIN_MEAN_ACTIVITY_THRESHOLD → skip
-  [GATE 3] z_score <= sensitivity_threshold → skip
-    → AnomalyResult list with severity labels
-[GATE 4] severity < MIN_NOTIFICATION_SEVERITY → suppress notification (sensor updates only)
-[GATE 5] (entity_id, anomaly_type, time_slot) seen recently → skip
-[GATE 6] last_notification_time + cooldown > now → skip
-  → _send_notification()
-```
+**Build order enforced by dependencies:** `const.py` → `routine_model.py` → `acute_detector.py` + `drift_detector.py` (parallel) → `notification.py` → `coordinator.py` → `sensor.py` + `config_flow.py` (parallel).
 
 ### Critical Pitfalls
 
-1. **Scatter-shot threshold bumping** — v2.8.6 through v2.8.8 show four rounds of simultaneous threshold changes; the inline "was X" comments prove this pattern. Before changing any threshold, instrument which detection path produced the false positives. Only tune the responsible layer.
+1. **Cold start silent false negatives** — after upgrade, the routine model has no baseline; acute detection fires nothing; users assume the system is working when it is not. Avoid by: surfacing an explicit "detection inactive" sensor state; sending a one-time startup notification; considering a fallback fixed-threshold mode during cold start. Silence must never be invisible.
 
-2. **No notification cooldown** — `_last_notification_time` is stored but never read before re-firing. Every 60-second update cycle that finds anomalies sends a notification. A 30-minute cooldown per notification type is the single highest-impact change available.
+2. **Config entry migration failure crashes startup** — the v2 storage format (`analyzer` key, 672-bucket z-score data) cannot deserialize into the new routine model. Avoid by: incrementing `STORAGE_VERSION` to 3; wrapping `Store.async_load()` in try/except; detecting old format by presence of `analyzer` key, logging a clear message, and starting fresh. Implement `async_migrate_entry` in `__init__.py` to clean up dead config keys (`CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`, etc.).
 
-3. **Infinite z-scores from zero-variance regular entities** — `analyzer.py:448` sets `z_score = float("inf")` when `expected_std == 0` and `actual != expected_mean`. This fires for entities that activate with perfect consistency — the exact opposite of anomalous behavior. No threshold increase can suppress infinity.
+3. **Sensor entity state contract break** — five ML-specific sensors (`ml_status`, `ml_training_remaining`, `cross_sensor_patterns`, and affected sensors) must not be removed; they must return defined stub states in v1.1 and only be removed in v1.2 with advance notice. `coordinator.data` must never be `None` on first refresh — all 14 sensors must return safe defaults.
 
-4. **Welfare oscillation** — `current_welfare != last_welfare_status` with no hysteresis causes rapid ok → concern → ok transitions near threshold boundaries, each triggering a notification. Require N=3 consecutive cycles at the new status before confirming a transition.
+4. **Drift fires on legitimate routine changes** — CUSUM cannot distinguish voluntary schedule changes from gradual decline. Avoid by: requiring minimum 5–7 day sustained evidence window; implementing a `reset_drift_baseline` service call; resetting drift accumulator when holiday mode is disabled (not just suppressing during it).
 
-5. **Dual-path duplicate notifications** — statistical and ML paths each send independent notifications; an event triggering both paths sends two mobile pushes within the same 60-second cycle. Cross-path dedup or notification consolidation is required.
-
----
+5. **Acute threshold not routine-relative** — using a fixed hour threshold instead of a multiplier of the learned typical quiet period produces false positives at night and false negatives during day windows. Avoid by: building the routine model before the acute detector; expressing the config option as a multiplier of the learned interval, not raw hours; testing with synthetic overnight quiet periods.
 
 ## Implications for Roadmap
 
-Based on research, the work divides cleanly into two phases plus a prerequisite instrumentation step.
+Based on the dependency graph in FEATURES.md and the build order in ARCHITECTURE.md, research supports a five-phase structure ordered by strict dependency and risk.
 
-### Phase 0: Diagnosis Instrumentation (Optional but Strongly Recommended)
-**Rationale:** The commit history shows the project has already burned four rounds of threshold tuning without root-cause isolation. Without per-source counters, Phase 1 and Phase 2 changes cannot be validated. Even simple log aggregation (which detection path fired, how many suppressions) prevents regression to the scatter-shot pattern.
-**Delivers:** Observable per-path alert counts; ability to verify Phase 1 and Phase 2 impact; protection against inadvertent over-suppression
-**Avoids:** Pitfall 1 (scatter-shot tuning)
-**Note:** This can be as lightweight as adding log entries at each gate with a consistent prefix for easy filtering. Full diagnostic sensors are a nice-to-have.
+### Phase 1: Foundation — Constants, Data Models, Storage Migration
+**Rationale:** Everything depends on `const.py` being updated first. Storage migration must be designed before any code that loads storage is written — otherwise migration is an afterthought that gets patched in incorrectly. This phase produces no user-visible behavior change but makes all subsequent phases safe to build.
+**Delivers:** Updated `const.py` with new config keys and ML constants removed; `async_migrate_entry` in `__init__.py` handling v2→v3 migration; storage fixture tests confirming old z-score format loads without crashing; orphaned ML storage cleanup.
+**Addresses:** Config flow migration, storage compatibility.
+**Avoids:** Pitfall 2 (config migration failure), Pitfall 6 (River dependency removal loose ends).
 
-### Phase 1: Coordinator Notification Suppression
-**Rationale:** This phase has the highest immediate user-visible impact and zero risk of detection regression — it suppresses notifications without changing what the analyzers detect. It must come before Phase 2 so that Phase 2's threshold changes can be evaluated against a stable notification baseline.
-**Delivers:** Elimination of notification floods; welfare oscillation fix; cross-path duplicate suppression
-**Addresses:**
-- Notification cooldown per type (`NOTIFICATION_COOLDOWN_SECONDS = 1800`)
-- Severity minimum gate (`MIN_NOTIFICATION_SEVERITY = "moderate"`)
-- Welfare status hysteresis (`WELFARE_STATUS_DEBOUNCE_CYCLES = 3`)
-- Cross-path deduplication (statistical + ML same entity same cycle)
-**Avoids:** Pitfall 2 (no cooldown), Pitfall 3 (welfare oscillation), Pitfall 5 (dual-path duplicates)
-**Test requirement:** New coordinator tests must inject pre-built anomaly lists and verify suppression behavior at each gate. Verify `anomaly_detected` sensor behavior does not change unexpectedly (Pitfall 9).
+### Phase 2: Routine Model
+**Rationale:** Both detection engines consume the routine model's output. This must be fully built and tested before either detector is implemented. Building it first forces the detection API (`expected_gap_seconds`, `daily_rate`) to be defined as an interface, not discovered during detector implementation.
+**Delivers:** `routine_model.py` with `EntityRoutine` and `RoutineModel`; `to_dict`/`from_dict` persistence; history bootstrap from HA recorder; explicit cold start handling with "detection inactive" status; full unit tests with no HA mocks required.
+**Uses:** `statistics.NormalDist`, `collections.deque`, `homeassistant.components.recorder.history`.
+**Avoids:** Pitfall 1 (cold start false negatives), Pitfall 5 (fixed vs routine-relative threshold — forces the API to be routine-relative from the start).
 
-### Phase 2: Analyzer Threshold and Guard Tightening
-**Rationale:** Phase 1 suppresses notifications for anomalies that slip through; Phase 2 reduces the volume of anomalies produced in the first place. Doing this second ensures the coordinator-level gates are working correctly before reducing raw detection sensitivity.
-**Delivers:** Elimination of infinite z-score false positives; tighter ML cross-sensor correlation; reduced steady-state anomaly volume for new and existing installs
-**Addresses:**
-- Minimum bucket observation guard (`MIN_BUCKET_OBSERVATIONS = 4` in `analyzer.py`)
-- Minimum mean activity guard (`MIN_MEAN_ACTIVITY_THRESHOLD = 0.3` in `analyzer.py`)
-- Raise default sensitivity (`DEFAULT_SENSITIVITY` → `SENSITIVITY_LOW` / 3.0σ for new installs)
-- ML contamination tightening (MEDIUM: 0.05 → 0.02; LOW: 0.01 → 0.005)
-- Cross-sensor gates (co_occurrence: 10 → 20; correlation_strength: 0.5 → 0.6; window: 2× → 3×)
-**Avoids:** Pitfall 4 (infinite z-scores), Pitfall 10 (ML contamination mismatch), Pitfall 11 (spurious cross-sensor correlation)
-**Test requirement:** For every threshold constant changed, verify at least one test exercises the exact boundary using the constant (not a hardcoded literal). See Pitfall 12.
+### Phase 3: Detection Engines (Acute + Drift)
+**Rationale:** Both engines depend on RoutineModel and can be built in parallel. Acute detection is the primary safety use case; drift is secondary but architecturally parallel. Both must be HA-free so they can be unit-tested independently before coordinator wiring.
+**Delivers:** `acute_detector.py` (sustained inactivity gap check, N-cycle evidence requirement, no overnight false positives); `drift_detector.py` (CUSUM with 5–7 day minimum evidence window, drift reset mechanism, holiday mode integration); full unit tests including overnight quiet period scenarios.
+**Uses:** CUSUM (~15 lines pure Python), routine model API, `statistics.NormalDist`.
+**Avoids:** Pitfall 4 (drift on legitimate routine changes), Pitfall 5 (fixed threshold), performance trap (CUSUM gated to periodic poll, not per-event callback).
 
-### Phase 3: Validation and Refinement (if needed)
-**Rationale:** After Phases 1 and 2, empirical validation against real data will reveal whether the specific threshold values chosen were correct. Some values (ML contamination targets, welfare debounce cycle count) are directionally correct but need live calibration.
-**Delivers:** Tuned threshold values backed by observed alert rates; documentation updates for sensitivity level labels (rename "Low/Medium/High" → "Cautious/Standard/Sensitive" to reduce confusion)
-**Addresses:** Inactivity asymmetric threshold (1.5× z-score multiplier for unusual_inactivity if needed); consecutive anomaly confirmation (MIN_CONSECUTIVE_ANOMALIES = 2) if noise persists after Phase 2
-**Avoids:** Pitfall 8 (threshold changes without pattern data quality audit)
+### Phase 4: Coordinator Rebuild + Notification Manager
+**Rationale:** The coordinator is the HA integration layer that wires everything together. It cannot be built until the components it orchestrates exist. Notification extraction happens in the same phase because the coordinator and notification manager are coupled through `AcuteResult`/`DriftResult` types.
+**Delivers:** Rewritten `coordinator.py` (under 350 lines; `async_track_state_change_event` subscription; `async_set_updated_data` for event-driven sensor push; holiday mode, snooze, welfare debounce preserved); `notification.py` with cooldown, deduplication, severity gate, and message construction extracted; STORAGE_VERSION 3 migration logic integrated.
+**Avoids:** Anti-patterns from ARCHITECTURE.md (everything in coordinator, CUSUM in @callback, `async_request_refresh` on every event, deprecated `EVENT_STATE_CHANGED` subscription).
+
+### Phase 5: Sensor Compatibility + Config Flow Extension
+**Rationale:** Sensor layer and config flow both depend on the coordinator's data dict being stable. They cannot be updated until Phase 4 defines the exact output contract. These can be built in parallel with each other but must follow Phase 4.
+**Delivers:** Updated `sensor.py` `value_fn` lambdas for new data dict keys; ML-specific sensors (`ml_status`, `ml_training_remaining`, `cross_sensor_patterns`) returning defined stub states rather than going unavailable; `config_flow.py` extended with history window, inactivity multiplier, and drift sensitivity options; `coordinator.data` never-None guarantee verified with tests.
+**Addresses:** Sensor layer compatibility, config flow extensions.
+**Avoids:** Pitfall 3 (sensor entity state contract break).
 
 ### Phase Ordering Rationale
 
-- **Phase 1 before Phase 2** — coordinator suppression must be validated before reducing raw anomaly volume, so each layer's contribution can be measured independently
-- **const.py changes first within each phase** — extracting threshold values to named constants before touching logic preserves testability and avoids hardcoded literals accumulating in test files
-- **Welfare changes isolated from z-score changes** — welfare status uses different logic paths than z-score detection; tuning them together makes it impossible to attribute alert rate changes to the correct subsystem
-- **No structural architecture changes** — the existing component boundaries are correct; all changes are additive gates within existing methods
+- **Const and migration first** because every file imports const and migration is dangerous to add late — it becomes an afterthought bolted onto already-wired coordinator code.
+- **Routine model before detection engines** because the model defines the API both engines consume; reversing this order means the API is discovered during implementation, not designed upfront.
+- **Detection engines before coordinator** because HA-free components built first can be fully tested without mocking HA; the coordinator test then verifies orchestration rather than algorithm correctness.
+- **Sensor and config flow last** because they depend on the coordinator data contract being frozen; changing the data dict after writing sensor lambdas requires double work.
+- This order matches the bottom-up dependency graph in ARCHITECTURE.md exactly and enforces the "pure models before HA wiring" principle.
 
 ### Research Flags
 
+Phases likely needing `/gsd:research-phase` during planning:
+- **Phase 2 (Routine Model):** Recorder bootstrap API — `get_significant_states` is used by built-in integrations but the async job pattern (`async_add_executor_job`) may have changed in recent HA versions. Phase research should verify the current call signature against HA 2025.x.
+- **Phase 3 (Drift Detection):** CUSUM parameter validation — k=0.5 and h=4.0 are documented at MEDIUM confidence (blog source + Wikipedia ARL tables). Phase research should validate these against simulated residential sensor data before implementation to confirm the ARL maps to ~168 days as expected. The minimum evidence window (5–7 days) also needs cross-referencing against typical event rates for the sensor types users have configured.
+
 Phases with standard patterns (skip research-phase):
-- **Phase 1 (Coordinator suppression):** Well-understood notification deduplication and cooldown patterns; implementation details are unambiguous from the codebase; no domain-specific unknowns
-- **Phase 2 (Threshold tightening):** All changes are constant adjustments or simple conditional guards in existing methods; no new algorithms or integration patterns required
-
-Phases that may benefit from empirical validation before finalizing:
-- **Phase 3 (Refinement):** ML contamination optimal values and welfare debounce cycle counts are empirically determined; if Phase 0 instrumentation is implemented, real data will inform Phase 3 values directly
-
----
+- **Phase 1 (Constants + Migration):** `async_migrate_entry` is a standard HA hook with clear official documentation. Storage version bumping follows the established pattern in the existing codebase.
+- **Phase 4 (Coordinator):** `DataUpdateCoordinator`, `async_track_state_change_event`, `async_set_updated_data`, and `_async_setup` are all documented in official HA developer docs at HIGH confidence and have confirmed stable APIs.
+- **Phase 5 (Sensor + Config Flow):** Both follow established HA patterns already present in the codebase. No novel patterns required.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All findings from direct codebase analysis; no new dependencies recommended; traceable to specific lines |
-| Features | HIGH | Must-have features confirmed by code gaps (absence of cooldown guard, presence of float("inf") branch); anti-features grounded in PROJECT.md scope constraints |
-| Architecture | HIGH | Component boundaries directly readable from source; no structural changes required; all change locations confirmed |
-| Pitfalls | HIGH | Critical pitfalls (cooldown gap, infinite z-score, welfare oscillation) are directly observable in code; moderate pitfalls grounded in commit history; minor pitfalls from statistical reasoning |
+| Stack | HIGH | Core decisions (stdlib-only, CUSUM formula, recorder bootstrap) verified against official Python docs, HA developer docs, and the existing codebase. Only gap: CUSUM parameter tuning (k, h values) is MEDIUM confidence. |
+| Features | MEDIUM | Must-have features and anti-features supported by peer-reviewed IoT welfare monitoring literature (2024–2025). Specific numerical thresholds (multipliers, evidence windows) are literature estimates, not validated against this codebase's sensor population. |
+| Architecture | HIGH | Full codebase read confirms current pain points and validates decomposition approach. HA API patterns verified against official developer docs. Build order derived from actual code dependencies with no speculation. |
+| Pitfalls | HIGH | Critical pitfalls identified from direct codebase inspection (cold start gap, migration failure path, sensor contract). Prevention strategies from HA community patterns and developer docs. CUSUM tuning pitfall is less certain. |
 
-**Overall confidence:** HIGH
+**Overall confidence:** HIGH for architecture and technology decisions; MEDIUM for numerical thresholds (CUSUM parameters, minimum evidence windows, inactivity multipliers). The "what to build" question is answered with high confidence; the "how to tune it" question requires validation during Phase 3 planning.
 
 ### Gaps to Address
 
-- **ML contamination exact values:** The recommended values (LOW: 0.005, MEDIUM: 0.02, HIGH: 0.05) are directionally correct but optimal values for home sensors are empirically determined. Implement Phase 0 instrumentation to measure ML false positive rate before and after Phase 2. If Phase 0 is skipped, treat contamination values as provisional and plan a Phase 3 calibration.
-- **Welfare debounce cycle count:** N=3 cycles (3 minutes) is a reasonable starting point but may need tuning based on how quickly welfare status legitimately changes in practice. Document this as a configurable constant, not a magic number.
-- **Inactivity asymmetric threshold:** Listed as a "should have" differentiator but not included in the core two-phase plan because it requires empirical validation of the 1.5× multiplier value. Include in Phase 3 if unusual_inactivity false positives remain after Phases 1 and 2.
-- **Existing user migration for default sensitivity change:** Raising `DEFAULT_SENSITIVITY` only affects new installs. Existing users who configured at MEDIUM (2.0σ) will not benefit. Consider adding a note in the release that users should reconfigure, or add a migration step to bump existing MEDIUM configs to the new recommended default.
-
----
+- **CUSUM parameter validation (k=0.5, h=4.0):** Literature values confirmed at MEDIUM confidence only. Phase 3 planning should include simulation against representative residential sensor data to validate ARL before implementation. If ARL differs materially from ~168 days, the default h value needs adjustment.
+- **Minimum evidence window for drift (5–7 days):** Derived from IoT welfare monitoring literature but not validated against actual event rates from the existing integration's sensor population. Phase 3 planning should cross-reference with typical daily event counts from the `daily_count` sensor data that existing users have.
+- **Cold start fallback threshold:** Research recommends a "bootstrap mode" fixed threshold during cold start but does not specify a value. This should be a configurable constant (e.g., 8 hours for no motion) with a documented rationale, not a magic number. Phase 2 planning should decide whether to include this or surface a clear "detection inactive" warning instead.
+- **Sensor deprecation message text:** Research recommends deprecated ML sensors return a fixed state like `"Removed in v1.1"` but the exact value may affect users with automations that check sensor state. Phase 5 planning should decide on the exact stub state and document it in the release notes.
+- **Recorder bootstrap API currency:** `get_significant_states` is used by built-in integrations as a stable interface, but the exact async call pattern should be verified against the current HA version (2025.x) before Phase 2 implementation.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `custom_components/behaviour_monitor/analyzer.py` — direct code analysis; threshold values, z-score logic, welfare computation, Welford accumulator
-- `custom_components/behaviour_monitor/coordinator.py` — notification send logic, absence of cooldown guards, welfare status transition handling
-- `custom_components/behaviour_monitor/ml_analyzer.py` — HalfSpaceTrees configuration, cross-sensor correlation logic
-- `custom_components/behaviour_monitor/const.py` — complete threshold inventory
-- Git commit history v2.8.6–v2.8.8 — documents pattern of prior threshold changes and their motivations
+- Existing codebase (`coordinator.py`, `analyzer.py`, `ml_analyzer.py`, `sensor.py`, `const.py`, `__init__.py`) — direct inspection; build order, data contracts, migration requirements, and anti-patterns all derived from reading actual code
+- [Python docs: statistics.NormalDist](https://docs.python.org/3/library/statistics.html) — zscore() method confirmed, Python 3.8+
+- [HA Developer Docs: Integration manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/) — requirements array, no-duplicate-core-requirements constraint
+- [HA 2024.8 _async_setup announcement](https://developers.home-assistant.io/blog/2024/08/05/coordinator_async_setup/) — lifecycle method confirmed, called automatically by async_config_entry_first_refresh
+- [async_track_state_change_event migration](https://developers.home-assistant.io/blog/2024/04/13/deprecate_async_track_state_change/) — deprecation and removal (HA 2025.5) confirmed
+- [CUSUM — Wikipedia](https://en.wikipedia.org/wiki/CUSUM) — algorithm definition and ARL tables
+- [GitHub: deepcharles/ruptures](https://github.com/deepcharles/ruptures) — scipy>=0.19.1 dependency confirmed (rules out use in HA custom integration)
+- [Algorithm to Detect Abnormally Long Inactivity in a Home (ResearchGate)](https://www.researchgate.net/publication/221234469_Algorithm_to_automatically_detect_abnormally_long_periods_of_inactivity_in_a_home) — foundational inactivity detection method, HIGH confidence
 
 ### Secondary (MEDIUM confidence)
-- Training knowledge: z-score statistics, notification deduplication patterns, River HalfSpaceTrees documentation (knowledge cutoff August 2025) — used for technique rationale and threshold recommendations
-
-### Tertiary (not available)
-- External web search and WebFetch were unavailable for this research session; River official docs and published anomaly detection benchmarks could not be consulted. Recommendations for exact threshold values (Techniques 3, 5) would benefit from external validation.
+- [Anomaly Detection Technologies for Dementia Care — Sage Journals, 2025](https://journals.sagepub.com/doi/10.1177/07334648251357031) — sustained evidence requirement, alert fatigue as primary failure mode
+- [IoT Edge Intelligence Framework for Elderly Monitoring — PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC11944996/) — per-individual learned intervals outperform fixed thresholds
+- [Smart Home Anomaly Detection for Older Adults — PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12106144/) — drift detection patterns for welfare monitoring
+- [The CUSUM Algorithm — Stackademic](https://blog.stackademic.com/the-cusum-algorithm-all-the-essential-information-you-need-with-python-examples-f6a5651bf2e5) — CUSUM formula and parameters (k=0.5, h=4.0) with Python examples
+- [Behavior drift detection in home automation — MDPI](https://www.mdpi.com/2227-7080/6/1/16) — p-value thresholds for fragile populations, concept drift model confidence failure mode
+- [Config entry minor versions blog post](https://developers.home-assistant.io/blog/2023/12/18/config-entry-minor-version/) — major vs minor version semantics for HA config entries
+- [Inactivity Patterns and Alarm Generation in Senior Citizens' Houses (ResearchGate)](https://www.researchgate.net/publication/281804588_Inactivity_patterns_and_alarm_generation_in_senior_citizens'_houses) — alarm cadence expectations and evidence window guidance
+- [HA community — unavailable states breaking automations](https://community.home-assistant.io/t/wth-is-unavailable-breaking-everything/474217) — state transition side effects on automation triggers
 
 ---
 *Research completed: 2026-03-13*
