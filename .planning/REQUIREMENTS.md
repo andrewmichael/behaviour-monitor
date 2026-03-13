@@ -15,9 +15,9 @@ Requirements for Detection Rebuild milestone. Each maps to roadmap phases.
 
 ### Acute Detection
 
-- [ ] **ACUTE-01**: System alerts when no expected activity occurs for a configurable multiplier of the learned typical interval per entity
-- [ ] **ACUTE-02**: System alerts on activity at times that have never or rarely occurred in learned history (e.g., front door at 3am)
-- [ ] **ACUTE-03**: System requires sustained evidence (multiple consecutive polling cycles) before firing any acute alert — no single-point alerts
+- [x] **ACUTE-01**: System alerts when no expected activity occurs for a configurable multiplier of the learned typical interval per entity
+- [x] **ACUTE-02**: System alerts on activity at times that have never or rarely occurred in learned history (e.g., front door at 3am)
+- [x] **ACUTE-03**: System requires sustained evidence (multiple consecutive polling cycles) before firing any acute alert — no single-point alerts
 
 ### Drift Detection
 
@@ -64,9 +64,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ROUTINE-01 | Phase 3 | Complete |
 | ROUTINE-02 | Phase 3 | Complete |
 | ROUTINE-03 | Phase 3 | Complete |
-| ACUTE-01 | Phase 4 | Pending |
-| ACUTE-02 | Phase 4 | Pending |
-| ACUTE-03 | Phase 4 | Pending |
+| ACUTE-01 | Phase 4 | Complete |
+| ACUTE-02 | Phase 4 | Complete |
+| ACUTE-03 | Phase 4 | Complete |
 | DRIFT-01 | Phase 4 | Pending |
 | DRIFT-02 | Phase 4 | Pending |
 | DRIFT-03 | Phase 4 | Pending |

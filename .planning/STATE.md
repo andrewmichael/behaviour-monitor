@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-13T20:18:31.451Z"
+stopped_at: Completed 04-01-PLAN.md (alert types + acute detector)
+last_updated: "2026-03-13T20:52:21.188Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 0
 ---
 
@@ -50,6 +50,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 03]: Bootstrap only runs when RoutineModel._entities is empty — prevents re-bootstrap on every startup
 - [Phase 03]: Guard _bootstrap_from_recorder on recorder_get_instance only (not state_changes_fn) for test patchability
 - [Phase 03]: CONF_HISTORY_WINDOW_DAYS is the correct config key for RoutineModel history window; CONF_LEARNING_PERIOD retained only for PatternAnalyzer (statistical learning period)
+- [Phase 04-01]: Severity ratio relative to threshold: LOW/MEDIUM/HIGH based on elapsed/threshold ratio, not elapsed/expected_gap
+- [Phase 04-01]: AcuteDetector per-entity counter dicts reset to 0 on every not-met code path (research Pitfall 2 compliance)
 
 ### Blockers/Concerns
 
@@ -64,6 +66,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T20:18:31.447Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-detection-engines/04-CONTEXT.md
+Last session: 2026-03-13T20:52:21.184Z
+Stopped at: Completed 04-01-PLAN.md (alert types + acute detector)
+Resume file: None
