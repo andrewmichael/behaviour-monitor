@@ -35,12 +35,13 @@
   3. After startup, the routine model bootstraps from HA recorder history — an existing installation with weeks of data begins with a populated baseline rather than a cold-start blank slate
   4. The routine model tracks per-entity baselines using 168 hour-of-day x day-of-week slots, distinguishing binary event-interval patterns from numeric value distributions
   5. When the routine model has insufficient history to make confident predictions, the system surfaces an explicit "detection inactive" status rather than silently producing no alerts
-**Plans:** 3/3 plans complete
+**Plans:** 4 plans (3 complete + 1 gap closure)
 
 Plans:
-- [ ] 03-01-PLAN.md — RoutineModel TDD (pure-Python baseline learning engine with 168 slots)
-- [ ] 03-02-PLAN.md — Config migration and deprecated sensor stubs (const.py, __init__.py, sensor.py)
-- [ ] 03-03-PLAN.md — Coordinator storage migration, ML cleanup, and recorder bootstrap
+- [x] 03-01-PLAN.md — RoutineModel TDD (pure-Python baseline learning engine with 168 slots)
+- [x] 03-02-PLAN.md — Config migration and deprecated sensor stubs (const.py, __init__.py, sensor.py)
+- [x] 03-03-PLAN.md — Coordinator storage migration, ML cleanup, and recorder bootstrap
+- [ ] 03-04-PLAN.md — Gap closure: fix history_window_days config key + partial history confidence test
 
 ### Phase 4: Detection Engines
 **Goal**: Acute and drift detectors are implemented as HA-free pure-Python components that consume the routine model API and produce structured alert results — fully testable without mocking HA infrastructure
@@ -70,6 +71,6 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Coordinator Suppression | v1.0 | 2/2 | Complete | 2026-03-13 |
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
-| 3. Foundation and Routine Model | 3/3 | Complete   | 2026-03-13 | - |
+| 3. Foundation and Routine Model | v1.1 | 3/4 | Gap closure | - |
 | 4. Detection Engines | v1.1 | 0/? | Not started | - |
 | 5. Integration | v1.1 | 0/? | Not started | - |
