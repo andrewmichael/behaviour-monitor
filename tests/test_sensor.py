@@ -596,3 +596,108 @@ class TestAsyncSetupEntry:
         entities = async_add_entities.call_args[0][0]
         # Verify the coordinator is passed to all sensors
         assert all(entity.coordinator == mock_coordinator for entity in entities)
+
+
+class TestDeprecatedSensorStubs:
+    """Tests for stub value_fns on deprecated ML sensors."""
+
+    def test_sensor_descriptions_has_14_entries(self) -> None:
+        """SENSOR_DESCRIPTIONS tuple must have exactly 14 entries."""
+        assert len(SENSOR_DESCRIPTIONS) == 14
+
+    # --- ml_status stub ---
+
+    def test_ml_status_stub_returns_removed_string_with_empty_data(self) -> None:
+        """ml_status value_fn returns 'Removed in v1.1' when data is empty."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
+        result = sensor.value_fn({})
+        assert result == "Removed in v1.1"
+
+    def test_ml_status_stub_returns_removed_string_with_populated_data(self) -> None:
+        """ml_status value_fn returns 'Removed in v1.1' regardless of data contents."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
+        data = {
+            "ml_training": {"complete": True},
+            "ml_status": {"enabled": True, "trained": True},
+        }
+        result = sensor.value_fn(data)
+        assert result == "Removed in v1.1"
+
+    def test_ml_status_stub_extra_attrs_has_deprecated_true(self) -> None:
+        """ml_status extra_attrs_fn returns dict with deprecated=True."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
+        coord = MagicMock()
+        result = sensor.extra_attrs_fn(coord, {})
+        assert result.get("deprecated") is True
+
+    # --- ml_training_remaining stub ---
+
+    def test_ml_training_remaining_stub_returns_na_with_empty_data(self) -> None:
+        """ml_training_remaining value_fn returns 'N/A' when data is empty."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_training_remaining")
+        result = sensor.value_fn({})
+        assert result == "N/A"
+
+    def test_ml_training_remaining_stub_returns_na_with_populated_data(self) -> None:
+        """ml_training_remaining value_fn returns 'N/A' regardless of data contents."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_training_remaining")
+        data = {
+            "ml_training": {
+                "formatted": "10 days remaining",
+                "complete": False,
+                "days_remaining": 10,
+            }
+        }
+        result = sensor.value_fn(data)
+        assert result == "N/A"
+
+    def test_ml_training_remaining_stub_extra_attrs_has_deprecated_true(self) -> None:
+        """ml_training_remaining extra_attrs_fn returns dict with deprecated=True."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_training_remaining")
+        coord = MagicMock()
+        result = sensor.extra_attrs_fn(coord, {})
+        assert result.get("deprecated") is True
+
+    # --- cross_sensor_patterns stub ---
+
+    def test_cross_sensor_patterns_stub_returns_zero_with_empty_data(self) -> None:
+        """cross_sensor_patterns value_fn returns 0 when data is empty."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "cross_sensor_patterns")
+        result = sensor.value_fn({})
+        assert result == 0
+
+    def test_cross_sensor_patterns_stub_returns_zero_with_populated_data(self) -> None:
+        """cross_sensor_patterns value_fn returns 0 regardless of data contents."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "cross_sensor_patterns")
+        data = {
+            "cross_sensor_patterns": [
+                {"pattern": "A -> B", "strength": 0.8},
+                {"pattern": "C -> D", "strength": 0.6},
+            ]
+        }
+        result = sensor.value_fn(data)
+        assert result == 0
+
+    def test_cross_sensor_patterns_stub_extra_attrs_has_deprecated_true(self) -> None:
+        """cross_sensor_patterns extra_attrs_fn returns dict with deprecated=True."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "cross_sensor_patterns")
+        coord = MagicMock()
+        result = sensor.extra_attrs_fn(coord, {})
+        assert result.get("deprecated") is True
+
+    # --- spot-check non-deprecated sensors still work ---
+
+    def test_last_activity_non_deprecated_still_works(self) -> None:
+        """Non-deprecated last_activity sensor still parses timestamps."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "last_activity")
+        from datetime import datetime
+        data = {"last_activity": "2024-06-01T08:00:00"}
+        result = sensor.value_fn(data)
+        assert isinstance(result, datetime)
+
+    def test_daily_activity_count_non_deprecated_still_works(self) -> None:
+        """Non-deprecated daily_activity_count sensor still returns count."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "daily_activity_count")
+        data = {"daily_count": 99}
+        result = sensor.value_fn(data)
+        assert result == 99
