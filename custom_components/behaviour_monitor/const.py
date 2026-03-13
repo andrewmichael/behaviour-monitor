@@ -18,63 +18,32 @@ CONF_NOTIFY_SERVICES: Final = "notify_services"
 CONF_NOTIFICATION_COOLDOWN: Final = "notification_cooldown"
 CONF_MIN_NOTIFICATION_SEVERITY: Final = "min_notification_severity"
 
-# Sensitivity levels (standard deviations for Z-score)
+# New v1.1 config keys
+CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
+CONF_INACTIVITY_MULTIPLIER: Final = "inactivity_multiplier"
+CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
+
+# Sensitivity levels
 SENSITIVITY_LOW: Final = "low"
 SENSITIVITY_MEDIUM: Final = "medium"
 SENSITIVITY_HIGH: Final = "high"
 
-SENSITIVITY_THRESHOLDS: Final = {
-    SENSITIVITY_LOW: 3.0,      # 3σ - only flag extreme anomalies
-    SENSITIVITY_MEDIUM: 2.5,   # 2.5 sigma — ~1.2% false positive rate (was 2.0 = 4.5%)
-    SENSITIVITY_HIGH: 1.0,     # 1σ - flag any deviation
-}
-
-# Isolation Forest contamination (expected anomaly rate)
-# Values are provisional — see STATE.md research flag on ML contamination
-ML_CONTAMINATION: Final = {
-    SENSITIVITY_LOW: 0.005,    # 0.5% expected anomalies (was 0.01)
-    SENSITIVITY_MEDIUM: 0.02,  # 2% expected anomalies (was 0.05) — provisional, monitor
-    SENSITIVITY_HIGH: 0.05,    # 5% expected anomalies (was 0.10)
-}
-
-# Minimum co-occurrences for a cross-sensor pattern to be considered strong
-MIN_CROSS_SENSOR_OCCURRENCES: Final = 30
-
-# EMA smoothing factor for ML scores (lower = more smoothing)
-ML_EMA_ALPHA: Final = 0.3
-
-# Minimum observations required in a time bucket before anomaly detection fires (STAT-01, STAT-02)
-MIN_BUCKET_OBSERVATIONS: Final = 3
-
-# Maximum multiplier for adaptive threshold based on entity variance profile (STAT-04)
-MAX_VARIANCE_MULTIPLIER: Final = 2.0
-
 # Default values
-DEFAULT_SENSITIVITY: Final = SENSITIVITY_MEDIUM
-DEFAULT_LEARNING_PERIOD: Final = 7  # days
 DEFAULT_ENABLE_NOTIFICATIONS: Final = True
-DEFAULT_ENABLE_ML: Final = True
-DEFAULT_RETRAIN_PERIOD: Final = 14  # days (2 weeks)
-DEFAULT_ML_LEARNING_PERIOD: Final = 7  # days (minimum time before ML alerts)
-DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds (5 minutes)
-DEFAULT_TRACK_ATTRIBUTES: Final = True  # Track attribute changes (not just state)
 DEFAULT_NOTIFY_SERVICES: Final = []  # Empty = persistent_notification only
 DEFAULT_NOTIFICATION_COOLDOWN: Final = 30  # minutes
-DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"  # SEVERITY_SIGNIFICANT (3.5 sigma)
+DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"
 
-# New v1.1 config keys
-CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
+# New v1.1 defaults
 DEFAULT_HISTORY_WINDOW_DAYS: Final = 28  # days
+DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 3
+STORAGE_VERSION: Final = 4
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
-
-# Minimum samples required for ML training
-MIN_SAMPLES_FOR_ML: Final = 100
 
 # Sensor attributes
 ATTR_LAST_UPDATED: Final = "last_updated"
@@ -85,19 +54,12 @@ ATTR_ML_STATUS: Final = "ml_status"
 ATTR_CROSS_SENSOR_PATTERNS: Final = "cross_sensor_patterns"
 ATTR_LAST_RETRAIN: Final = "last_retrain"
 
-# Elder care severity levels (based on Z-score)
+# Elder care severity levels
 SEVERITY_NORMAL: Final = "normal"
 SEVERITY_MINOR: Final = "minor"
 SEVERITY_MODERATE: Final = "moderate"
 SEVERITY_SIGNIFICANT: Final = "significant"
 SEVERITY_CRITICAL: Final = "critical"
-
-SEVERITY_THRESHOLDS: Final = {
-    SEVERITY_MINOR: 1.5,       # 1.5σ
-    SEVERITY_MODERATE: 2.5,    # 2.5σ
-    SEVERITY_SIGNIFICANT: 3.5, # 3.5σ
-    SEVERITY_CRITICAL: 4.5,    # 4.5σ
-}
 
 WELFARE_DEBOUNCE_CYCLES: Final = 3  # consecutive update cycles before welfare notification fires (~3 min at 60s interval)
 
@@ -161,13 +123,48 @@ SERVICE_ENABLE_HOLIDAY_MODE: Final = "enable_holiday_mode"
 SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
+SERVICE_ROUTINE_RESET: Final = "routine_reset"
+
+# ---------------------------------------------------------------------------
+# Legacy constants kept for backward compatibility with old analyzer/coordinator
+# (will be removed when those files are replaced in Plan 02)
+# ---------------------------------------------------------------------------
+
+SENSITIVITY_THRESHOLDS: Final = {
+    SENSITIVITY_LOW: 3.0,
+    SENSITIVITY_MEDIUM: 2.5,
+    SENSITIVITY_HIGH: 1.0,
+}
+
+ML_CONTAMINATION: Final = {
+    SENSITIVITY_LOW: 0.005,
+    SENSITIVITY_MEDIUM: 0.02,
+    SENSITIVITY_HIGH: 0.05,
+}
+
+MIN_CROSS_SENSOR_OCCURRENCES: Final = 30
+ML_EMA_ALPHA: Final = 0.3
+MIN_BUCKET_OBSERVATIONS: Final = 3
+MAX_VARIANCE_MULTIPLIER: Final = 2.0
+DEFAULT_SENSITIVITY: Final = SENSITIVITY_MEDIUM
+DEFAULT_LEARNING_PERIOD: Final = 7  # days
+DEFAULT_ENABLE_ML: Final = True
+DEFAULT_RETRAIN_PERIOD: Final = 14  # days
+DEFAULT_ML_LEARNING_PERIOD: Final = 7  # days
+DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds
+DEFAULT_TRACK_ATTRIBUTES: Final = True
+MIN_SAMPLES_FOR_ML: Final = 100
+
+SEVERITY_THRESHOLDS: Final = {
+    SEVERITY_MINOR: 1.5,
+    SEVERITY_MODERATE: 2.5,
+    SEVERITY_SIGNIFICANT: 3.5,
+    SEVERITY_CRITICAL: 4.5,
+}
 
 # ---------------------------------------------------------------------------
 # Detection engine constants (v1.1)
 # ---------------------------------------------------------------------------
-
-# Inactivity detector: elapsed must exceed this multiple of expected gap to alert
-DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
 
 # Number of consecutive polling cycles evidence must persist before an alert fires
 SUSTAINED_EVIDENCE_CYCLES: Final = 3
