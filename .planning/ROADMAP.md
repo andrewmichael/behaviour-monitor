@@ -13,7 +13,7 @@ Two phases eliminate the notification flood. Phase 1 adds suppression gates in t
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Coordinator Suppression** - Add notification cooldown, deduplication, severity gate, and welfare hysteresis in coordinator.py
-- [ ] **Phase 2: Analyzer Tightening** - Add observation guards, raise default thresholds, tighten ML scoring and cross-sensor correlation in analyzer.py and ml_analyzer.py
+- [x] **Phase 2: Analyzer Tightening** - Add observation guards, raise default thresholds, tighten ML scoring and cross-sensor correlation in analyzer.py and ml_analyzer.py (completed 2026-03-13)
 
 ## Phase Details
 
@@ -42,7 +42,7 @@ Plans:
   3. The default sensitivity threshold for new installs no longer flags routine variation at medium sensitivity
   4. ML anomaly scores from single-interval spikes are smoothed — a one-off spike below the smoothed threshold does not reach the coordinator
   5. Cross-sensor correlation patterns require a statistically meaningful co-occurrence count before triggering — low-sample correlations are not reported
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md — Bucket observation guard and raised sensitivity threshold (STAT-01, STAT-02, STAT-03)
@@ -57,4 +57,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Coordinator Suppression | 2/2 | Complete | 2026-03-13 |
-| 2. Analyzer Tightening | 2/3 | In Progress|  |
+| 2. Analyzer Tightening | 3/3 | Complete   | 2026-03-13 |

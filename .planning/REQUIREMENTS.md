@@ -16,7 +16,7 @@
 - [x] **STAT-01**: Minimum observation count per time bucket prevents flagging when insufficient data exists (fixes float("inf") z-scores from zero-variance buckets)
 - [x] **STAT-02**: Minimum mean activity guard skips anomaly detection for time buckets with near-zero historical activity
 - [x] **STAT-03**: Default sensitivity thresholds raised so Medium sensitivity no longer flags ~4.5% of normal events
-- [ ] **STAT-04**: Adaptive thresholds adjust per-entity based on historical variance profile (high-variance entities get wider thresholds)
+- [x] **STAT-04**: Adaptive thresholds adjust per-entity based on historical variance profile (high-variance entities get wider thresholds)
 
 ### ML Analyzer Tuning
 
@@ -59,7 +59,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STAT-01 | Phase 2 | Complete |
 | STAT-02 | Phase 2 | Complete |
 | STAT-03 | Phase 2 | Complete |
-| STAT-04 | Phase 2 | Pending |
+| STAT-04 | Phase 2 | Complete |
 | ML-01 | Phase 2 | Complete |
 | ML-02 | Phase 2 | Complete |
 | ML-03 | Phase 2 | Complete |
