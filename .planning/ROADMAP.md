@@ -42,7 +42,12 @@ Plans:
   3. The default sensitivity threshold for new installs no longer flags routine variation at medium sensitivity
   4. ML anomaly scores from single-interval spikes are smoothed — a one-off spike below the smoothed threshold does not reach the coordinator
   5. Cross-sensor correlation patterns require a statistically meaningful co-occurrence count before triggering — low-sample correlations are not reported
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Bucket observation guard and raised sensitivity threshold (STAT-01, STAT-02, STAT-03)
+- [ ] 02-02-PLAN.md — Per-entity adaptive thresholds (STAT-04)
+- [ ] 02-03-PLAN.md — ML cross-sensor guard, contamination tuning, EMA score smoothing (ML-01, ML-02, ML-03)
 
 ## Progress
 
@@ -52,4 +57,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Coordinator Suppression | 2/2 | Complete | 2026-03-13 |
-| 2. Analyzer Tightening | 0/TBD | Not started | - |
+| 2. Analyzer Tightening | 0/3 | Not started | - |
