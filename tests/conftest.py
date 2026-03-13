@@ -404,14 +404,13 @@ def mock_config_entry() -> MagicMock:
         """Mock config entry object."""
         def __init__(self):
             self.entry_id = "test_entry_id"
+            self.version = 4
             self.data = {
                 "monitored_entities": ["sensor.test1", "sensor.test2"],
-                "sensitivity": "medium",
-                "learning_period": 7,
+                "history_window_days": 28,
+                "inactivity_multiplier": 3.0,
+                "drift_sensitivity": "medium",
                 "enable_notifications": True,
-                "enable_ml": True,
-                "retrain_period": 14,
-                "cross_sensor_window": 300,
                 "notification_cooldown": 30,
                 "min_notification_severity": "significant",
             }

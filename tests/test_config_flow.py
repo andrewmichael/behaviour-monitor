@@ -194,9 +194,15 @@ class TestBehaviourMonitorOptionsFlow:
         self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
     ) -> None:
         """Test init step shows current values as defaults."""
-        # Verify the config entry data is accessible
-        assert mock_config_entry.data[CONF_SENSITIVITY] == "medium"
-        assert mock_config_entry.data[CONF_LEARNING_PERIOD] == 7
+        # Verify the v4 config entry data is accessible
+        from custom_components.behaviour_monitor.const import (
+            CONF_DRIFT_SENSITIVITY,
+            CONF_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER,
+        )
+        assert mock_config_entry.data[CONF_HISTORY_WINDOW_DAYS] == 28
+        assert mock_config_entry.data[CONF_INACTIVITY_MULTIPLIER] == 3.0
+        assert mock_config_entry.data[CONF_DRIFT_SENSITIVITY] == "medium"
 
     @pytest.mark.asyncio
     async def test_step_init_shows_cooldown_field(

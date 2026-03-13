@@ -326,9 +326,9 @@ class TestIntegrationLifecycle:
 class TestStorageVersion:
     """Tests for STORAGE_VERSION constant."""
 
-    def test_storage_version_is_3(self) -> None:
-        """Test that STORAGE_VERSION equals 3."""
-        assert STORAGE_VERSION == 3
+    def test_storage_version_is_4(self) -> None:
+        """Test that STORAGE_VERSION equals 4."""
+        assert STORAGE_VERSION == 4
 
 
 class TestMigrateEntry:
@@ -463,7 +463,7 @@ class TestMigrateEntry:
 
     @pytest.mark.asyncio
     async def test_migrate_v2_preserves_existing_keys(self) -> None:
-        """Migration from v2 preserves monitored_entities, sensitivity and other keys."""
+        """Migration from v2 preserves monitored_entities and notification keys."""
         hass = MagicMock()
         hass.config_entries.async_update_entry = MagicMock()
         entry = self._make_config_entry(
@@ -486,13 +486,15 @@ class TestMigrateEntry:
         call_args = hass.config_entries.async_update_entry.call_args
         new_data = call_args[1]["data"]
         assert new_data["monitored_entities"] == ["sensor.test1", "sensor.test2"]
-        assert new_data["sensitivity"] == "high"
-        assert new_data["learning_period"] == 14
         assert new_data["enable_notifications"] is False
+        # Old sigma/ML keys are removed by v4 migration
+        assert "sensitivity" not in new_data
+        assert "learning_period" not in new_data
+        assert "enable_ml" not in new_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v2_updates_version_to_3(self) -> None:
-        """Migration from v2 sets version=3 on the entry."""
+    async def test_migrate_v2_updates_version_to_4(self) -> None:
+        """Migration from v2 ends at version=4 (v2->v3->v4 in one call)."""
         hass = MagicMock()
         hass.config_entries.async_update_entry = MagicMock()
         entry = self._make_config_entry(
@@ -509,12 +511,14 @@ class TestMigrateEntry:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        call_args = hass.config_entries.async_update_entry.call_args
-        assert call_args[1]["version"] == 3
+        # Two calls: one for v3, one for v4
+        assert hass.config_entries.async_update_entry.call_count == 2
+        last_call = hass.config_entries.async_update_entry.call_args
+        assert last_call[1]["version"] == 4
 
     @pytest.mark.asyncio
-    async def test_migrate_v3_makes_no_changes(self) -> None:
-        """Migration is a no-op when config entry is already at version 3."""
+    async def test_migrate_v3_upgrades_to_v4(self) -> None:
+        """Migration from v3 migrates to v4, adding new keys and removing old ones."""
         hass = MagicMock()
         hass.config_entries.async_update_entry = MagicMock()
         entry = self._make_config_entry(
@@ -523,6 +527,32 @@ class TestMigrateEntry:
                 "monitored_entities": ["sensor.test1"],
                 "sensitivity": "medium",
                 "history_window_days": 28,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        hass.config_entries.async_update_entry.assert_called_once()
+        call_args = hass.config_entries.async_update_entry.call_args
+        assert call_args[1]["version"] == 4
+        new_data = call_args[1]["data"]
+        assert "sensitivity" not in new_data
+        assert new_data["inactivity_multiplier"] == 3.0
+        assert new_data["drift_sensitivity"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_migrate_v4_makes_no_changes(self) -> None:
+        """Migration is a no-op when config entry is already at version 4."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=4,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "history_window_days": 28,
+                "inactivity_multiplier": 3.0,
+                "drift_sensitivity": "medium",
             },
         )
 

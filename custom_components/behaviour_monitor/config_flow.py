@@ -25,29 +25,20 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
-    CONF_CROSS_SENSOR_WINDOW,
-    CONF_ENABLE_ML,
+    CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
-    CONF_LEARNING_PERIOD,
+    CONF_HISTORY_WINDOW_DAYS,
+    CONF_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
-    CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
-    CONF_RETRAIN_PERIOD,
-    CONF_SENSITIVITY,
-    CONF_TRACK_ATTRIBUTES,
-    DEFAULT_CROSS_SENSOR_WINDOW,
-    DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
-    DEFAULT_LEARNING_PERIOD,
+    DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
-    DEFAULT_ML_LEARNING_PERIOD,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
-    DEFAULT_RETRAIN_PERIOD,
-    DEFAULT_SENSITIVITY,
-    DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
@@ -78,10 +69,122 @@ def _get_available_entities(hass: HomeAssistant) -> list[str]:
     return sorted(entities)
 
 
+def _build_data_schema(
+    *,
+    entities_default: list[str] | None = None,
+    history_window_default: int = DEFAULT_HISTORY_WINDOW_DAYS,
+    inactivity_multiplier_default: float = DEFAULT_INACTIVITY_MULTIPLIER,
+    drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
+    enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
+    notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
+    min_severity_default: str = DEFAULT_MIN_NOTIFICATION_SEVERITY,
+) -> vol.Schema:
+    """Build the shared config/options schema."""
+    schema_dict: dict[vol.Marker, Any] = {
+        vol.Required(CONF_MONITORED_ENTITIES): EntitySelector(
+            EntitySelectorConfig(multiple=True)
+        ),
+        vol.Required(
+            CONF_HISTORY_WINDOW_DAYS, default=history_window_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=7,
+                max=90,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="days",
+            )
+        ),
+        vol.Required(
+            CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1.5,
+                max=10.0,
+                step=0.5,
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required(
+            CONF_DRIFT_SENSITIVITY, default=drift_sensitivity_default
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {
+                        "value": SENSITIVITY_HIGH,
+                        "label": "High (sensitive to small shifts)",
+                    },
+                    {
+                        "value": SENSITIVITY_MEDIUM,
+                        "label": "Medium (balanced) - recommended",
+                    },
+                    {
+                        "value": SENSITIVITY_LOW,
+                        "label": "Low (major shifts only)",
+                    },
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Required(
+            CONF_ENABLE_NOTIFICATIONS, default=enable_notifications_default
+        ): BooleanSelector(),
+        vol.Optional(
+            CONF_NOTIFY_SERVICES, default=DEFAULT_NOTIFY_SERVICES
+        ): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
+        ),
+        vol.Required(
+            CONF_NOTIFICATION_COOLDOWN, default=notification_cooldown_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=5,
+                max=240,
+                step=5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="minutes",
+            )
+        ),
+        vol.Required(
+            CONF_MIN_NOTIFICATION_SEVERITY,
+            default=min_severity_default,
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {"value": SEVERITY_MINOR, "label": "Minor"},
+                    {"value": SEVERITY_MODERATE, "label": "Moderate"},
+                    {
+                        "value": SEVERITY_SIGNIFICANT,
+                        "label": "Significant - recommended",
+                    },
+                    {
+                        "value": SEVERITY_CRITICAL,
+                        "label": "Critical - very quiet",
+                    },
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    }
+
+    if entities_default is not None:
+        # Replace the required marker with a default for options flow
+        schema_dict = {
+            (
+                vol.Required(CONF_MONITORED_ENTITIES, default=entities_default)
+                if k == vol.Required(CONF_MONITORED_ENTITIES)
+                else k
+            ): v
+            for k, v in schema_dict.items()
+        }
+
+    return vol.Schema(schema_dict)
+
+
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 2
+    VERSION = 4
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -102,117 +205,7 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     data=user_input,
                 )
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_MONITORED_ENTITIES): EntitySelector(
-                    EntitySelectorConfig(multiple=True)
-                ),
-                vol.Required(
-                    CONF_SENSITIVITY, default=DEFAULT_SENSITIVITY
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": SENSITIVITY_LOW, "label": "Low (3σ)"},
-                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2.5σ)"},
-                            {"value": SENSITIVITY_HIGH, "label": "High (1σ)"},
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_LEARNING_PERIOD, default=DEFAULT_LEARNING_PERIOD
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_ENABLE_NOTIFICATIONS, default=DEFAULT_ENABLE_NOTIFICATIONS
-                ): BooleanSelector(),
-                vol.Required(
-                    CONF_ENABLE_ML, default=DEFAULT_ENABLE_ML
-                ): BooleanSelector(),
-                vol.Required(
-                    CONF_ML_LEARNING_PERIOD, default=DEFAULT_ML_LEARNING_PERIOD
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_RETRAIN_PERIOD, default=DEFAULT_RETRAIN_PERIOD
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_CROSS_SENSOR_WINDOW, default=DEFAULT_CROSS_SENSOR_WINDOW
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=30,
-                        max=900,
-                        step=30,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="seconds",
-                    )
-                ),
-                vol.Required(
-                    CONF_TRACK_ATTRIBUTES, default=DEFAULT_TRACK_ATTRIBUTES
-                ): BooleanSelector(),
-                vol.Optional(
-                    CONF_NOTIFY_SERVICES, default=DEFAULT_NOTIFY_SERVICES
-                ): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
-                ),
-                vol.Required(
-                    CONF_NOTIFICATION_COOLDOWN, default=DEFAULT_NOTIFICATION_COOLDOWN
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=5,
-                        max=240,
-                        step=5,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="minutes",
-                    )
-                ),
-                vol.Required(
-                    CONF_MIN_NOTIFICATION_SEVERITY,
-                    default=DEFAULT_MIN_NOTIFICATION_SEVERITY,
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": SEVERITY_MINOR, "label": "Minor (1.5 sigma+)"},
-                            {
-                                "value": SEVERITY_MODERATE,
-                                "label": "Moderate (2.5 sigma+)",
-                            },
-                            {
-                                "value": SEVERITY_SIGNIFICANT,
-                                "label": "Significant (3.5 sigma+) - recommended",
-                            },
-                            {
-                                "value": SEVERITY_CRITICAL,
-                                "label": "Critical (4.5 sigma+) - very quiet",
-                            },
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            }
-        )
+        data_schema = _build_data_schema()
 
         return self.async_show_form(
             step_id="user",
@@ -254,7 +247,6 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 if CONF_NOTIFY_SERVICES not in user_input:
                     updated_data[CONF_NOTIFY_SERVICES] = []
                 elif not user_input.get(CONF_NOTIFY_SERVICES):
-                    # Field is present but empty/None - explicitly set to empty list
                     updated_data[CONF_NOTIFY_SERVICES] = []
 
                 # Update the config entry data (not just options)
@@ -265,29 +257,17 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 return self.async_create_entry(title="", data={})
 
         current_entities = self._config_entry.data.get(CONF_MONITORED_ENTITIES, [])
-        current_sensitivity = self._config_entry.data.get(
-            CONF_SENSITIVITY, DEFAULT_SENSITIVITY
+        current_history_window = self._config_entry.data.get(
+            CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS
         )
-        current_learning = self._config_entry.data.get(
-            CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD
+        current_inactivity_multiplier = self._config_entry.data.get(
+            CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER
+        )
+        current_drift_sensitivity = self._config_entry.data.get(
+            CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM
         )
         current_notifications = self._config_entry.data.get(
             CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS
-        )
-        current_enable_ml = self._config_entry.data.get(
-            CONF_ENABLE_ML, DEFAULT_ENABLE_ML
-        )
-        current_ml_learning = self._config_entry.data.get(
-            CONF_ML_LEARNING_PERIOD, DEFAULT_ML_LEARNING_PERIOD
-        )
-        current_retrain = self._config_entry.data.get(
-            CONF_RETRAIN_PERIOD, DEFAULT_RETRAIN_PERIOD
-        )
-        current_cross_window = self._config_entry.data.get(
-            CONF_CROSS_SENSOR_WINDOW, DEFAULT_CROSS_SENSOR_WINDOW
-        )
-        current_track_attributes = self._config_entry.data.get(
-            CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
         current_notify_services = self._config_entry.data.get(
             CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
@@ -299,116 +279,14 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
         )
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_MONITORED_ENTITIES, default=current_entities
-                ): EntitySelector(EntitySelectorConfig(multiple=True)),
-                vol.Required(
-                    CONF_SENSITIVITY, default=current_sensitivity
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": SENSITIVITY_LOW, "label": "Low (3σ)"},
-                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2.5σ)"},
-                            {"value": SENSITIVITY_HIGH, "label": "High (1σ)"},
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_LEARNING_PERIOD, default=current_learning
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_ENABLE_NOTIFICATIONS, default=current_notifications
-                ): BooleanSelector(),
-                vol.Required(
-                    CONF_ENABLE_ML, default=current_enable_ml
-                ): BooleanSelector(),
-                vol.Required(
-                    CONF_ML_LEARNING_PERIOD, default=current_ml_learning
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_RETRAIN_PERIOD, default=current_retrain
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="days",
-                    )
-                ),
-                vol.Required(
-                    CONF_CROSS_SENSOR_WINDOW, default=current_cross_window
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=30,
-                        max=900,
-                        step=30,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="seconds",
-                    )
-                ),
-                vol.Required(
-                    CONF_TRACK_ATTRIBUTES, default=current_track_attributes
-                ): BooleanSelector(),
-                vol.Optional(CONF_NOTIFY_SERVICES): TextSelector(
-                    TextSelectorConfig(
-                        type=TextSelectorType.TEXT,
-                        multiple=True,
-                    )
-                ),
-                vol.Required(
-                    CONF_NOTIFICATION_COOLDOWN, default=current_cooldown
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=5,
-                        max=240,
-                        step=5,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="minutes",
-                    )
-                ),
-                vol.Required(
-                    CONF_MIN_NOTIFICATION_SEVERITY, default=current_min_severity
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": SEVERITY_MINOR, "label": "Minor (1.5 sigma+)"},
-                            {
-                                "value": SEVERITY_MODERATE,
-                                "label": "Moderate (2.5 sigma+)",
-                            },
-                            {
-                                "value": SEVERITY_SIGNIFICANT,
-                                "label": "Significant (3.5 sigma+) - recommended",
-                            },
-                            {
-                                "value": SEVERITY_CRITICAL,
-                                "label": "Critical (4.5 sigma+) - very quiet",
-                            },
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            }
+        data_schema = _build_data_schema(
+            entities_default=current_entities,
+            history_window_default=current_history_window,
+            inactivity_multiplier_default=current_inactivity_multiplier,
+            drift_sensitivity_default=current_drift_sensitivity,
+            enable_notifications_default=current_notifications,
+            notification_cooldown_default=current_cooldown,
+            min_severity_default=current_min_severity,
         )
 
         return self.async_show_form(
