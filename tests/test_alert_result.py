@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestAlertTypeEnum:
     """AlertType enum has the correct values and str serialization."""
