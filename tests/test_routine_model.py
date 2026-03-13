@@ -320,8 +320,9 @@ class TestEntityRoutine:
         er = EntityRoutine(entity_id="sensor.test", is_binary=True)
         base = datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)  # Monday 00:00
         assert base.weekday() == 0
+        # Record 6 events all in the same hour-slot (Monday 00:xx) separated by minutes
         for i in range(6):
-            er.record(base + timedelta(hours=i), "on")
+            er.record(base + timedelta(minutes=i * 10), "on")
         # All events go to dow=0, hour=0 slot
         result = er.expected_gap_seconds(hour=0, dow=0)
         assert result is not None
