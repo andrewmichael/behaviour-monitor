@@ -32,9 +32,9 @@ SENSITIVITY_THRESHOLDS: Final = {
 # Isolation Forest contamination (expected anomaly rate)
 # Values are provisional — see STATE.md research flag on ML contamination
 ML_CONTAMINATION: Final = {
-    SENSITIVITY_LOW: 0.01,     # 1% expected anomalies
-    SENSITIVITY_MEDIUM: 0.05,  # 5% expected anomalies
-    SENSITIVITY_HIGH: 0.10,    # 10% expected anomalies
+    SENSITIVITY_LOW: 0.005,    # 0.5% expected anomalies (was 0.01)
+    SENSITIVITY_MEDIUM: 0.02,  # 2% expected anomalies (was 0.05) — provisional, monitor
+    SENSITIVITY_HIGH: 0.05,    # 5% expected anomalies (was 0.10)
 }
 
 # Minimum co-occurrences for a cross-sensor pattern to be considered strong

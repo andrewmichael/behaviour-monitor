@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from .const import MIN_BUCKET_OBSERVATIONS
+
 # 15-minute intervals per day (96 buckets)
 INTERVALS_PER_DAY = 96
 MINUTES_PER_INTERVAL = 15
@@ -436,6 +438,13 @@ class PatternAnalyzer:
             actual = current_interval_activity.get(entity_id, 0)
             time_slot = pattern.get_time_description(now)
 
+            # Guard: skip buckets without enough historical data (STAT-01, STAT-02)
+            day_of_week = now.weekday()
+            interval = _get_interval_index(now)
+            bucket = pattern.day_buckets[day_of_week][interval]
+            if bucket.count < MIN_BUCKET_OBSERVATIONS:
+                continue
+
             # Skip if we don't have enough data for this time period
             if expected_std == 0 and expected_mean == 0:
                 continue
@@ -444,8 +453,8 @@ class PatternAnalyzer:
             if expected_std > 0:
                 z_score = abs(actual - expected_mean) / expected_std
             elif actual != expected_mean:
-                # No variance but value differs from expected
-                z_score = float("inf") if actual > 0 else self._sensitivity_threshold + 1
+                # No variance but value differs from expected — cap instead of inf
+                z_score = self._sensitivity_threshold + 1
             else:
                 z_score = 0.0
 
