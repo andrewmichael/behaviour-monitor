@@ -67,7 +67,12 @@ Plans:
   1. Users can configure history window length, inactivity alert multiplier, and drift sensitivity in the config flow UI — existing v1.0 config entries load without error and receive sensible defaults for the new options
   2. All 14 sensor entity IDs are unchanged — no sensor goes unavailable on upgrade and coordinator.data is never None on first refresh
   3. An acute or drift alert produces a notification via the configured notification service (or persistent_notification fallback), with existing suppression logic (holiday mode, snooze, cooldown, welfare debounce) fully preserved
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Config infrastructure: const.py new keys, v3->v4 migration, config flow rewrite
+- [ ] 05-02-PLAN.md — Coordinator rewrite: new ~300-line coordinator wiring detection engines
+- [ ] 05-03-PLAN.md — Sensor fix, test rewrites, old code cleanup
 
 ## Progress
 
@@ -77,4 +82,4 @@ Plans:
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
 | 3. Foundation and Routine Model | 4/4 | Complete   | 2026-03-13 | - |
 | 4. Detection Engines | 2/2 | Complete   | 2026-03-13 | - |
-| 5. Integration | v1.1 | 0/? | Not started | - |
+| 5. Integration | v1.1 | 0/3 | Planning complete | - |
