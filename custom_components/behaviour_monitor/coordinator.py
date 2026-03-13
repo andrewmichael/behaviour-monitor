@@ -595,21 +595,92 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         days=self._ml_learning_period_days
                     )
 
+            # Track which anomalies were sent (for cross-path dedup)
+            notifiable_anomalies: list[AnomalyResult] = []
+
             # Statistical anomaly notifications require statistical learning complete
             if stat_learning_complete and stat_anomalies:
-                await self._send_notification(stat_anomalies)
+                # Severity gate: filter anomalies below configured minimum severity
+                min_severity_threshold = SEVERITY_THRESHOLDS.get(
+                    self._min_notification_severity, 3.5
+                )
+                notifiable_anomalies = [
+                    a for a in stat_anomalies if a.z_score >= min_severity_threshold
+                ]
+
+                # Per-entity cooldown + dedup: filter through _should_notify
+                notifiable_anomalies = [
+                    a
+                    for a in notifiable_anomalies
+                    if self._should_notify(a.entity_id, a.anomaly_type)
+                ]
+
+                if notifiable_anomalies:
+                    await self._send_notification(notifiable_anomalies)
+                    # Record each notified anomaly in cooldown map
+                    now = dt_util.now()
+                    for a in notifiable_anomalies:
+                        self._notification_cooldowns[(a.entity_id, a.anomaly_type)] = now
+
+            # Cooldown reset on clear: remove cooldown entries for entities no longer anomalous
+            active_keys = {(a.entity_id, a.anomaly_type) for a in stat_anomalies}
+            self._notification_cooldowns = {
+                k: v
+                for k, v in self._notification_cooldowns.items()
+                if k in active_keys
+            }
 
             # ML anomaly notifications require ML trained AND learning period elapsed
             if ml_learning_complete and ml_anomalies:
-                await self._send_ml_notification(ml_anomalies)
+                # Cross-path merge: skip ML anomalies whose entity_id was already notified by stat
+                stat_notified_entities = {
+                    a.entity_id for a in notifiable_anomalies if a.entity_id
+                }
+                ml_to_notify = [
+                    a
+                    for a in ml_anomalies
+                    if a.entity_id is None or a.entity_id not in stat_notified_entities
+                ]
+                # Also apply cooldown to ML anomalies
+                ml_to_notify = [
+                    a
+                    for a in ml_to_notify
+                    if self._should_notify(
+                        a.entity_id or "cross-sensor",
+                        getattr(a, "anomaly_type", "ml"),
+                    )
+                ]
+
+                if ml_to_notify:
+                    await self._send_ml_notification(ml_to_notify)
+                    now = dt_util.now()
+                    for a in ml_to_notify:
+                        self._notification_cooldowns[
+                            (a.entity_id or "cross-sensor", getattr(a, "anomaly_type", "ml"))
+                        ] = now
 
             # Welfare notifications sent when either learning method is ready
             if stat_learning_complete or ml_learning_complete:
                 welfare_status = self._analyzer.get_welfare_status()
                 current_welfare = welfare_status.get("status", "ok")
+
                 if current_welfare != self._last_welfare_status:
-                    await self._send_welfare_notification(welfare_status)
-                    self._last_welfare_status = current_welfare
+                    # Welfare debounce: require N consecutive cycles at new status
+                    if current_welfare == self._welfare_pending_status:
+                        self._welfare_consecutive_cycles += 1
+                    else:
+                        self._welfare_pending_status = current_welfare
+                        self._welfare_consecutive_cycles = 1
+
+                    if self._welfare_consecutive_cycles >= WELFARE_DEBOUNCE_CYCLES:
+                        await self._send_welfare_notification(welfare_status)
+                        self._last_welfare_status = current_welfare
+                        self._welfare_consecutive_cycles = 0
+                        self._welfare_pending_status = None
+                else:
+                    # Status stable — reset debounce counter
+                    self._welfare_consecutive_cycles = 0
+                    self._welfare_pending_status = None
 
         # Periodically save data
         await self._save_data()
@@ -699,6 +770,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else None
             ),
         }
+
+    def _should_notify(self, entity_id: str, anomaly_type: str) -> bool:
+        """Check if notification should fire (not in cooldown)."""
+        key = (entity_id, anomaly_type)
+        last = self._notification_cooldowns.get(key)
+        if last is None:
+            return True
+        cooldown_seconds = self._notification_cooldown * 60
+        return (dt_util.now() - last).total_seconds() >= cooldown_seconds
 
     async def _send_notification(self, anomalies: list[AnomalyResult]) -> None:
         """Send a persistent notification for statistical anomalies."""
@@ -889,7 +969,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"- {status_emoji} `{e['entity_id']}` - {e['status']} "
                     f"({e.get('time_since_activity', 'unknown')})"
                 )
-            triggered_text = f"**Triggered Sensors:**\n" + "\n".join(triggered_lines) + "\n\n"
+            triggered_text = "**Triggered Sensors:**\n" + "\n".join(triggered_lines) + "\n\n"
 
         message = (
             f"**Status:** {status.upper()}\n\n"
