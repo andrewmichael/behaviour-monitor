@@ -1,6 +1,7 @@
 """Tests for alert_result.py shared types — TDD RED phase for Task 1."""
 
 from __future__ import annotations
+from pathlib import Path
 
 
 class TestAlertTypeEnum:
@@ -208,7 +209,7 @@ class TestConstDetectionConstants:
             ],
             capture_output=True,
             text=True,
-            cwd="/Users/abourne/Documents/source/behaviour-monitor",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         # grep returns exit code 1 when no matches found
         count = int(result.stdout.strip()) if result.stdout.strip() else 0

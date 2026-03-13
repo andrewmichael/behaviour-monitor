@@ -10,6 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
 
 
@@ -452,7 +453,7 @@ class TestNoHAImports:
             ],
             capture_output=True,
             text=True,
-            cwd="/Users/abourne/Documents/source/behaviour-monitor",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         count = int(result.stdout.strip()) if result.stdout.strip() else 0
         assert count == 0, "acute_detector.py must have zero homeassistant imports"
