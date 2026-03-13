@@ -10,8 +10,9 @@ from custom_components.behaviour_monitor import (
     async_setup_entry,
     async_unload_entry,
     async_reload_entry,
+    async_migrate_entry,
 )
-from custom_components.behaviour_monitor.const import DOMAIN
+from custom_components.behaviour_monitor.const import DOMAIN, STORAGE_VERSION
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 
 
@@ -320,3 +321,251 @@ class TestIntegrationLifecycle:
             assert entry2.entry_id in mock_hass.data[DOMAIN]
             mock_coord1.async_shutdown.assert_called_once()
             mock_coord2.async_shutdown.assert_not_called()
+
+
+class TestStorageVersion:
+    """Tests for STORAGE_VERSION constant."""
+
+    def test_storage_version_is_3(self) -> None:
+        """Test that STORAGE_VERSION equals 3."""
+        assert STORAGE_VERSION == 3
+
+
+class TestMigrateEntry:
+    """Tests for async_migrate_entry."""
+
+    def _make_config_entry(self, version: int, data: dict) -> MagicMock:
+        """Create a mock config entry with given version and data."""
+        entry = MagicMock()
+        entry.version = version
+        entry.data = data
+        return entry
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_removes_enable_ml(self) -> None:
+        """Migration from v2 removes enable_ml key."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert "enable_ml" not in new_data
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_removes_retrain_period(self) -> None:
+        """Migration from v2 removes retrain_period key."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert "retrain_period" not in new_data
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_removes_ml_learning_period(self) -> None:
+        """Migration from v2 removes ml_learning_period key."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert "ml_learning_period" not in new_data
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_removes_cross_sensor_window(self) -> None:
+        """Migration from v2 removes cross_sensor_window key."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert "cross_sensor_window" not in new_data
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_adds_history_window_days(self) -> None:
+        """Migration from v2 adds history_window_days=28."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert new_data["history_window_days"] == 28
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_preserves_existing_keys(self) -> None:
+        """Migration from v2 preserves monitored_entities, sensitivity and other keys."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1", "sensor.test2"],
+                "sensitivity": "high",
+                "learning_period": 14,
+                "enable_notifications": False,
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        assert new_data["monitored_entities"] == ["sensor.test1", "sensor.test2"]
+        assert new_data["sensitivity"] == "high"
+        assert new_data["learning_period"] == 14
+        assert new_data["enable_notifications"] is False
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_updates_version_to_3(self) -> None:
+        """Migration from v2 sets version=3 on the entry."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "enable_ml": True,
+                "retrain_period": 14,
+                "ml_learning_period": 7,
+                "cross_sensor_window": 300,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        assert call_args[1]["version"] == 3
+
+    @pytest.mark.asyncio
+    async def test_migrate_v3_makes_no_changes(self) -> None:
+        """Migration is a no-op when config entry is already at version 3."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=3,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "sensitivity": "medium",
+                "history_window_days": 28,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        hass.config_entries.async_update_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_migrate_always_returns_true(self) -> None:
+        """async_migrate_entry always returns True regardless of version."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+
+        for version in [2, 3]:
+            entry = self._make_config_entry(
+                version=version,
+                data={"monitored_entities": []},
+            )
+            result = await async_migrate_entry(hass, entry)
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_migrate_v2_history_window_days_not_overwritten_if_present(self) -> None:
+        """If history_window_days already exists in v2 data, it is preserved."""
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._make_config_entry(
+            version=2,
+            data={
+                "monitored_entities": ["sensor.test1"],
+                "enable_ml": False,
+                "retrain_period": 7,
+                "ml_learning_period": 3,
+                "cross_sensor_window": 120,
+                "history_window_days": 14,  # already present
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        new_data = call_args[1]["data"]
+        # setdefault should NOT overwrite the existing value
+        assert new_data["history_window_days"] == 14
