@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. When both statistical and ML paths flag the same entity in the same cycle, exactly one notification is sent
   3. Minor-severity anomalies (below the minimum severity threshold) update sensor state but do not trigger push notifications
   4. Welfare status does not flip between normal and concern on back-to-back update cycles — a transition requires N consecutive cycles at the new status before a notification fires
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 01-01-PLAN.md — Constants, config flow fields, and test scaffolds (foundation)
@@ -51,5 +51,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Coordinator Suppression | 0/2 | Planning complete | - |
+| 1. Coordinator Suppression | 1/2 | In Progress|  |
 | 2. Analyzer Tightening | 0/TBD | Not started | - |

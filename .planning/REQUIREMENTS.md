@@ -7,9 +7,9 @@
 
 ### Notification Suppression
 
-- [ ] **NOTIF-01**: Notification cooldown per entity prevents re-alerting the same entity within a configurable time window
-- [ ] **NOTIF-02**: Anomaly deduplication prevents re-alerting for the same ongoing anomaly type on the same entity
-- [ ] **NOTIF-03**: Severity minimum gate only sends notifications for anomalies above a minimum severity threshold
+- [x] **NOTIF-01**: Notification cooldown per entity prevents re-alerting the same entity within a configurable time window
+- [x] **NOTIF-02**: Anomaly deduplication prevents re-alerting for the same ongoing anomaly type on the same entity
+- [x] **NOTIF-03**: Severity minimum gate only sends notifications for anomalies above a minimum severity threshold
 
 ### Statistical Analyzer Tuning
 
@@ -26,7 +26,7 @@
 
 ### Welfare Status
 
-- [ ] **WELF-01**: Welfare status hysteresis/debounce prevents rapid flapping between normal/concern/alert states
+- [x] **WELF-01**: Welfare status hysteresis/debounce prevents rapid flapping between normal/concern/alert states
 
 ## v2 Requirements
 
@@ -52,10 +52,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| NOTIF-01 | Phase 1 | Pending |
-| NOTIF-02 | Phase 1 | Pending |
-| NOTIF-03 | Phase 1 | Pending |
-| WELF-01 | Phase 1 | Pending |
+| NOTIF-01 | Phase 1 | Complete |
+| NOTIF-02 | Phase 1 | Complete |
+| NOTIF-03 | Phase 1 | Complete |
+| WELF-01 | Phase 1 | Complete |
 | STAT-01 | Phase 2 | Pending |
 | STAT-02 | Phase 2 | Pending |
 | STAT-03 | Phase 2 | Pending |
