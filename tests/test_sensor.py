@@ -136,7 +136,7 @@ class TestSensorDescriptions:
         assert len(result["monitored_entities"]) == 2
 
     def test_cross_sensor_patterns_sensor(self) -> None:
-        """Test cross_sensor_patterns sensor."""
+        """Test cross_sensor_patterns sensor returns stub value 0 (deprecated in v1.1)."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "cross_sensor_patterns")
         data = {
             "cross_sensor_patterns": [
@@ -147,10 +147,10 @@ class TestSensorDescriptions:
 
         result = sensor.value_fn(data)
 
-        assert result == 2
+        assert result == 0
 
     def test_cross_sensor_patterns_extra_attrs(self) -> None:
-        """Test cross_sensor_patterns sensor extra attributes."""
+        """Test cross_sensor_patterns sensor extra attributes contain deprecated flag."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "cross_sensor_patterns")
         coord = MagicMock()
         patterns = [{"pattern": "A -> B", "strength": 0.8}]
@@ -158,10 +158,10 @@ class TestSensorDescriptions:
 
         result = sensor.extra_attrs_fn(coord, data)
 
-        assert result["cross_sensor_patterns"] == patterns
+        assert result["deprecated"] is True
 
     def test_ml_status_sensor_ready(self) -> None:
-        """Test ml_status sensor when fully ready."""
+        """Test ml_status sensor returns stub value (deprecated in v1.1)."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
         data = {
             "ml_training": {"complete": True},
@@ -170,10 +170,10 @@ class TestSensorDescriptions:
 
         result = sensor.value_fn(data)
 
-        assert result == "Ready"
+        assert result == "Removed in v1.1"
 
     def test_ml_status_sensor_trained_learning(self) -> None:
-        """Test ml_status sensor when trained but learning period incomplete."""
+        """Test ml_status sensor returns stub regardless of training state."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
         data = {
             "ml_training": {"complete": False},
@@ -182,10 +182,10 @@ class TestSensorDescriptions:
 
         result = sensor.value_fn(data)
 
-        assert result == "Trained (learning)"
+        assert result == "Removed in v1.1"
 
     def test_ml_status_sensor_learning(self) -> None:
-        """Test ml_status sensor when still learning."""
+        """Test ml_status sensor returns stub regardless of learning state."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
         data = {
             "ml_training": {"complete": False},
@@ -194,10 +194,10 @@ class TestSensorDescriptions:
 
         result = sensor.value_fn(data)
 
-        assert result == "Learning"
+        assert result == "Removed in v1.1"
 
     def test_ml_status_sensor_disabled(self) -> None:
-        """Test ml_status sensor when disabled."""
+        """Test ml_status sensor returns stub regardless of disabled state."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
         data = {
             "ml_training": {"complete": False},
@@ -206,10 +206,10 @@ class TestSensorDescriptions:
 
         result = sensor.value_fn(data)
 
-        assert result == "Disabled"
+        assert result == "Removed in v1.1"
 
     def test_ml_status_extra_attrs(self) -> None:
-        """Test ml_status sensor extra attributes."""
+        """Test ml_status sensor extra attributes contain deprecated flag."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_status")
         coord = MagicMock()
         coord.ml_analyzer.ml_available = True
@@ -226,13 +226,7 @@ class TestSensorDescriptions:
 
         result = sensor.extra_attrs_fn(coord, data)
 
-        assert result["enabled"] is True
-        assert result["trained"] is True
-        assert result["ready"] is True
-        assert result["sample_count"] == 150
-        assert result["samples_needed"] == 0
-        assert result["learning_period_complete"] is True
-        assert result["ml_available"] is True
+        assert result["deprecated"] is True
 
     def test_welfare_status_sensor(self) -> None:
         """Test welfare_status sensor."""
@@ -389,16 +383,16 @@ class TestSensorDescriptions:
         assert result["days_elapsed"] == 4
 
     def test_ml_training_remaining_sensor(self) -> None:
-        """Test ml_training_remaining sensor."""
+        """Test ml_training_remaining sensor returns stub value 'N/A' (deprecated in v1.1)."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_training_remaining")
         data = {"ml_training": {"formatted": "10 days remaining"}}
 
         result = sensor.value_fn(data)
 
-        assert result == "10 days remaining"
+        assert result == "N/A"
 
     def test_ml_training_remaining_extra_attrs(self) -> None:
-        """Test ml_training_remaining sensor extra attributes."""
+        """Test ml_training_remaining sensor extra attributes contain deprecated flag."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "ml_training_remaining")
         coord = MagicMock()
         data = {
@@ -418,9 +412,7 @@ class TestSensorDescriptions:
 
         result = sensor.extra_attrs_fn(coord, data)
 
-        assert result["complete"] is False
-        assert result["samples_remaining"] == 50
-        assert result["samples_processed"] == 50
+        assert result["deprecated"] is True
 
     def test_last_notification_sensor_with_timestamp(self) -> None:
         """Test last_notification sensor with valid timestamp."""

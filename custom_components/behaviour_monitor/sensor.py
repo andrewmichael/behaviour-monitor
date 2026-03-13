@@ -100,34 +100,20 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         key="cross_sensor_patterns",
         name="Cross-Sensor Patterns",
         icon="mdi:relation-many-to-many",
-        value_fn=lambda data: len(data.get("cross_sensor_patterns", [])),
+        value_fn=lambda data: 0,
         extra_attrs_fn=lambda coord, data: {
-            ATTR_CROSS_SENSOR_PATTERNS: data.get("cross_sensor_patterns", []),
+            "deprecated": True,
+            "removal_version": "1.2",
         },
     ),
     BehaviourMonitorSensorDescription(
         key="ml_status",
         name="ML Status",
         icon="mdi:brain",
-        value_fn=lambda data: (
-            # Check if fully ready (both samples AND learning period complete)
-            "Ready" if data.get("ml_training", {}).get("complete", False)
-            # Model has samples but learning period not elapsed
-            else "Trained (learning)" if data.get("ml_status", {}).get("trained", False)
-            # Still collecting samples
-            else "Learning" if data.get("ml_status", {}).get("enabled", False)
-            else "Disabled"
-        ),
+        value_fn=lambda data: "Removed in v1.1",
         extra_attrs_fn=lambda coord, data: {
-            "enabled": data.get("ml_status", {}).get("enabled", False),
-            "trained": data.get("ml_status", {}).get("trained", False),
-            "ready": data.get("ml_training", {}).get("complete", False),
-            "sample_count": data.get("ml_status", {}).get("sample_count", 0),
-            "samples_needed": max(0, 100 - data.get("ml_status", {}).get("sample_count", 0)),
-            "learning_period_complete": data.get("ml_training", {}).get("days_remaining", 1) == 0,
-            "last_trained": data.get("ml_status", {}).get("last_trained"),
-            "next_retrain": data.get("ml_status", {}).get("next_retrain"),
-            "ml_available": coord.ml_analyzer.ml_available if coord else False,
+            "deprecated": True,
+            "removal_version": "1.2",
         },
     ),
     # Elder Care Sensors
@@ -202,17 +188,10 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         key="ml_training_remaining",
         name="ML Training Remaining",
         icon="mdi:timer-sand",
-        value_fn=lambda data: data.get("ml_training", {}).get("formatted", "Unknown"),
+        value_fn=lambda data: "N/A",
         extra_attrs_fn=lambda coord, data: {
-            "complete": data.get("ml_training", {}).get("complete", False),
-            "status": data.get("ml_training", {}).get("status"),
-            "days_remaining": data.get("ml_training", {}).get("days_remaining"),
-            "days_elapsed": data.get("ml_training", {}).get("days_elapsed"),
-            "total_days": data.get("ml_training", {}).get("total_days"),
-            "samples_remaining": data.get("ml_training", {}).get("samples_remaining"),
-            "samples_processed": data.get("ml_training", {}).get("samples_processed"),
-            "samples_needed": data.get("ml_training", {}).get("samples_needed"),
-            "first_event": data.get("ml_training", {}).get("first_event"),
+            "deprecated": True,
+            "removal_version": "1.2",
         },
     ),
     BehaviourMonitorSensorDescription(
