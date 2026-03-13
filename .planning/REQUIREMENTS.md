@@ -20,9 +20,9 @@
 
 ### ML Analyzer Tuning
 
-- [ ] **ML-01**: Cross-sensor correlation thresholds raised — minimum co-occurrence count increased from 10 to a statistically meaningful level
-- [ ] **ML-02**: ML anomaly score threshold raised to reduce marginal detections
-- [ ] **ML-03**: ML score smoothing via exponential moving average reduces noise from single-point spikes
+- [x] **ML-01**: Cross-sensor correlation thresholds raised — minimum co-occurrence count increased from 10 to a statistically meaningful level
+- [x] **ML-02**: ML anomaly score threshold raised to reduce marginal detections
+- [x] **ML-03**: ML score smoothing via exponential moving average reduces noise from single-point spikes
 
 ### Welfare Status
 
@@ -60,9 +60,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STAT-02 | Phase 2 | Complete |
 | STAT-03 | Phase 2 | Complete |
 | STAT-04 | Phase 2 | Pending |
-| ML-01 | Phase 2 | Pending |
-| ML-02 | Phase 2 | Pending |
-| ML-03 | Phase 2 | Pending |
+| ML-01 | Phase 2 | Complete |
+| ML-02 | Phase 2 | Complete |
+| ML-03 | Phase 2 | Complete |
 
 **Coverage:**
 - v1 requirements: 11 total

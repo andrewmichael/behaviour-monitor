@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 02-analyzer-tightening 02-01-PLAN.md
-last_updated: "2026-03-13T12:19:43.493Z"
+stopped_at: Completed 02-analyzer-tightening 02-03-PLAN.md
+last_updated: "2026-03-13T12:21:59.746Z"
 last_activity: "2026-03-13 — Plan 02 complete: _should_notify(), severity gate, per-entity cooldown, cross-path dedup, welfare debounce"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
   percent: 100
 ---
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100%
 
 *Updated after each plan completion*
 | Phase 02-analyzer-tightening P01 | 240 | 2 tasks | 3 files |
+| Phase 02-analyzer-tightening P03 | 5 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,9 @@ Recent decisions affecting current work:
 - [Phase 02-analyzer-tightening]: MIN_BUCKET_OBSERVATIONS=3 subsumed STAT-02 near-zero-mean guard; count guard is strictly stronger
 - [Phase 02-analyzer-tightening]: SENSITIVITY_MEDIUM raised to 2.5 sigma: reduces false positive rate from ~4.5% to ~1.2%
 - [Phase 02-analyzer-tightening]: float('inf') z-score cap uses sensitivity_threshold+1 (not magic number) to stay tied to current config
+- [Phase 02-analyzer-tightening]: EMA alpha=0.3 for ML score smoothing — single spike from 0.5 baseline stays at 0.647, below 0.98 threshold
+- [Phase 02-analyzer-tightening]: ML_CONTAMINATION LOW=0.005, MEDIUM=0.02, HIGH=0.05 (provisional, monitor in production)
+- [Phase 02-analyzer-tightening]: MIN_CROSS_SENSOR_OCCURRENCES=30 replaces hardcoded 10 — raises bar for cross-sensor anomaly detection
 
 ### Pending Todos
 
@@ -83,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13T12:19:43.490Z
-Stopped at: Completed 02-analyzer-tightening 02-01-PLAN.md
+Last session: 2026-03-13T12:21:59.742Z
+Stopped at: Completed 02-analyzer-tightening 02-03-PLAN.md
 Resume file: None
