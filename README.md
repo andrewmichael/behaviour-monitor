@@ -1,18 +1,19 @@
 # Behaviour Monitor
 
-A Home Assistant custom integration that learns entity state patterns and detects anomalies using statistical analysis and optional machine learning. Ideal for **elder care monitoring**, security, and detecting unusual activity patterns.
+A Home Assistant custom integration that learns entity behavior patterns and detects anomalies using routine-based detection. Ideal for **elder care monitoring**, security, and detecting unusual activity patterns.
 
 ## Features
 
-- **Statistical Pattern Learning**: Tracks state changes in 15-minute buckets with per-weekday distinction (672 buckets per entity)
-- **Machine Learning** (optional): Half-Space Trees for streaming anomaly detection using River
-- **Cross-Sensor Correlation**: Learns relationships between sensors (e.g., "motion sensor usually triggers before light turns on")
-- **Hybrid Detection**: Combines Z-score statistics with ML for comprehensive anomaly detection
+- **Routine Learning**: Learns per-entity behavior baselines using 168 hour-of-day x day-of-week slots from configurable rolling history (default 4 weeks)
+- **Acute Detection**: Alerts when expected activity is missing (inactivity) or activity occurs at unusual times — requires sustained evidence across multiple polling cycles before firing
+- **Drift Detection**: Detects persistent behavior changes over days/weeks using CUSUM change-point analysis with configurable sensitivity
 - **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
+- **Recorder Bootstrap**: Bootstraps baselines from existing HA recorder history on first load — no cold start for existing installations
 - **Holiday Mode**: Completely pause tracking and notifications when person is away
 - **Visitor Snooze**: Temporarily pause learning and alerts during expected unusual activity
 - **Attribute Tracking**: Optionally track attribute changes, not just state changes
 - **Notifications**: Sends persistent notifications with severity levels for unusual activity patterns
+- **Pure Python**: No external ML dependencies required — pure Python stdlib
 - **HACS Compatible**: Install via HACS for easy updates
 
 ## Elder Care Use Case
@@ -26,8 +27,8 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 - Appliance usage (kettle, TV, etc.)
 
 **What it detects:**
-- No morning activity when there usually is
-- Significantly reduced activity compared to normal
+- No morning activity when there usually is (inactivity detection)
+- Significantly reduced activity compared to normal (drift detection)
 - Missing expected routines (e.g., kitchen not used by usual breakfast time)
 - Unusual activity patterns (awake at unusual hours)
 
@@ -40,9 +41,9 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | `alert` | Significant anomaly detected | Immediate welfare check recommended |
 
 **Example notifications:**
-- "🚨 No activity for 4 hours (usually active every 45 minutes)"
-- "⚠️ Daily routine only 20% complete by 10am (usually 80%)"
-- "ℹ️ Motion sensor showing unusual inactivity for Tuesday 09:15"
+- "Inactivity alert: No activity from motion_sensor.kitchen for 4 hours (usually active every 45 minutes)"
+- "Drift alert: Daily activity from binary_sensor.front_door has decreased persistently over 5 days"
+- "Unusual time: Activity from motion_sensor.hallway at 03:15 — no baseline for this time slot"
 
 ## Installation
 
@@ -59,49 +60,6 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 1. Copy the `custom_components/behaviour_monitor` directory to your Home Assistant `config/custom_components/` directory
 2. Restart Home Assistant
 
-### Enabling ML Features (Optional)
-
-ML features require the River library. **The integration works perfectly without it** using statistical analysis only. Most users won't need ML - statistical Z-score detection is effective for pattern anomaly detection.
-
-**Home Assistant Core (any platform):**
-```bash
-pip install river
-```
-
-**Home Assistant OS / Supervised / Container:**
-
-1. Install the **SSH & Web Terminal** add-on from the Add-on Store (or **Advanced SSH & Web Terminal** from the community add-ons)
-
-2. Configure the add-on to disable "Protection mode" (required to access the HA container)
-
-3. Start the add-on and open the terminal
-
-4. Run the following command:
-   ```bash
-   docker exec -it homeassistant pip install river
-   ```
-
-5. Restart Home Assistant for the changes to take effect
-
-**Alternative method using the Terminal & SSH add-on:**
-```bash
-# If you have the Terminal & SSH add-on with protection mode disabled:
-ha core exec -it bash
-pip install river
-exit
-ha core restart
-```
-
-**Note:** The River library will need to be reinstalled after Home Assistant OS updates, as the container is recreated. Consider adding this to your startup automation or checking the ML Status sensor after updates.
-
-River is designed for streaming data and works well on Home Assistant OS because:
-- It has pre-built wheels for multiple Python versions including 3.13
-- It doesn't require compilation of C extensions (unlike scikit-learn)
-- It uses incremental/streaming learning which is ideal for Home Assistant's event-driven architecture
-- Package size is small (~2.5MB) compared to scikit-learn (~25MB+)
-
-If River is not installed, the integration will log a warning and automatically disable ML features. Statistical analysis will continue to work.
-
 ## Configuration
 
 1. Go to **Settings** → **Devices & Services** → **Add Integration**
@@ -114,32 +72,33 @@ If River is not installed, the integration will log a warning and automatically 
 | Option | Description | Default |
 |--------|-------------|---------|
 | Entities to monitor | Select entities whose state changes should be tracked | Required |
-| Sensitivity | Anomaly detection threshold (Low=3σ, Medium=2.5σ, High=1σ) | Medium |
-| Learning period | Days before statistical anomaly detection activates | 7 days |
+| History window | Rolling history window for baseline learning (7-90 days) | 28 days |
+| Inactivity multiplier | Alert when inactive for this multiple of learned typical interval (1.5-10.0×) | 3.0× |
+| Drift sensitivity | CUSUM change-point detection sensitivity (High/Medium/Low) | Medium |
 | Enable notifications | Send persistent notifications when anomalies are detected | Yes |
-| Enable ML | Enable Half-Space Trees machine learning (requires River) | Yes |
-| ML learning period | Days before ML notifications are sent (requires 100+ samples too) | 7 days |
-| ML retrain period | How often to replay historical data for model warmup | 14 days |
-| Cross-sensor window | Time window for detecting sensor correlations | 300 seconds |
-| Track attributes | Also track attribute changes, not just state changes | Yes |
 | Notification cooldown | Minutes before re-alerting the same entity | 30 minutes |
-| Minimum notification severity | Minimum anomaly severity to trigger a notification (minor/moderate/significant/critical) | significant |
+| Minimum notification severity | Minimum anomaly severity to trigger a notification | significant |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
+| Track attributes | Also track attribute changes, not just state changes | Yes |
+
+### Upgrading from v2.x
+
+Existing config entries migrate automatically to v4 format. Old ML-related options (enable_ml, ml_learning_period, retrain_period, cross_sensor_window) are removed and replaced with the new detection controls. No manual intervention is needed.
 
 ## Holiday Mode and Visitor Snooze
 
 The integration provides two modes for managing tracking during exceptional circumstances:
 
-### 🏖️ Holiday Mode
+### Holiday Mode
 
 **Complete pause** - Use when the monitored person is away on vacation or extended absence.
 
 **What it does:**
-- ✋ Stops all state tracking (state changes completely ignored)
-- ✋ Pauses all pattern learning (no baseline updates)
-- ✋ Disables all anomaly detection
-- ✋ Suppresses all notifications
-- 🔄 Persists across Home Assistant reboots
+- Stops all state tracking (state changes completely ignored)
+- Pauses all pattern learning (no baseline updates)
+- Disables all anomaly detection
+- Suppresses all notifications
+- Persists across Home Assistant reboots
 
 **How to use:**
 ```yaml
@@ -150,23 +109,17 @@ service: behaviour_monitor.enable_holiday_mode
 entity_id: switch.behaviour_monitor_holiday_mode
 ```
 
-**Use cases:**
-- Person on vacation for a week
-- Extended hospital stay
-- Visiting family for several days
-- Any time absence is expected and normal
-
-### 🔕 Visitor/Snooze Mode
+### Visitor/Snooze Mode
 
 **Temporary pause** - Use when unusual but expected activity occurs (visitors, care workers, etc.)
 
 **What it does:**
-- ✅ Continues state tracking (events are logged)
-- ✋ Pauses pattern learning (baseline not affected by visitor activity)
-- ✋ Disables anomaly detection
-- ✋ Suppresses notifications
-- ⏰ Auto-expires after selected duration
-- 🔄 Persists across reboots (with expiration check)
+- Continues state tracking (events are logged)
+- Pauses pattern learning (baseline not affected by visitor activity)
+- Disables anomaly detection
+- Suppresses notifications
+- Auto-expires after selected duration
+- Persists across reboots (with expiration check)
 
 **Available durations:**
 - 1 Hour
@@ -187,13 +140,6 @@ service: behaviour_monitor.clear_snooze
 # Or use the select entity
 entity_id: select.behaviour_monitor_snooze_notifications
 ```
-
-**Use cases:**
-- Overnight guests staying
-- Care worker visit (2-4 hours)
-- Family gathering
-- Maintenance/repair personnel
-- Any temporary unusual activity
 
 ### Example Automations
 
@@ -256,6 +202,7 @@ The integration provides the following services:
 | `behaviour_monitor.disable_holiday_mode` | Disable holiday mode - resume normal operation |
 | `behaviour_monitor.snooze` | Snooze notifications for specified duration (requires `duration` parameter) |
 | `behaviour_monitor.clear_snooze` | Clear active snooze - immediately resume notifications |
+| `behaviour_monitor.routine_reset` | Reset drift detection for an entity after an intentional routine change (requires `entity_id` parameter) |
 
 **Service call examples:**
 ```yaml
@@ -266,6 +213,11 @@ service: behaviour_monitor.enable_holiday_mode
 service: behaviour_monitor.snooze
 data:
   duration: "2_hours"
+
+# Reset drift detection after intentional routine change
+service: behaviour_monitor.routine_reset
+data:
+  entity_id: "binary_sensor.front_door"
 
 # Clear snooze
 service: behaviour_monitor.clear_snooze
@@ -289,12 +241,9 @@ The integration creates the following sensors and control entities:
 | `sensor.behaviour_monitor_last_activity` | Timestamp of the most recent detected state change |
 | `sensor.behaviour_monitor_activity_score` | Current activity level (0-100%) compared to baseline |
 | `sensor.behaviour_monitor_anomaly_detected` | "on" when an anomaly is currently detected |
-| `sensor.behaviour_monitor_baseline_confidence` | Progress of statistical pattern learning (0-100%) |
+| `sensor.behaviour_monitor_baseline_confidence` | Progress of routine model learning (0-100%) |
 | `sensor.behaviour_monitor_daily_activity_count` | Total state changes recorded today |
-| `sensor.behaviour_monitor_cross_sensor_patterns` | Number of detected cross-sensor correlations |
-| `sensor.behaviour_monitor_ml_status` | ML status: "Ready", "Trained (learning)", "Learning", or "Disabled" |
-| `sensor.behaviour_monitor_statistical_training_remaining` | Time remaining until statistical learning completes |
-| `sensor.behaviour_monitor_ml_training_remaining` | Time remaining until ML learning completes |
+| `sensor.behaviour_monitor_statistical_training_remaining` | Time remaining until detection activates |
 | `sensor.behaviour_monitor_last_notification` | Timestamp of the last notification sent |
 
 ### Elder Care Sensors
@@ -306,156 +255,73 @@ The integration creates the following sensors and control entities:
 | `sensor.behaviour_monitor_time_since_activity` | Human-readable time since last activity with context |
 | `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention") |
 
-### Sensor Attributes
+### Deprecated Sensors (preserved for backward compatibility)
 
-**ML Status** sensor values:
-| Value | Meaning |
-|-------|---------|
-| `Ready` | Both 100+ samples AND learning period complete - will send notifications |
-| `Trained (learning)` | Has 100+ samples but learning period not elapsed - won't send notifications yet |
-| `Learning` | Still collecting samples (< 100) |
-| `Disabled` | ML disabled or River not installed |
-
-**ML Status** sensor attributes:
-- `enabled`: Whether ML is enabled in config AND River is available
-- `trained`: Whether the model has processed enough samples (100+)
-- `ready`: Whether ML is fully ready to send notifications (samples + learning period)
-- `sample_count`: Number of events processed by the ML model
-- `samples_needed`: Events needed before ML becomes active
-- `learning_period_complete`: Whether the configured learning days have passed
-- `ml_available`: Whether ML library is installed
-
-**Welfare Status** sensor includes:
-- `reasons`: List of reasons for current status
-- `summary`: Brief description of welfare state
-- `recommendation`: Suggested action (e.g., "Immediate welfare check recommended")
-- `entity_count_by_status`: Breakdown of entities by alert level
-
-**Routine Progress** sensor includes:
-- `expected_by_now`: Expected activity count by current time
-- `actual_today`: Actual activity count today
-- `expected_full_day`: Total expected activities for the day
-- `status`: `on_track`, `below_normal`, `concerning`, or `alert`
-- `summary`: Human-readable progress description
-
-**Time Since Activity** sensor includes:
-- `time_since_activity`: Seconds since last activity
-- `typical_interval`: Expected interval between activities (seconds)
-- `typical_interval_formatted`: Human-readable typical interval
-- `concern_level`: Ratio of actual to typical interval (>2.0 is concerning)
-- `context`: Full context string (e.g., "Last activity 4 hours ago (usually every 45 minutes)")
-
-**Entity Status Summary** sensor includes:
-- `entity_status`: Detailed list of each monitored entity with:
-  - Status (`normal`, `attention`, `concern`, `alert`)
-  - Severity (`normal`, `minor`, `moderate`, `significant`, `critical`)
-  - Time since last activity
-  - Z-score deviation from expected
-
-**Anomaly Detected** sensor includes:
-- `anomaly_details`: List of current anomalies with entity, type, severity, and description
-
-**Baseline Confidence** sensor includes:
-- `learning_progress`: "learning" or "complete"
-- `ml_status`: ML training status, sample count, last/next retrain times
-- `last_retrain`: Timestamp of last ML model training
-
-**Cross-Sensor Patterns** sensor includes:
-- `cross_sensor_patterns`: List of learned correlations with strength and timing
-
-**Statistical Training Remaining** sensor includes:
-- `complete`: Whether statistical learning is complete
-- `days_remaining`: Days until learning period completes
-- `days_elapsed`: Days since first observation
-- `total_days`: Configured learning period in days
-- `first_observation`: Timestamp of first recorded event
-
-**ML Training Remaining** sensor includes:
-- `complete`: Whether ML is fully ready (samples + time)
-- `status`: Current status description
-- `days_remaining`: Days until learning period completes
-- `samples_remaining`: Samples needed to reach 100
-- `samples_processed`: Current sample count
-- `first_event`: Timestamp of first ML event
-
-**Last Notification** sensor includes:
-- `type`: Type of last notification sent (`statistical`, `ml`, or `welfare`)
+| Sensor | Description |
+|--------|-------------|
+| `sensor.behaviour_monitor_cross_sensor_patterns` | Returns `0` (stub — will be removed in a future version) |
+| `sensor.behaviour_monitor_ml_status` | Returns `"Removed in v1.1"` (stub) |
+| `sensor.behaviour_monitor_ml_training_remaining` | Returns `"N/A"` (stub) |
 
 ## How It Works
 
-### Statistical Analysis (Z-score)
+### Routine Model
 
-The integration tracks state changes for each monitored entity in:
-- **96 time buckets** per day (15-minute intervals)
-- **7 day types** (Monday through Sunday)
-- **672 total buckets** per entity
+The integration learns per-entity behavior baselines using:
+- **168 time slots** per entity (24 hours × 7 days of the week)
+- **Binary entities** (motion, doors): tracks event frequency and inter-event intervals
+- **Numeric entities** (temperature, power): tracks value distributions using Welford online statistics
 
-For each bucket, it calculates mean and standard deviation. Anomalies are flagged when current activity deviates significantly from the baseline:
+The model bootstraps from existing HA recorder history on first load, so existing installations start with populated baselines immediately.
 
-```
-Z-score = |actual - expected_mean| / standard_deviation
-```
+### Acute Detection
 
-Sensitivity levels:
-- **Low (3σ)**: Only extreme anomalies (~0.3% false positive rate)
-- **Medium (2.5σ)**: Moderate anomalies (~1.2% false positive rate)
-- **High (1σ)**: Any deviation (~32% false positive rate)
+Two types of acute alerts, both requiring **sustained evidence** (3 consecutive polling cycles) before firing:
 
-### Machine Learning (Half-Space Trees)
+**Inactivity**: Fires when an entity has been silent for longer than a configurable multiplier of its learned typical interval. For example, if a motion sensor usually triggers every 45 minutes and the multiplier is 3×, an alert fires after ~2.25 hours of silence (sustained across 3 cycles).
 
-When ML is enabled and River is installed, the integration uses Half-Space Trees (HST) for streaming anomaly detection. Unlike batch-trained models, HST learns incrementally from each event:
+**Unusual Time**: Fires when activity occurs at a time slot that has very few historical observations — e.g., front door activity at 3am when baseline shows no history for that slot.
 
-| Feature | Description |
-|---------|-------------|
-| Hour of day | Normalized time (0-1) |
-| Minute bucket | 15-minute interval within hour |
-| Day of week | 0=Monday through 6=Sunday |
-| Weekend flag | Binary weekend indicator |
-| Time since last activity | Seconds since entity's last change |
-| Recent activity rate | Activity count in last hour |
-| Entity identifier | Normalized entity index |
+Severity is graded based on how far the inactivity exceeds the threshold:
+| Severity | Condition |
+|----------|-----------|
+| LOW | 2-3× threshold |
+| MEDIUM | 3-5× threshold |
+| HIGH | 5×+ threshold |
 
-**Streaming vs Batch Learning:**
-- The model starts learning immediately from the first event
-- Each event updates the model incrementally (no "training" step needed)
-- The model becomes effective after ~100 events
-- Historical data can be replayed to warm up the model after restarts
+### Drift Detection
 
-### Cross-Sensor Correlation
+Uses **bidirectional CUSUM** (Cumulative Sum) to detect persistent shifts in daily activity rates. Unlike acute detection (which catches immediate events), drift detection identifies gradual changes over days or weeks.
 
-The integration learns patterns between sensors:
+Examples:
+- "Daily activity from bedroom motion sensor has decreased persistently" (possible reduced mobility)
+- "Front door activity has increased persistently" (new visitor pattern, changed schedule)
 
-```
-Example learned patterns:
-- motion_sensor.hallway → light.hallway (usually within 5 seconds)
-- door_sensor.front → motion_sensor.entry (usually within 10 seconds)
-```
+Sensitivity tiers control how quickly drift is detected:
+| Sensitivity | CUSUM Parameters | Detection Speed |
+|-------------|-----------------|-----------------|
+| High | k=0.25, h=2.0 | Fastest — catches subtle shifts |
+| Medium | k=0.5, h=4.0 | Balanced (default) |
+| Low | k=1.0, h=6.0 | Slowest — only large sustained shifts |
 
-When a sensor triggers but its correlated sensor doesn't respond within the expected window, an anomaly is flagged. This can detect:
+The `routine_reset` service clears the drift accumulator for an entity when a routine change is intentional (e.g., started working from home).
 
-- **Missing activity**: Door opened but no motion detected
-- **Broken patterns**: Usual sequence didn't occur
+### Suppression Logic
 
-### Hybrid Detection
-
-Both statistical and ML anomalies are reported:
-- **Statistical**: Quick, explainable (Z-score), works immediately after learning period
-- **ML**: Catches complex multivariate patterns, learns continuously from each event
+All notifications pass through suppression filters:
+- **Holiday mode**: Blocks all notifications
+- **Snooze**: Blocks all notifications for the snooze duration
+- **Per-entity cooldown**: Prevents re-alerting the same entity within the cooldown window
+- **Welfare debounce**: Requires 3 consecutive cycles of elevated welfare status before changing the welfare state
 
 ## Notifications
 
-When an anomaly is detected, a persistent notification includes:
-- Entity ID
-- Time slot (e.g., "monday 09:15")
-- Detection method (Statistical or ML)
-- Anomaly details and scores
-- Related entities (for cross-sensor anomalies)
+When an anomaly is detected, notifications include:
+- Entity ID and alert type (inactivity, unusual time, or drift)
+- Human-readable explanation from the detection engine
+- Severity level
 
 ### Mobile Notifications
-
-There are two ways to receive notifications on your mobile device:
-
-#### Option 1: Built-in Mobile Notification Services
 
 The integration includes a "Mobile notification services" configuration option that supports multiple devices. To use it:
 
@@ -463,261 +329,64 @@ The integration includes a "Mobile notification services" configuration option t
 2. Find your notification service names:
    - Go to **Developer Tools** → **Services**
    - Search for "mobile_app" to find services like `notify.mobile_app_your_phone`
-3. Add each service name (e.g., `notify.mobile_app_iphone`, `notify.mobile_app_ipad`) in the Behaviour Monitor configuration
-   - You can add multiple services to notify multiple devices simultaneously
+3. Add each service name in the Behaviour Monitor configuration
 
-Mobile notifications include:
-- Sound alerts for critical/significant anomalies
-- Badge counts showing number of anomalies
-- Time-sensitive interruption levels for critical welfare alerts
-- Grouped notifications by type (statistical, ML, welfare)
-
-#### Option 2: Custom Automations
-
-For more control over when and how notifications are sent, create automations triggered by the Behaviour Monitor sensors.
-
-**Basic Welfare Alert Automation:**
-
-```yaml
-alias: "Elder Care - Welfare Alert"
-description: "Send mobile notification when welfare status changes to alert or concern"
-trigger:
-  - platform: state
-    entity_id: sensor.behaviour_monitor_welfare_status
-    to:
-      - alert
-      - concern
-condition: []
-action:
-  - service: notify.mobile_app_your_phone
-    data:
-      title: "🚨 Elder Care Welfare {{ states('sensor.behaviour_monitor_welfare_status') | title }}"
-      message: >-
-        {{ state_attr('sensor.behaviour_monitor_welfare_status', 'summary') }}
-
-        Recommendation: {{ state_attr('sensor.behaviour_monitor_welfare_status', 'recommendation') }}
-
-        Triggered sensors:
-        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
-        {% for e in statuses if e.status in ['alert', 'concern', 'attention'] %}
-        - {{ e.entity_id }}: {{ e.status }} ({{ e.time_since_activity }})
-        {% endfor %}
-      data:
-        push:
-          sound: default
-          interruption-level: time-sensitive
-        group: elder-care
-        tag: welfare-alert
-mode: single
-```
-
-**Anomaly Detection Automation:**
-
-```yaml
-alias: "Behaviour Monitor - Anomaly Alert"
-description: "Send notification when any anomaly is detected"
-trigger:
-  - platform: state
-    entity_id: sensor.behaviour_monitor_anomaly_detected
-    to: "on"
-condition:
-  - condition: numeric_state
-    entity_id: sensor.behaviour_monitor_baseline_confidence
-    above: 99
-action:
-  - service: notify.mobile_app_your_phone
-    data:
-      title: "⚠️ Unusual Activity Detected"
-      message: >-
-        {% set anomalies = state_attr('sensor.behaviour_monitor_anomaly_detected', 'anomaly_details') %}
-        {% for a in anomalies %}
-        - {{ a.entity_id }}: {{ a.description }} ({{ a.severity }})
-        {% endfor %}
-      data:
-        push:
-          sound: default
-        group: behaviour-monitor
-        tag: anomaly-alert
-mode: single
-```
-
-**Low Activity Alert Automation:**
-
-```yaml
-alias: "Elder Care - Low Activity Alert"
-description: "Alert when routine progress falls significantly below normal"
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.behaviour_monitor_routine_progress
-    below: 50
-    for:
-      hours: 2
-condition:
-  - condition: time
-    after: "09:00:00"
-    before: "21:00:00"
-  - condition: numeric_state
-    entity_id: sensor.behaviour_monitor_baseline_confidence
-    above: 99
-action:
-  - service: notify.mobile_app_your_phone
-    data:
-      title: "ℹ️ Low Activity Detected"
-      message: >-
-        Routine progress is only {{ states('sensor.behaviour_monitor_routine_progress') }}%
-        ({{ state_attr('sensor.behaviour_monitor_routine_progress', 'actual_today') }} activities,
-        expected ~{{ state_attr('sensor.behaviour_monitor_routine_progress', 'expected_by_now') | round(0) }})
-
-        Last activity: {{ states('sensor.behaviour_monitor_time_since_activity') }}
-
-        Sensor status:
-        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
-        {% for e in statuses %}
-        - {{ e.entity_id }}: {{ e.status }} (last: {{ e.time_since_activity }})
-        {% endfor %}
-      data:
-        push:
-          sound: default
-        group: elder-care
-        tag: low-activity
-mode: single
-```
-
-**No Activity for Extended Period:**
-
-```yaml
-alias: "Elder Care - Extended Inactivity"
-description: "Alert when no activity for longer than typical interval"
-trigger:
-  - platform: template
-    value_template: >-
-      {{ state_attr('sensor.behaviour_monitor_time_since_activity', 'concern_level') | float(0) > 2.0 }}
-    for:
-      minutes: 30
-condition:
-  - condition: time
-    after: "07:00:00"
-    before: "23:00:00"
-  - condition: numeric_state
-    entity_id: sensor.behaviour_monitor_baseline_confidence
-    above: 99
-action:
-  - service: notify.mobile_app_your_phone
-    data:
-      title: "🚨 Extended Inactivity"
-      message: >-
-        {{ state_attr('sensor.behaviour_monitor_time_since_activity', 'context') }}
-
-        Inactive sensors:
-        {% set statuses = state_attr('sensor.behaviour_monitor_entity_status_summary', 'entity_status') %}
-        {% for e in statuses if e.status != 'normal' %}
-        - {{ e.entity_id }}: {{ e.time_since_activity }} ({{ e.severity }})
-        {% endfor %}
-      data:
-        push:
-          sound: default
-          interruption-level: time-sensitive
-        group: elder-care
-        tag: extended-inactivity
-        actions:
-          - action: ACKNOWLEDGE
-            title: "Acknowledged"
-          - action: CALL_RELATIVE
-            title: "Call Now"
-mode: single
-```
-
-**Tips for Automations:**
-
-- Always check `baseline_confidence` is above 99% to avoid false alerts during learning
-- Use `for:` duration on triggers to avoid transient state changes
-- Set appropriate time conditions to avoid night-time alerts
-- Use notification `tag` to replace previous notifications instead of stacking
-- Use `group` to organize notifications on mobile devices
-- Add actionable buttons for quick responses
+For more control, create automations triggered by the Behaviour Monitor sensors (see example automations in the Holiday Mode section above or the HOLIDAY_SNOOZE_MODE.md file).
 
 ## Data Storage
 
 The integration stores data in Home Assistant's `.storage` directory:
 
-- **Statistical patterns & coordinator state**: `.storage/behaviour_monitor.{entry_id}.json`
-  - 672 time buckets per entity (15-min intervals × 7 days)
-  - Daily activity counts (persists across same-day reboots)
+- **Routine model and coordinator state**: `.storage/behaviour_monitor.{entry_id}.json`
+  - Per-entity routine baselines (168 slots with Welford accumulators)
+  - CUSUM drift detection state
+  - Daily activity counts
   - Notification tracking history
-  - Holiday mode status
-  - Snooze status and expiration time
-
-- **ML data and events**: `.storage/behaviour_monitor_ml.{entry_id}.json`
-  - Historical state change events
-  - Cross-sensor correlation patterns
-  - ML model sample count and training timestamps
+  - Holiday mode and snooze status
 
 All data persists across Home Assistant restarts. Daily counts are only restored if from the same day (resets automatically at midnight).
 
 ## Troubleshooting
 
-### "Config flow could not be loaded" / 500 Error
-
-This usually means a Python dependency is missing. Check the Home Assistant logs for details.
-
-### ML Features Not Working
-
-Check the `ml_status` sensor or the `ml_status` attribute on the `baseline_confidence` sensor:
-- `enabled`: Whether ML is enabled in config AND River is available
-- `trained`: Whether the model has processed enough events (100+)
-- `sample_count`: Number of recorded events
-
-If River is not installed, you'll see a warning in the logs:
-```
-Behaviour Monitor: ML features DISABLED - River library not installed.
-Statistical analysis will still work. To enable ML, install: pip install river
-```
-
 ### No Anomalies Detected
 
-- Check `baseline_confidence` sensor - must reach 100% before detection starts
+- Check `baseline_confidence` sensor — detection activates as the routine model learns (proportional to history window)
 - Verify monitored entities are actually changing state
-- Consider adjusting sensitivity level
 - Check if "Track attributes" is enabled if your entities only change attributes
+- Inactivity alerts require the learned interval to be established (sufficient slot observations)
 
 ### Activity Not Being Tracked
 
 - Ensure the entity is in the monitored entities list
-- Check if "Track attributes" is enabled - some entities only change attributes, not state
-- Look at debug logs to see if events are being received
-- **Check if Holiday Mode is enabled** - all tracking is paused when ON
-- **Check if Snoozed** - pattern learning is paused during snooze
+- Check if "Track attributes" is enabled — some entities only change attributes, not state
+- **Check if Holiday Mode is enabled** — all tracking is paused when ON
+- **Check if Snoozed** — pattern learning is paused during snooze
+
+### Drift Alerts After Intentional Routine Change
+
+Use the `routine_reset` service to clear the drift accumulator:
+```yaml
+service: behaviour_monitor.routine_reset
+data:
+  entity_id: "binary_sensor.front_door"
+```
 
 ### Holiday Mode or Snooze Not Working
 
 **Holiday Mode not pausing:**
 - Verify `switch.behaviour_monitor_holiday_mode` shows "on"
-- Check logs - should see no "Recorded state change" messages when ON
-- Verify coordinator data: `holiday_mode` should be `true`
+- Check logs — should see no "Recorded state change" messages when ON
 
 **Snooze not pausing:**
 - Verify `select.behaviour_monitor_snooze_notifications` shows selected duration
 - Check sensor attributes for `snooze_active: true` and `snooze_until` timestamp
-- Check logs - should show "[SNOOZED - patterns not updated]" suffix
 - Verify snooze hasn't expired (check current time vs `snooze_until`)
-
-**Modes not persisting after reboot:**
-- Check `.storage/behaviour_monitor.{entry_id}.json` exists and contains `coordinator` section
-- Verify file permissions allow Home Assistant to write
-- Check startup logs for "Loaded coordinator state" message
 
 ## Requirements
 
 - Home Assistant 2024.1.0 or newer
 - Recorder integration (dependency, enabled by default)
-- **Optional**: River (for ML features) - `pip install river`
-
-## Hardware Notes
-
-- Works well on Raspberry Pi 4+ and x86 systems
-- Statistical analysis works on all hardware
-- River's streaming ML is lightweight and works on all platforms
-- ML becomes effective after ~100 state change events
+- No external Python dependencies required
 
 ## Development
 
@@ -730,11 +399,12 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements-test.txt
-pip install river  # Optional, for ML tests
 
 # Run tests
-PYTHONPATH=. pytest tests/ -v
+make test
 ```
+
+See [README-DEV.md](README-DEV.md) for complete development setup instructions.
 
 ## Changelog
 

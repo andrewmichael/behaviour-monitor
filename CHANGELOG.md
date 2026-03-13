@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-03-13
+
+### Added
+- **Routine Model**: Pure-Python baseline learning engine with 168 hour-of-day × day-of-week slots per entity, replacing the old 672 time-bucket z-score approach
+- **Acute Detection**: Inactivity alerts (no expected activity for configurable multiplier of learned interval) and unusual-time alerts (activity at rarely-seen times), both requiring sustained evidence across 3 consecutive polling cycles before firing
+- **Drift Detection**: Bidirectional CUSUM change-point detection for persistent behavior shifts over days/weeks, with configurable sensitivity (high/medium/low)
+- **Routine Reset Service**: `behaviour_monitor.routine_reset` service to clear drift accumulator when a routine change is intentional
+- **Recorder Bootstrap**: Routine model bootstraps from existing HA recorder history on first load — no cold-start for existing installations
+- **Config Flow Options**: History window length (7-90 days), inactivity alert multiplier (1.5-10.0×), and drift sensitivity dropdown
+
+### Changed
+- **Coordinator rewrite**: Rebuilt from 1,213 lines to 348 lines, wiring RoutineModel + AcuteDetector + DriftDetector
+- **Config migration**: Existing config entries automatically migrate from v2/v3 to v4 with sensible defaults for new options
+- **Detection approach**: Alerts now require sustained evidence (multiple consecutive cycles) instead of single-point z-score deviations
+- **Storage format**: Migrated to v4 format with routine model baselines and CUSUM state persistence
+
+### Removed
+- **Z-score analyzer** (`analyzer.py`): Replaced by RoutineModel + AcuteDetector — z-score buckets were fundamentally noisy for irregular human behavior
+- **River ML analyzer** (`ml_analyzer.py`): Replaced by routine-based detection — zero external ML dependencies required
+- **ML config options**: `enable_ml`, `ml_learning_period`, `retrain_period`, `cross_sensor_window` removed from config flow
+- **Sigma-based sensitivity**: Old Low/Medium/High (3σ/2.5σ/1σ) sensitivity replaced by drift sensitivity and inactivity multiplier controls
+
+### Deprecated
+- `ml_status`, `ml_training_remaining`, and `cross_sensor_patterns` sensors now return stub values ("Removed in v1.1", "N/A", 0) — preserved to avoid breaking existing automations, will be removed in a future version
+
+### Fixed
+- False positives from single-point z-score deviations eliminated by sustained-evidence gating
+- Coordinator data never returns None on first refresh — safe defaults always populated
+
 ## [2.8.8] - 2026-02-12
 
 ### Fixed
