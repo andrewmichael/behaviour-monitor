@@ -1507,6 +1507,270 @@ class TestCoordinatorSnooze:
 
 
 # ---------------------------------------------------------------------------
+# Task 2: Recorder bootstrap tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeState:
+    """Minimal fake HA state object for bootstrap tests."""
+
+    def __init__(
+        self,
+        entity_id: str,
+        state: str,
+        last_changed: datetime,
+    ) -> None:
+        self.entity_id = entity_id
+        self.state = state
+        self.last_changed = last_changed
+
+
+def _make_binary_states(
+    entity_id: str,
+    count: int,
+    start: datetime,
+    interval_hours: float = 1.0,
+) -> list[_FakeState]:
+    """Return *count* alternating on/off state objects."""
+    states = []
+    for i in range(count):
+        state_val = "on" if i % 2 == 0 else "off"
+        ts = start + timedelta(hours=i * interval_hours)
+        states.append(_FakeState(entity_id=entity_id, state=state_val, last_changed=ts))
+    return states
+
+
+class TestRecorderBootstrap:
+    """Tests for _bootstrap_from_recorder."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a fresh coordinator instance."""
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    async def _run_bootstrap(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        recorder_result: dict | Exception,
+    ) -> None:
+        """Run the bootstrap method with a mocked recorder response."""
+        import asyncio
+
+        async def fake_executor_job(fn, *args):
+            if isinstance(recorder_result, Exception):
+                raise recorder_result
+            return recorder_result
+
+        mock_instance = MagicMock()
+        mock_instance.async_add_executor_job = fake_executor_job
+
+        with patch(
+            "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+            return_value=mock_instance,
+        ):
+            with patch(
+                "custom_components.behaviour_monitor.coordinator.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                await coordinator._bootstrap_from_recorder()
+
+    async def test_bootstrap_populates_model(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Bootstrap with 10 binary state changes populates RoutineModel slots."""
+        start = datetime(2024, 1, 15, 9, 0, 0)
+        states = _make_binary_states("sensor.test1", 10, start)
+        recorder_result = {"sensor.test1": states}
+
+        await self._run_bootstrap(coordinator, recorder_result)
+
+        # After bootstrap, the entity should be tracked in the model
+        assert "sensor.test1" in coordinator._routine_model._entities
+
+    async def test_bootstrap_empty_recorder_no_crash(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bootstrap with empty recorder response does not crash."""
+        await self._run_bootstrap(coordinator, {})
+        # Should not crash and model should be empty
+        assert coordinator._routine_model.overall_confidence() == 0.0
+
+    async def test_bootstrap_empty_recorder_logs_warning(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bootstrap with empty recorder logs a warning."""
+        with caplog.at_level(logging.WARNING):
+            await self._run_bootstrap(coordinator, {})
+        # Should log something about no history found
+        log_lower = caplog.text.lower()
+        assert "bootstrap" in log_lower or "no history" in log_lower or "no state" in log_lower
+
+    async def test_bootstrap_recorder_exception_logs_warning(
+        self, coordinator: BehaviourMonitorCoordinator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bootstrap with recorder exception logs warning and continues."""
+        with caplog.at_level(logging.WARNING):
+            await self._run_bootstrap(coordinator, RuntimeError("recorder unavailable"))
+        # Should log a warning and not crash
+        assert "bootstrap" in caplog.text.lower() or "recorder" in caplog.text.lower()
+        # Model should still be usable (empty)
+        assert coordinator._routine_model is not None
+
+    async def test_bootstrap_filters_unavailable_states(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Bootstrap filters out 'unavailable' and 'unknown' states."""
+        start = datetime(2024, 1, 15, 9, 0, 0)
+        states = [
+            _FakeState("sensor.test1", "unavailable", start),
+            _FakeState("sensor.test1", "unknown", start + timedelta(minutes=10)),
+            _FakeState("sensor.test1", "on", start + timedelta(minutes=20)),
+            _FakeState("sensor.test1", "off", start + timedelta(minutes=30)),
+        ]
+        recorder_result = {"sensor.test1": states}
+        await self._run_bootstrap(coordinator, recorder_result)
+
+        # Only the valid "on"/"off" states should be recorded
+        entity = coordinator._routine_model._entities.get("sensor.test1")
+        assert entity is not None
+        # Total events across all slots should be 2 (on + off)
+        total_events = sum(
+            len(slot.event_times) for slot in entity.slots
+        )
+        assert total_events == 2
+
+    async def test_bootstrap_entity_type_detection_binary(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Bootstrap detects binary entity type from on/off states."""
+        start = datetime(2024, 1, 15, 9, 0, 0)
+        states = _make_binary_states("sensor.test1", 4, start)
+        recorder_result = {"sensor.test1": states}
+        await self._run_bootstrap(coordinator, recorder_result)
+
+        entity = coordinator._routine_model._entities.get("sensor.test1")
+        assert entity is not None
+        assert entity.is_binary is True
+
+    async def test_bootstrap_entity_type_detection_numeric(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Bootstrap detects numeric entity type from numeric state strings."""
+        start = datetime(2024, 1, 15, 9, 0, 0)
+        states = [
+            _FakeState("sensor.temp", "21.5", start + timedelta(hours=i))
+            for i in range(4)
+        ]
+        recorder_result = {"sensor.temp": states}
+        await self._run_bootstrap(coordinator, recorder_result)
+
+        entity = coordinator._routine_model._entities.get("sensor.temp")
+        assert entity is not None
+        assert entity.is_binary is False
+
+    async def test_bootstrap_staggered_sleep_between_entities(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Bootstrap calls asyncio.sleep(0) between entities."""
+        import asyncio
+
+        start = datetime(2024, 1, 15, 9, 0, 0)
+        states1 = _make_binary_states("sensor.test1", 4, start)
+        states2 = _make_binary_states("sensor.test2", 4, start)
+        recorder_result = {
+            "sensor.test1": states1,
+            "sensor.test2": states2,
+        }
+
+        sleep_calls = []
+
+        async def mock_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        async def fake_executor_job(fn, *args):
+            return recorder_result
+
+        mock_instance = MagicMock()
+        mock_instance.async_add_executor_job = fake_executor_job
+
+        with patch(
+            "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+            return_value=mock_instance,
+        ):
+            with patch(
+                "custom_components.behaviour_monitor.coordinator.asyncio.sleep",
+                side_effect=mock_sleep,
+            ):
+                await coordinator._bootstrap_from_recorder()
+
+        # Should have called asyncio.sleep(0) at least once per entity pair
+        assert len(sleep_calls) >= 1
+        assert all(s == 0 for s in sleep_calls)
+
+    async def test_bootstrap_called_on_setup_when_model_empty(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_bootstrap_from_recorder is called during async_setup when model is empty."""
+        bootstrap_called = False
+
+        original_bootstrap = coordinator._bootstrap_from_recorder
+
+        async def mock_bootstrap():
+            nonlocal bootstrap_called
+            bootstrap_called = True
+
+        coordinator._bootstrap_from_recorder = mock_bootstrap
+
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        assert bootstrap_called is True
+
+    async def test_bootstrap_not_called_when_model_has_data(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_bootstrap_from_recorder is NOT called when RoutineModel already has entities."""
+        from custom_components.behaviour_monitor.routine_model import RoutineModel
+
+        original = RoutineModel(history_window_days=28)
+        original.record(
+            "sensor.test1",
+            datetime(2024, 1, 15, 10, 0, 0),
+            "on",
+            is_binary=True,
+        )
+        v3_data = {
+            "routine_model": original.to_dict(),
+            "coordinator": {
+                "last_notification_time": None,
+                "last_notification_type": None,
+                "last_welfare_status": None,
+                "holiday_mode": False,
+                "snooze_until": None,
+                "notification_cooldowns": {},
+                "welfare_consecutive_cycles": 0,
+                "welfare_pending_status": None,
+            },
+        }
+        bootstrap_called = False
+
+        async def mock_bootstrap():
+            nonlocal bootstrap_called
+            bootstrap_called = True
+
+        coordinator._bootstrap_from_recorder = mock_bootstrap
+
+        with patch.object(coordinator._store, "async_load", return_value=v3_data):
+            with patch.object(coordinator._ml_store, "async_load", return_value=None):
+                await coordinator.async_setup()
+
+        assert bootstrap_called is False
+
+
+# ---------------------------------------------------------------------------
 # Helper: load the v2 storage fixture
 # ---------------------------------------------------------------------------
 
