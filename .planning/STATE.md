@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
 stopped_at: Completed 04-02-PLAN.md (drift detector)
-last_updated: "2026-03-13T20:58:42.363Z"
+last_updated: "2026-03-13T21:02:31.622Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
