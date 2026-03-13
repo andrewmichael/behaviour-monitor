@@ -19,8 +19,10 @@ from .const import (
     CONF_ENABLE_ML,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_LEARNING_PERIOD,
+    CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_ML_LEARNING_PERIOD,
     CONF_MONITORED_ENTITIES,
+    CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_RETRAIN_PERIOD,
     CONF_SENSITIVITY,
@@ -29,7 +31,9 @@ from .const import (
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
+    DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_ML_LEARNING_PERIOD,
+    DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
@@ -37,9 +41,11 @@ from .const import (
     DOMAIN,
     ML_CONTAMINATION,
     SENSITIVITY_THRESHOLDS,
+    SEVERITY_THRESHOLDS,
     STORAGE_KEY,
     STORAGE_VERSION,
     UPDATE_INTERVAL,
+    WELFARE_DEBOUNCE_CYCLES,
 )
 from .ml_analyzer import ML_AVAILABLE, MLAnomalyResult, MLPatternAnalyzer, StateChangeEvent
 
@@ -74,6 +80,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_notification_type: str | None = None
         self._holiday_mode: bool = False
         self._snooze_until: datetime | None = None
+
+        # Suppression state
+        self._notification_cooldowns: dict[tuple[str, str], datetime] = {}
+        # key = (entity_id, anomaly_type), value = last notification time
+        self._welfare_consecutive_cycles: int = 0
+        self._welfare_pending_status: str | None = None
 
         # Get configuration
         sensitivity_key = entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY)
@@ -126,6 +138,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._notify_services: list[str] = entry.data.get(
             CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
+        )
+        self._notification_cooldown: int = int(
+            entry.data.get(CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN)
+        )
+        self._min_notification_severity: str = entry.data.get(
+            CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
         )
 
     @property
@@ -236,6 +254,21 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._snooze_until = None
                         _LOGGER.debug("Snooze expired, not restoring")
 
+                # Restore notification cooldowns
+                raw_cooldowns = coordinator_state.get("notification_cooldowns", {})
+                for key_str, dt_str in raw_cooldowns.items():
+                    parts = key_str.split("|", 1)
+                    if len(parts) == 2:
+                        dt = datetime.fromisoformat(dt_str)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                        self._notification_cooldowns[(parts[0], parts[1])] = dt
+
+                self._welfare_consecutive_cycles = coordinator_state.get(
+                    "welfare_consecutive_cycles", 0
+                )
+                self._welfare_pending_status = coordinator_state.get("welfare_pending_status")
+
                 _LOGGER.debug(
                     "Loaded coordinator state: last_notification=%s, last_welfare=%s, holiday_mode=%s, snoozed=%s",
                     self._last_notification_time,
@@ -333,6 +366,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self._snooze_until
                     else None
                 ),
+                "notification_cooldowns": {
+                    f"{k[0]}|{k[1]}": v.isoformat()
+                    for k, v in self._notification_cooldowns.items()
+                },
+                "welfare_consecutive_cycles": self._welfare_consecutive_cycles,
+                "welfare_pending_status": self._welfare_pending_status,
             },
         }
         await self._store.async_save(storage_data)
