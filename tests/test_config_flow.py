@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,11 +24,9 @@ from custom_components.behaviour_monitor.const import (
     DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_LEARNING_PERIOD,
-    DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_RETRAIN_PERIOD,
     DEFAULT_SENSITIVITY,
-    DOMAIN,
     SEVERITY_SIGNIFICANT,
     SEVERITY_MINOR,
 )
