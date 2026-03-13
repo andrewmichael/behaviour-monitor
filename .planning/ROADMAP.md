@@ -21,7 +21,7 @@
 
 - [x] **Phase 3: Foundation and Routine Model** - Migrate storage, stub deprecated sensors, and build the per-entity baseline learning engine (completed 2026-03-13)
 - [x] **Phase 4: Detection Engines** - Build acute and drift detectors as pure-Python, HA-free components against the routine model API (completed 2026-03-13)
-- [ ] **Phase 5: Integration** - Wire detection engines into coordinator, extend config flow, verify full sensor data contract
+- [x] **Phase 5: Integration** - Wire detection engines into coordinator, extend config flow, verify full sensor data contract (completed 2026-03-13)
 
 ## Phase Details
 
@@ -67,7 +67,7 @@ Plans:
   1. Users can configure history window length, inactivity alert multiplier, and drift sensitivity in the config flow UI — existing v1.0 config entries load without error and receive sensible defaults for the new options
   2. All 14 sensor entity IDs are unchanged — no sensor goes unavailable on upgrade and coordinator.data is never None on first refresh
   3. An acute or drift alert produces a notification via the configured notification service (or persistent_notification fallback), with existing suppression logic (holiday mode, snooze, cooldown, welfare debounce) fully preserved
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 05-01-PLAN.md — Config infrastructure: const.py new keys, v3->v4 migration, config flow rewrite
@@ -82,4 +82,4 @@ Plans:
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
 | 3. Foundation and Routine Model | 4/4 | Complete   | 2026-03-13 | - |
 | 4. Detection Engines | 2/2 | Complete   | 2026-03-13 | - |
-| 5. Integration | 2/3 | In Progress|  | - |
+| 5. Integration | 3/3 | Complete   | 2026-03-13 | - |

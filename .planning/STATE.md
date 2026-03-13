@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-03-13T22:04:49.146Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-03-13T22:11:18.415Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 9
   percent: 0
 ---
 
@@ -59,6 +59,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 05-02]: get_snooze_duration_key() added to coordinator for select.py compat — was missing from initial rewrite
 - [Phase 05-02]: _parse_dt nested try/except: inner catches DEFAULT_TIME_ZONE MagicMock in test env — returns naive datetime as fallback
 - [Phase 05-02]: test_coordinator.py completely rewritten (2129->600 lines, 63 tests) — v1.0 API tests would all fail against v1.1
+- [Phase 05-03]: Removed coord.analyzer shim from coordinator.py once sensor.py was updated — shim was labeled 'removed in Plan 03'
+- [Phase 05-03]: test_config_flow.py completely rewritten for v1.1 keys — old tests submitted ML options that new config flow never accepts
 
 ### Blockers/Concerns
 
@@ -73,6 +75,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T22:04:49.142Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-03-13T22:11:18.411Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
