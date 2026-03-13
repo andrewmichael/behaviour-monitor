@@ -61,24 +61,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ROUTINE-01 | — | Pending |
-| ROUTINE-02 | — | Pending |
-| ROUTINE-03 | — | Pending |
-| ACUTE-01 | — | Pending |
-| ACUTE-02 | — | Pending |
-| ACUTE-03 | — | Pending |
-| DRIFT-01 | — | Pending |
-| DRIFT-02 | — | Pending |
-| DRIFT-03 | — | Pending |
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
+| ROUTINE-01 | Phase 3 | Pending |
+| ROUTINE-02 | Phase 3 | Pending |
+| ROUTINE-03 | Phase 3 | Pending |
+| ACUTE-01 | Phase 4 | Pending |
+| ACUTE-02 | Phase 4 | Pending |
+| ACUTE-03 | Phase 4 | Pending |
+| DRIFT-01 | Phase 4 | Pending |
+| DRIFT-02 | Phase 4 | Pending |
+| DRIFT-03 | Phase 4 | Pending |
+| INFRA-01 | Phase 3 | Pending |
+| INFRA-02 | Phase 3 | Pending |
+| INFRA-03 | Phase 5 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 12 total
-- Mapped to phases: 0
-- Unmapped: 12
+- Mapped to phases: 12
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after initial definition*
+*Last updated: 2026-03-13 after roadmap creation*
