@@ -10,12 +10,17 @@ from homeassistant.core import HomeAssistant, ServiceCall
 import voluptuous as vol
 
 from .const import (
+    CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
+    CONF_INACTIVITY_MULTIPLIER,
     DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_INACTIVITY_MULTIPLIER,
     DOMAIN,
+    SENSITIVITY_MEDIUM,
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_ENABLE_HOLIDAY_MODE,
+    SERVICE_ROUTINE_RESET,
     SERVICE_SNOOZE,
     SNOOZE_DURATIONS,
 )
@@ -33,11 +38,24 @@ _ML_KEYS_REMOVED_V3 = (
     "cross_sensor_window",
 )
 
+# Old sigma/ML keys removed in v1.1 (v3 -> v4)
+_OLD_KEYS_REMOVED_V4 = (
+    "sensitivity",
+    "learning_period",
+    "enable_ml",
+    "retrain_period",
+    "ml_learning_period",
+    "cross_sensor_window",
+    "track_attributes",
+)
+
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate config entry to the current version.
 
     v2 -> v3: Remove ML config keys, add history_window_days.
+    v3 -> v4: Remove remaining old sigma/ML keys, add inactivity_multiplier and
+              drift_sensitivity defaults.
     """
     if config_entry.version < 3:
         new_data = dict(config_entry.data)
@@ -57,6 +75,29 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v3 — ML options removed"
+        )
+
+    if config_entry.version < 4:
+        new_data = dict(config_entry.data)
+
+        # Remove old sigma/ML keys that are no longer used by v1.1
+        for key in _OLD_KEYS_REMOVED_V4:
+            new_data.pop(key, None)
+
+        # Ensure new v1.1 config keys have defaults
+        new_data.setdefault(CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS)
+        new_data.setdefault(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)
+        new_data.setdefault(CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM)
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            version=4,
+        )
+
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v4 — sigma/ML options removed, "
+            "inactivity_multiplier and drift_sensitivity added"
         )
 
     return True
@@ -97,6 +138,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle clear snooze service call."""
         await coordinator.async_clear_snooze()
 
+    async def handle_routine_reset(call: ServiceCall) -> None:
+        """Handle routine reset service call."""
+        entity_id = call.data["entity_id"]
+        await coordinator.async_routine_reset(entity_id)
+
     # Register services for this instance
     hass.services.async_register(
         DOMAIN,
@@ -125,6 +171,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         handle_clear_snooze,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ROUTINE_RESET,
+        handle_routine_reset,
+        schema=vol.Schema({vol.Required("entity_id"): str}),
+    )
+
     # Register update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -151,6 +204,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_DISABLE_HOLIDAY_MODE)
         hass.services.async_remove(DOMAIN, SERVICE_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SNOOZE)
+        hass.services.async_remove(DOMAIN, SERVICE_ROUTINE_RESET)
 
         # Remove from hass data
         hass.data[DOMAIN].pop(entry.entry_id)
