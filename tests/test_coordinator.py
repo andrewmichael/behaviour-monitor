@@ -1770,6 +1770,66 @@ class TestRecorderBootstrap:
 
         assert bootstrap_called is False
 
+    def test_history_window_days_reads_correct_config_key(
+        self, mock_hass: MagicMock
+    ) -> None:
+        """Coordinator reads history_window_days (v3 key), not learning_period (v1 key)."""
+        from unittest.mock import MagicMock
+
+        class _MockEntry:
+            entry_id = "test_key_check"
+            data = {
+                "history_window_days": 14,
+                "monitored_entities": ["sensor.test1"],
+            }
+            options = {}
+            add_update_listener = MagicMock(return_value=MagicMock())
+            async_on_unload = MagicMock()
+
+        coordinator = BehaviourMonitorCoordinator(mock_hass, _MockEntry())
+        # If the old CONF_LEARNING_PERIOD key were used, the default (7 days) would be
+        # returned because "learning_period" is not in the data dict above.
+        assert coordinator._history_window_days == 14
+
+    async def test_bootstrap_partial_history(
+        self, mock_hass: MagicMock
+    ) -> None:
+        """14 days of history against a 28-day window yields confidence ~0.5."""
+        from unittest.mock import MagicMock
+
+        # Reference time: a fixed "now" so confidence calculation is deterministic.
+        reference_now = datetime(2024, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        start_of_history = reference_now - timedelta(days=14)
+
+        class _MockEntry:
+            entry_id = "test_partial"
+            data = {
+                "history_window_days": 28,
+                "monitored_entities": ["sensor.test1"],
+            }
+            options = {}
+            add_update_listener = MagicMock(return_value=MagicMock())
+            async_on_unload = MagicMock()
+
+        coordinator = BehaviourMonitorCoordinator(mock_hass, _MockEntry())
+
+        # Generate ~10 binary events per day across 14 days (140 total events).
+        states = _make_binary_states(
+            "sensor.test1",
+            count=140,
+            start=start_of_history,
+            interval_hours=2.4,  # 24h / 10 events ≈ 2.4h spacing
+        )
+        recorder_result = {"sensor.test1": states}
+
+        await self._run_bootstrap(coordinator, recorder_result)
+
+        confidence = coordinator._routine_model.overall_confidence(reference_now)
+        # 14 days elapsed out of 28-day window → confidence ≈ 0.5 (range 0.4–0.6).
+        assert 0.4 <= confidence <= 0.6, (
+            f"Expected confidence ~0.5 for 14/28 days, got {confidence}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helper: load the v2 storage fixture

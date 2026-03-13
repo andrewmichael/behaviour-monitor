@@ -19,6 +19,7 @@ from .const import (
     CONF_CROSS_SENSOR_WINDOW,
     CONF_ENABLE_ML,
     CONF_ENABLE_NOTIFICATIONS,
+    CONF_HISTORY_WINDOW_DAYS,
     CONF_LEARNING_PERIOD,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_ML_LEARNING_PERIOD,
@@ -88,7 +89,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # v1.1 RoutineModel — initialized empty, populated in async_setup
         self._history_window_days: int = int(
-            entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_HISTORY_WINDOW_DAYS)
+            entry.data.get(CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS)
         )
         self._routine_model: RoutineModel = RoutineModel(
             history_window_days=self._history_window_days
