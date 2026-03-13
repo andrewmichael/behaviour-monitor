@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -49,6 +50,17 @@ from .const import (
 )
 from .ml_analyzer import ML_AVAILABLE, MLAnomalyResult, MLPatternAnalyzer, StateChangeEvent
 from .routine_model import DEFAULT_HISTORY_WINDOW_DAYS, RoutineModel, is_binary_state
+
+# Recorder imports — resolved at module level so tests can patch them by name.
+# These will always be available in a real HA environment.
+try:
+    from homeassistant.components.recorder import get_instance as recorder_get_instance
+    from homeassistant.components.recorder.history import (
+        state_changes_during_period as recorder_state_changes_during_period,
+    )
+except ImportError:  # pragma: no cover
+    recorder_get_instance = None  # type: ignore[assignment]
+    recorder_state_changes_during_period = None  # type: ignore[assignment]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -339,6 +351,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "This sensor always returns 0."
         )
 
+        # Bootstrap RoutineModel from recorder history if model is empty
+        if not self._routine_model._entities:
+            _LOGGER.info(
+                "Bootstrap: RoutineModel is empty, loading historical data from recorder"
+            )
+            await self._bootstrap_from_recorder()
+            # Persist bootstrapped model immediately
+            await self._save_data()
+
         # Subscribe to state changes
         self._unsubscribe_state_changed = self.hass.bus.async_listen(
             EVENT_STATE_CHANGED, self._handle_state_changed
@@ -419,6 +440,81 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug(
                 "Behaviour Monitor: ML store cleanup skipped: %s", err
+            )
+
+    async def _bootstrap_from_recorder(self) -> None:
+        """Populate RoutineModel from HA recorder history.
+
+        Loads up to _history_window_days of historical state changes per
+        monitored entity and records them into the RoutineModel. This runs
+        once on first setup (when the model is empty) so that the integration
+        starts with a reasonable baseline immediately.
+
+        Errors from the recorder are caught per entity and logged as warnings
+        so that a single unavailable entity does not block the rest.
+        """
+        get_instance = recorder_get_instance
+        state_changes_fn = recorder_state_changes_during_period
+        if get_instance is None:
+            _LOGGER.warning(
+                "Bootstrap: recorder API not available, starting with empty RoutineModel"
+            )
+            return
+
+        now = datetime.now(tz=timezone.utc)
+        start = now - timedelta(days=self._history_window_days)
+
+        any_loaded = False
+
+        for entity_id in self._monitored_entities:
+            try:
+                result: dict = await recorder_get_instance(self.hass).async_add_executor_job(
+                    recorder_state_changes_during_period,
+                    self.hass,
+                    start,
+                    now,
+                    entity_id,
+                    True,
+                    True,
+                )
+                states = result.get(entity_id, []) if result else []
+
+                # Determine entity type from the first valid (non-unavailable) state
+                is_binary = True  # default to binary if we cannot determine
+                for s in states:
+                    if s.state not in ("unavailable", "unknown") and s.state is not None:
+                        is_binary = is_binary_state(s.state)
+                        break
+
+                recorded = 0
+                for s in states:
+                    if s.state in ("unavailable", "unknown") or s.state is None:
+                        continue
+                    self._routine_model.record(
+                        entity_id=entity_id,
+                        timestamp=s.last_changed,
+                        state_value=s.state,
+                        is_binary=is_binary,
+                    )
+                    recorded += 1
+
+                _LOGGER.debug(
+                    "Bootstrap: loaded %d states for %s", recorded, entity_id
+                )
+                if recorded > 0:
+                    any_loaded = True
+
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Bootstrap: failed to load history for %s: %s", entity_id, err
+                )
+
+            await asyncio.sleep(0)  # stagger between entities
+
+        if not any_loaded:
+            _LOGGER.warning(
+                "Bootstrap: no historical state data found for monitored entities. "
+                "RoutineModel will start empty and build from live events."
             )
 
     async def _check_retrain(self) -> None:

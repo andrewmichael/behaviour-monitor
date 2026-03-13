@@ -1659,14 +1659,15 @@ class TestRecorderBootstrap:
     ) -> None:
         """Bootstrap detects numeric entity type from numeric state strings."""
         start = datetime(2024, 1, 15, 9, 0, 0)
+        # Use "sensor.test1" which is a monitored entity in mock_config_entry
         states = [
-            _FakeState("sensor.temp", "21.5", start + timedelta(hours=i))
+            _FakeState("sensor.test1", "21.5", start + timedelta(hours=i))
             for i in range(4)
         ]
-        recorder_result = {"sensor.temp": states}
+        recorder_result = {"sensor.test1": states}
         await self._run_bootstrap(coordinator, recorder_result)
 
-        entity = coordinator._routine_model._entities.get("sensor.temp")
+        entity = coordinator._routine_model._entities.get("sensor.test1")
         assert entity is not None
         assert entity.is_binary is False
 
