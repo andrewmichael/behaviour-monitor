@@ -6,15 +6,11 @@ implementation. Tests will fail until drift_detector.py is created.
 
 from __future__ import annotations
 
-import statistics
-from collections import deque
 from datetime import date, datetime, timezone
-from typing import Any
 
 import pytest
 
 from custom_components.behaviour_monitor.routine_model import (
-    ActivitySlot,
     EntityRoutine,
 )
 
@@ -190,7 +186,6 @@ class TestDriftDetectorBasic:
     def test_returns_none_insufficient_history(self) -> None:
         """check() returns None when fewer than MIN_EVIDENCE_DAYS baseline dates."""
         from custom_components.behaviour_monitor.drift_detector import DriftDetector
-        from custom_components.behaviour_monitor.const import MIN_EVIDENCE_DAYS
 
         # Only 2 days of history (less than MIN_EVIDENCE_DAYS=3)
         routine = _build_routine_with_history("sensor.test", [5, 4])
@@ -245,12 +240,11 @@ class TestCUSUMAccumulation:
     def test_stable_signal_no_alert(self) -> None:
         """14 days at constant baseline rate produces zero alerts (no false positives)."""
         from custom_components.behaviour_monitor.drift_detector import DriftDetector
-        from datetime import timedelta
 
         # 14 days of stable data; check each of last 7 days (excluding baseline)
         # Build routine with 21 days so we have 14-day baseline + 7 check days
         base = date(2024, 1, 21)
-        routine = _build_routine_with_history("sensor.stable", [5] * 21, base_date=base)
+        _build_routine_with_history("sensor.stable", [5] * 21, base_date=base)
 
         detector = DriftDetector(sensitivity="medium")
         # Simulate checking day by day for 7 days at stable rate
@@ -316,7 +310,6 @@ class TestCUSUMAccumulation:
         from datetime import timedelta
 
         baseline_rate = 10
-        shifted_rate = 0  # well below baseline
 
         detector = DriftDetector(sensitivity="medium")
         alert_result = None
@@ -339,7 +332,7 @@ class TestCUSUMAccumulation:
 
     def test_requires_3_day_evidence_window(self) -> None:
         """Alert fires only after days_above_threshold >= 3 (MIN_EVIDENCE_DAYS)."""
-        from custom_components.behaviour_monitor.drift_detector import DriftDetector, CUSUMState
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
         from datetime import timedelta
 
         detector = DriftDetector(sensitivity="medium")
@@ -369,36 +362,39 @@ class TestCUSUMAccumulation:
         assert state.days_above_threshold >= 3 or True  # may have fired already
 
     def test_transient_spike_clears(self) -> None:
-        """days_above_threshold resets to 0 when CUSUM drops below threshold."""
-        from custom_components.behaviour_monitor.drift_detector import DriftDetector, CUSUMState
+        """days_above_threshold resets to 0 when CUSUM drops below threshold.
+
+        We set the CUSUM state directly to just above h with a small s_pos value,
+        then simulate a day at baseline. After one sub-threshold day, the counter
+        should reset to 0 regardless of what caused the prior accumulation.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
         from datetime import timedelta
 
-        detector = DriftDetector(sensitivity="medium")
+        detector = DriftDetector(sensitivity="medium")  # k=0.5, h=4.0
         entity_id = "sensor.transient"
         baseline_rate = 5
 
-        # Day 1: spike (CUSUM exceeds h -> days_above_threshold = 1)
-        check_date_1 = date(2024, 4, 1)
-        now_1 = datetime(2024, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
-        routine_1 = _build_routine_with_history(entity_id, [baseline_rate] * 14, base_date=check_date_1 - timedelta(days=1))
-        for i in range(20):
-            ts = datetime(2024, 4, 1, i % 24, i % 60, 0, tzinfo=timezone.utc)
-            routine_1.record(ts, "on")
-        detector.check(entity_id, routine_1, check_date_1, now_1)
+        # Manually prime the state so CUSUM is just above h
+        state = detector.get_or_create_state(entity_id)
+        state.s_pos = 4.5  # just above h=4.0
+        state.days_above_threshold = 1
+        state.last_update_date = "2024-04-01"
 
-        # Day 2: returns to baseline (CUSUM drops -> days_above_threshold resets to 0)
+        # Day 2: returns to baseline — z will be 0, so s_pos drops by k=0.5 to 4.0
+        # 4.0 is NOT > 4.0 (strict), so days_above_threshold resets to 0
         check_date_2 = date(2024, 4, 2)
         now_2 = datetime(2024, 4, 2, 14, 0, 0, tzinfo=timezone.utc)
         routine_2 = _build_routine_with_history(entity_id, [baseline_rate] * 14, base_date=check_date_2 - timedelta(days=1))
-        # Only baseline_rate events today
+        # Today has exactly baseline_rate events
         for i in range(baseline_rate):
             ts = datetime(2024, 4, 2, i % 24, i % 60, 0, tzinfo=timezone.utc)
             routine_2.record(ts, "on")
         detector.check(entity_id, routine_2, check_date_2, now_2)
 
-        state = detector.get_or_create_state(entity_id)
-        assert state.days_above_threshold == 0, (
-            f"Expected days_above_threshold=0 after returning to baseline, got {state.days_above_threshold}"
+        state_after = detector.get_or_create_state(entity_id)
+        assert state_after.days_above_threshold == 0, (
+            f"Expected days_above_threshold=0 after returning to baseline, got {state_after.days_above_threshold}"
         )
 
     def test_cusum_params_1sigma_medium_sensitivity(self) -> None:
@@ -447,7 +443,7 @@ class TestRoutineReset:
 
     def test_reset_entity_clears_accumulator(self) -> None:
         """reset_entity() clears s_pos, s_neg, days_above_threshold for the entity."""
-        from custom_components.behaviour_monitor.drift_detector import DriftDetector, CUSUMState
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
 
         detector = DriftDetector()
         state = detector.get_or_create_state("sensor.a")
@@ -601,7 +597,7 @@ class TestDriftDetectorSerialization:
 
     def test_drift_detector_serialization_roundtrip(self) -> None:
         """Full detector with multiple entities serializes and restores correctly."""
-        from custom_components.behaviour_monitor.drift_detector import DriftDetector, CUSUMState
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
 
         detector = DriftDetector(sensitivity="high")
         # Manually populate state for two entities
