@@ -10,7 +10,7 @@ Requirements for Detection Rebuild milestone. Each maps to roadmap phases.
 ### Routine Model
 
 - [x] **ROUTINE-01**: System learns per-entity behavior baselines using 168 hour-of-day x day-of-week slots from a configurable rolling history window (default 4 weeks)
-- [ ] **ROUTINE-02**: System bootstraps routine model from existing HA recorder history on first load, enabling immediate detection for existing installations
+- [x] **ROUTINE-02**: System bootstraps routine model from existing HA recorder history on first load, enabling immediate detection for existing installations
 - [x] **ROUTINE-03**: System uses event frequency/timing for binary entities (motion, door) and value distributions for numeric entities (temperature, power)
 
 ### Acute Detection
@@ -62,7 +62,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ROUTINE-01 | Phase 3 | Complete |
-| ROUTINE-02 | Phase 3 | Pending |
+| ROUTINE-02 | Phase 3 | Complete |
 | ROUTINE-03 | Phase 3 | Complete |
 | ACUTE-01 | Phase 4 | Pending |
 | ACUTE-02 | Phase 4 | Pending |

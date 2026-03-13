@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Completed 03-02-PLAN.md (Migration and Sensor Deprecation)
-last_updated: "2026-03-13T19:37:36.869Z"
+stopped_at: Completed 03-03-PLAN.md (Coordinator migration, ML cleanup, recorder bootstrap)
+last_updated: "2026-03-13T19:40:53.872Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -47,6 +47,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 03-01]: ISO timestamp strings in deque (not datetime objects) — zero HA dependency in routine_model.py confirmed
 - [Phase 03]: ML constants kept in const.py until coordinator is rewritten in Plan 03
 - [Phase 03]: async_migrate_entry uses dict copy + pop pattern, never mutates config_entry.data directly, per HA developer docs
+- [Phase 03]: Bootstrap only runs when RoutineModel._entities is empty — prevents re-bootstrap on every startup
+- [Phase 03]: Guard _bootstrap_from_recorder on recorder_get_instance only (not state_changes_fn) for test patchability
 
 ### Blockers/Concerns
 
@@ -61,6 +63,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T19:37:36.865Z
-Stopped at: Completed 03-02-PLAN.md (Migration and Sensor Deprecation)
+Last session: 2026-03-13T19:40:53.869Z
+Stopped at: Completed 03-03-PLAN.md (Coordinator migration, ML cleanup, recorder bootstrap)
 Resume file: None

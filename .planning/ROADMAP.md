@@ -19,7 +19,7 @@
 
 **Milestone Goal:** Replace z-score/ML analyzers with routine-based detection — acute events and drift tracking — so anomaly alerts represent genuinely unusual behavior rather than bucket-based statistical noise.
 
-- [ ] **Phase 3: Foundation and Routine Model** - Migrate storage, stub deprecated sensors, and build the per-entity baseline learning engine
+- [x] **Phase 3: Foundation and Routine Model** - Migrate storage, stub deprecated sensors, and build the per-entity baseline learning engine (completed 2026-03-13)
 - [ ] **Phase 4: Detection Engines** - Build acute and drift detectors as pure-Python, HA-free components against the routine model API
 - [ ] **Phase 5: Integration** - Wire detection engines into coordinator, extend config flow, verify full sensor data contract
 
@@ -35,7 +35,7 @@
   3. After startup, the routine model bootstraps from HA recorder history — an existing installation with weeks of data begins with a populated baseline rather than a cold-start blank slate
   4. The routine model tracks per-entity baselines using 168 hour-of-day x day-of-week slots, distinguishing binary event-interval patterns from numeric value distributions
   5. When the routine model has insufficient history to make confident predictions, the system surfaces an explicit "detection inactive" status rather than silently producing no alerts
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 03-01-PLAN.md — RoutineModel TDD (pure-Python baseline learning engine with 168 slots)
@@ -70,6 +70,6 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Coordinator Suppression | v1.0 | 2/2 | Complete | 2026-03-13 |
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
-| 3. Foundation and Routine Model | 2/3 | In Progress|  | - |
+| 3. Foundation and Routine Model | 3/3 | Complete   | 2026-03-13 | - |
 | 4. Detection Engines | v1.1 | 0/? | Not started | - |
 | 5. Integration | v1.1 | 0/? | Not started | - |
