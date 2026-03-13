@@ -484,7 +484,13 @@ class TestEMASmoothing:
     """Tests for EMA-based score smoothing in check_anomaly()."""
 
     def test_spike_suppressed(self) -> None:
-        """Single spike score should be smoothed and not produce an anomaly."""
+        """Single spike score should be smoothed and not produce an anomaly.
+
+        With prior EMA of 0.5 and a spike score of 0.99:
+        smoothed = 0.3 * 0.99 + 0.7 * 0.5 = 0.647 < threshold of 0.98 → no anomaly.
+        """
+        import custom_components.behaviour_monitor.ml_analyzer as ml_mod
+
         # contamination=0.02 → threshold=0.98
         analyzer = MLPatternAnalyzer(contamination=0.02)
 
@@ -496,20 +502,32 @@ class TestEMASmoothing:
         mock_model = MagicMock()
         mock_model.score_one.return_value = 0.99
         analyzer._model = mock_model
-        # Force is_trained check to pass
         analyzer._samples_processed = 200
 
         event = StateChangeEvent(
             entity_id="sensor.test",
             timestamp=datetime.now(timezone.utc),
         )
-        result = analyzer.check_anomaly(event)
 
-        # smoothed = 0.3 * 0.99 + 0.7 * 0.5 = 0.297 + 0.35 = 0.647 < 0.98
+        # Patch ML_AVAILABLE so is_trained property returns True and EMA logic runs
+        original_ml_available = ml_mod.ML_AVAILABLE
+        try:
+            ml_mod.ML_AVAILABLE = True  # type: ignore[assignment]
+            result = analyzer.check_anomaly(event)
+        finally:
+            ml_mod.ML_AVAILABLE = original_ml_available  # type: ignore[assignment]
+
+        # smoothed = 0.3 * 0.99 + 0.7 * 0.5 = 0.297 + 0.35 = 0.647 < 0.98 → no anomaly
         assert result is None
 
     def test_sustained_anomaly_detected(self) -> None:
-        """Repeated high scores should push EMA above threshold."""
+        """Repeated high scores should push EMA above threshold.
+
+        River may not be installed in the test environment, so ML_AVAILABLE may be False.
+        We patch ML_AVAILABLE to True temporarily to exercise the EMA logic path.
+        """
+        import custom_components.behaviour_monitor.ml_analyzer as ml_mod
+
         # contamination=0.02 → threshold=0.98
         analyzer = MLPatternAnalyzer(contamination=0.02)
 
@@ -521,17 +539,25 @@ class TestEMASmoothing:
 
         ts_base = datetime.now(timezone.utc)
         found_anomaly = False
-        for i in range(10):
-            event = StateChangeEvent(
-                entity_id="sensor.test",
-                timestamp=ts_base + timedelta(seconds=i),
-            )
-            result = analyzer.check_anomaly(event)
-            if result is not None:
-                found_anomaly = True
-                break
 
-        # After enough iterations EMA should converge above 0.98
+        # Patch ML_AVAILABLE so is_trained property returns True
+        original_ml_available = ml_mod.ML_AVAILABLE
+        try:
+            ml_mod.ML_AVAILABLE = True  # type: ignore[assignment]
+            for i in range(10):
+                event = StateChangeEvent(
+                    entity_id="sensor.test",
+                    timestamp=ts_base + timedelta(seconds=i),
+                )
+                result = analyzer.check_anomaly(event)
+                if result is not None:
+                    found_anomaly = True
+                    break
+        finally:
+            ml_mod.ML_AVAILABLE = original_ml_available  # type: ignore[assignment]
+
+        # With score=0.99 always, first iteration: prev_ema = 0.99 (default=score),
+        # smoothed = 0.3*0.99 + 0.7*0.99 = 0.99 > 0.98 → anomaly detected on first call
         assert found_anomaly, "Expected at least one anomaly after 10 consecutive high scores"
 
     def test_ema_serialization(self) -> None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .const import MIN_SAMPLES_FOR_ML
+from .const import ML_EMA_ALPHA, MIN_CROSS_SENSOR_OCCURRENCES, MIN_SAMPLES_FOR_ML
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,6 +153,8 @@ class MLPatternAnalyzer:
         self._first_event_at: datetime | None = None  # When first event was recorded
         self._became_effective_at: datetime | None = None  # When model reached min samples
         self._last_warmup: datetime | None = None  # When train() was last called
+        self._score_ema: dict[str, float] = {}  # EMA of anomaly scores per entity (ML-03)
+        self._ema_alpha: float = ML_EMA_ALPHA  # EMA smoothing factor
 
         # Initialize model if River is available
         if ML_AVAILABLE:
@@ -468,19 +470,25 @@ class MLPatternAnalyzer:
         # Get anomaly score (0 to 1, higher = more anomalous)
         score = self._model.score_one(features)
 
+        # EMA smoothing to prevent single-spike false positives (ML-03)
+        entity_id = event.entity_id
+        prev_ema = self._score_ema.get(entity_id, score)
+        smoothed = self._ema_alpha * score + (1 - self._ema_alpha) * prev_ema
+        self._score_ema[entity_id] = smoothed
+
         # Use contamination as threshold
         # Higher contamination = lower threshold = more anomalies flagged
         threshold = 1.0 - self._contamination
 
-        if score > threshold:
+        if smoothed > threshold:
             return MLAnomalyResult(
                 is_anomaly=True,
                 entity_id=event.entity_id,
-                anomaly_score=score,
+                anomaly_score=smoothed,
                 anomaly_type="half_space_trees",
                 description=(
                     f"Unusual activity pattern detected for {event.entity_id} "
-                    f"(ML score: {score:.3f}, threshold: {threshold:.3f})"
+                    f"(ML score: {smoothed:.3f}, threshold: {threshold:.3f})"
                 ),
                 timestamp=event.timestamp,
             )
@@ -499,10 +507,10 @@ class MLPatternAnalyzer:
         anomalies: list[MLAnomalyResult] = []
         now = datetime.now(timezone.utc)
 
-        # Get strong patterns (correlation > 0.5)
+        # Get strong patterns (correlation > 0.5, minimum co-occurrences required)
         strong_patterns = [
             p for p in self._cross_sensor_patterns.values()
-            if p.correlation_strength > 0.5 and p.co_occurrence_count >= 10
+            if p.correlation_strength > 0.5 and p.co_occurrence_count >= MIN_CROSS_SENSOR_OCCURRENCES
         ]
 
         if not strong_patterns:
@@ -620,6 +628,7 @@ class MLPatternAnalyzer:
                 self._last_warmup.isoformat()
                 if self._last_warmup else None
             ),
+            "score_ema": dict(self._score_ema),
         }
 
     @classmethod
@@ -682,6 +691,9 @@ class MLPatternAnalyzer:
         # Rebuild entity last change map
         for event in analyzer._events:
             analyzer._entity_last_change[event.entity_id] = event.timestamp
+
+        # Restore EMA state
+        analyzer._score_ema = data.get("score_ema", {})
 
         # Warm up the model with historical data if we have enough
         if len(analyzer._events) >= MIN_SAMPLES_FOR_ML:
