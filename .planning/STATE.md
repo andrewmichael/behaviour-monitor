@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
 stopped_at: Completed 03-04-PLAN.md (Config key fix for RoutineModel history window + partial history confidence tests)
-last_updated: "2026-03-13T19:57:25.863Z"
+last_updated: "2026-03-13T20:00:32.159Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
