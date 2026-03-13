@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 01-coordinator-suppression 01-02-PLAN.md
-last_updated: "2026-03-13T11:14:23.204Z"
+stopped_at: Completed 02-analyzer-tightening 02-01-PLAN.md
+last_updated: "2026-03-13T12:19:43.493Z"
 last_activity: "2026-03-13 — Plan 02 complete: _should_notify(), severity gate, per-entity cooldown, cross-path dedup, welfare debounce"
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 5
+  completed_plans: 3
   percent: 100
 ---
 
@@ -50,6 +50,7 @@ Progress: [██████████] 100%
 - Trend: Faster (TDD green phase quicker than scaffold phase)
 
 *Updated after each plan completion*
+| Phase 02-analyzer-tightening P01 | 240 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,9 @@ Recent decisions affecting current work:
 - [Phase 01-coordinator-suppression Plan 02]: notifiable_anomalies initialized before stat block so always in scope for ML cross-path dedup
 - [Phase 01-coordinator-suppression Plan 02]: Cooldown pruning uses unfiltered stat_anomalies set (not notifiable_anomalies) to ensure reset fires even when stat_learning_complete is False
 - [Phase 01-coordinator-suppression Plan 02]: Welfare debounce applies symmetrically to escalation and de-escalation
+- [Phase 02-analyzer-tightening]: MIN_BUCKET_OBSERVATIONS=3 subsumed STAT-02 near-zero-mean guard; count guard is strictly stronger
+- [Phase 02-analyzer-tightening]: SENSITIVITY_MEDIUM raised to 2.5 sigma: reduces false positive rate from ~4.5% to ~1.2%
+- [Phase 02-analyzer-tightening]: float('inf') z-score cap uses sensitivity_threshold+1 (not magic number) to stay tied to current config
 
 ### Pending Todos
 
@@ -79,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13T12:00:00.000Z
-Stopped at: Completed 01-coordinator-suppression 01-02-PLAN.md
+Last session: 2026-03-13T12:19:43.490Z
+Stopped at: Completed 02-analyzer-tightening 02-01-PLAN.md
 Resume file: None
