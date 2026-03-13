@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns routines from a mix of entity types (motion, doors, lights, climate, power) and provides two detection modes: acute alerts when something out of character happens right now (e.g., someone may have fallen), and drift alerts when behavior persistently changes over days or weeks.
+A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns per-entity routines from a mix of entity types (motion, doors, lights, climate, power) using 168 hour-of-day × day-of-week slots. Provides two detection modes: acute alerts for out-of-character events happening right now (inactivity, unusual timing), and drift alerts when behavior persistently changes over days or weeks (CUSUM change-point detection).
 
 ## Core Value
 
@@ -12,63 +12,55 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Validated
 
-- ✓ Statistical anomaly detection using z-score on 672 time buckets (7 days x 96 intervals) — existing
-- ✓ Optional ML anomaly detection using River Half-Space Trees — existing
-- ✓ Cross-sensor correlation pattern detection — existing
-- ✓ Configurable sensitivity levels (Low/Medium/High) — existing
-- ✓ Learning period before detection activates — existing
-- ✓ Holiday mode to suppress monitoring — existing
-- ✓ Snooze functionality to temporarily suppress alerts — existing
-- ✓ Persistent storage of patterns and ML models — existing
-- ✓ 14 sensor types exposed to Home Assistant — existing
-- ✓ Notification via configured services or persistent_notification — existing
-- ✓ Welfare status assessment — existing
-- ✓ Config flow UI for entity selection and settings — existing
 - ✓ Per-entity notification cooldown — v1.0
 - ✓ Anomaly deduplication and cross-path merge — v1.0
 - ✓ Severity minimum gate for notifications — v1.0
 - ✓ Welfare status debounce (3-cycle hysteresis) — v1.0
-- ✓ Sparse-bucket observation guard (MIN_BUCKET_OBSERVATIONS=3) — v1.0
-- ✓ Raised default sensitivity (MEDIUM 2.0σ → 2.5σ) — v1.0
-- ✓ Per-entity adaptive thresholds via coefficient of variation — v1.0
-- ✓ ML EMA score smoothing (α=0.3) — v1.0
-- ✓ Tightened ML contamination values — v1.0
-- ✓ Cross-sensor co-occurrence threshold raised to 30 — v1.0
+- ✓ Routine model that learns expected behavior per entity from configurable history window — v1.1
+- ✓ Acute detection engine — flags out-of-character events with configurable inactivity threshold — v1.1
+- ✓ Drift detection engine — detects persistent behavior changes via CUSUM — v1.1
+- ✓ Rebuilt coordinator wiring routine model, acute detection, and drift detection — v1.1
+- ✓ Support for binary entities (motion, doors) and numeric entities (climate, power) — v1.1
+- ✓ Config flow options for history window, inactivity multiplier, and drift sensitivity — v1.1
+- ✓ Graceful config migration from v1.0 through v4 — v1.1
+- ✓ Bootstrap routine model from HA recorder history on first load — v1.1
+- ✓ Deprecated ML sensors preserved as stubs (no broken automations) — v1.1
+- ✓ 14 sensor entity IDs remain stable across upgrades — v1.1
+- ✓ Pure Python — no River ML or external dependencies required — v1.1
 
 ### Active
 
-- [ ] Routine model that learns expected behavior per entity from configurable history window (default 4 weeks)
-- [ ] Acute detection engine — flags out-of-character events in real time with configurable inactivity threshold
-- [ ] Drift detection engine — detects persistent behavior changes over days/weeks
-- [ ] New coordinator to manage routine learning, both detection engines, and notifications
-- [ ] Support for binary entities (motion, doors) and numeric entities (climate, power)
-- [ ] Config flow options for history window and alert thresholds
+(None — define in next milestone via `/gsd:new-milestone`)
 
 ### Out of Scope
 
 - Daily digest or summary notifications — may revisit in future milestone
 - Offline mode — real-time monitoring is core value
-- Keeping the old z-score/ML analyzer code — being replaced entirely
-
-## Current Milestone: v1.1 Detection Rebuild
-
-**Goal:** Replace z-score/ML analyzers and coordinator with routine-based detection — acute events + drift tracking.
-
-**Target features:**
-- Routine model learning from configurable history (default 4 weeks)
-- Acute detection with configurable inactivity thresholds
-- Drift detection via change point analysis
-- Rebuilt coordinator for new detection engines
-- Support for binary + numeric entity types
+- Per-entity sensitivity tuning UI — future milestone
+- Cross-entity routine correlation — future milestone
+- Seasonal pattern adjustment — future milestone
+- Population-based norms — privacy concern; per-individual learning only
+- Deep learning models — complexity/dependency overhead; pure Python constraint
 
 ## Context
 
-Shipped v1.0 with 8,827 LOC Python. Despite v1.0 false positive reduction work (FP rate from ~4.5% to ~1.2%), the z-score bucket approach is fundamentally noisy for home automation data — human behavior is too irregular for fixed time buckets. Decision: replace analyzers entirely with routine-based detection that requires sustained evidence before alerting.
+Shipped v1.1 with 7,934 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 343 tests passing.
 
-Keeping: sensors (14 types), config flow (extended), storage layer, HA integration shell.
-Replacing: analyzer.py, ml_analyzer.py, coordinator.py.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies).
 
-Tech stack: Home Assistant custom integration, Python async. River ML dependency being removed.
+Architecture:
+- `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics)
+- `acute_detector.py` — inactivity and unusual-time detection with sustained-evidence gating
+- `drift_detector.py` — bidirectional CUSUM change-point detection
+- `coordinator.py` — 348-line DataUpdateCoordinator wiring all engines
+- `sensor.py` — 14 sensor entity descriptions
+- `config_flow.py` — v4 config with history window, inactivity multiplier, drift sensitivity
+- `__init__.py` — service registration (holiday, snooze, routine_reset), config migration chain
+
+Known tech debt (from v1.1 audit):
+- Post-bootstrap `_save_data()` missing in coordinator — re-bootstrap risk on immediate restart
+- Legacy constants dead code in const.py (lines 129-184)
+- Coordinator emits unused stub keys for deprecated sensors
 
 ## Constraints
 
@@ -84,9 +76,13 @@ Tech stack: Home Assistant custom integration, Python async. River ML dependency
 |----------|-----------|---------|
 | Tune both analyzers | User reports false positives from both/unknown source | ✓ Good — both needed tightening |
 | Focus on thresholds and logic, not architecture | Existing dual-analyzer approach is sound; sensitivity is the issue | ⚠️ Revisit — FPs still too high, approach itself is the problem |
-| Replace z-score/ML with routine-based detection | Bucket-based z-scores are fundamentally noisy for irregular human behavior | — Pending |
-| Drop River ML dependency | Routine model replaces ML; pure Python reduces install friction | — Pending |
-| Two detection modes (acute + drift) | Different problems need different engines: immediate events vs gradual changes | — Pending |
+| Replace z-score/ML with routine-based detection | Bucket-based z-scores are fundamentally noisy for irregular human behavior | ✓ Good — routine model + sustained evidence = dramatically fewer false positives |
+| Drop River ML dependency | Routine model replaces ML; pure Python reduces install friction | ✓ Good — zero external dependencies, simpler install |
+| Two detection modes (acute + drift) | Different problems need different engines: immediate events vs gradual changes | ✓ Good — clean separation, independently testable |
+| HA-free detection components | Enable testing without mocking HA infrastructure | ✓ Good — 86 pure-Python tests run in 0.23s |
+| Coordinator rewrite (not patch) | Old 1,213 lines shared almost no code with target architecture | ✓ Good — 348 lines, clean wiring |
+| Sustained evidence gating (3 cycles) | Single-observation alerts are too noisy for home automation | ✓ Good — eliminates single-point false positives |
+| Bidirectional CUSUM for drift | Detects both increases and decreases in activity | ✓ Good — catches both "stopped going outside" and "new nighttime activity" |
 
 ---
-*Last updated: 2026-03-13 after v1.1 milestone start*
+*Last updated: 2026-03-13 after v1.1 milestone*
