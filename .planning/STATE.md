@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Detection Rebuild
 status: planning
-stopped_at: Phase 5 context gathered
-last_updated: "2026-03-13T21:12:16.143Z"
+stopped_at: Completed 05-integration-01-PLAN.md
+last_updated: "2026-03-13T21:38:18.872Z"
 last_activity: 2026-03-13 — Roadmap created, 3 phases defined (3, 4, 5), 12/12 requirements mapped
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 9
+  completed_plans: 7
   percent: 0
 ---
 
@@ -54,6 +54,8 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 - [Phase 04-01]: AcuteDetector per-entity counter dicts reset to 0 on every not-met code path (research Pitfall 2 compliance)
 - [Phase 04-detection-engines]: Stdev=0 fallback to max(1.0, baseline_mean*0.1): preserves sensitivity for low-count signals; avoids infinite z-scores on constant signals
 - [Phase 04-detection-engines]: reset() preserves last_update_date: prevents double-processing same day if reset_entity() and check() called in same coordinator cycle
+- [Phase 05-integration]: Legacy constants (SENSITIVITY_THRESHOLDS, ML_CONTAMINATION, etc.) retained in const.py until old analyzer/coordinator are replaced in Plan 02
+- [Phase 05-integration]: Migration chaining: v2->v3->v4 in single async_migrate_entry with independent version guards
 
 ### Blockers/Concerns
 
@@ -68,6 +70,6 @@ See PROJECT.md Key Decisions table for full log. Key decisions affecting current
 
 ## Session Continuity
 
-Last session: 2026-03-13T21:12:16.139Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-integration/05-CONTEXT.md
+Last session: 2026-03-13T21:38:18.869Z
+Stopped at: Completed 05-integration-01-PLAN.md
+Resume file: None
