@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .const import MIN_BUCKET_OBSERVATIONS
+from .const import MAX_VARIANCE_MULTIPLIER, MIN_BUCKET_OBSERVATIONS
 
 # 15-minute intervals per day (96 buckets)
 INTERVALS_PER_DAY = 96
@@ -420,6 +420,28 @@ class PatternAnalyzer:
         score = min(100.0, (total_actual / total_expected) * 100)
         return score
 
+    def _get_variance_multiplier(self, pattern: EntityPattern) -> float:
+        """Compute adaptive threshold multiplier from entity's variance profile.
+
+        Entities with high coefficient of variation (CV = avg_std / avg_mean) get a
+        wider effective threshold, capped at MAX_VARIANCE_MULTIPLIER (STAT-04).
+        Entities with insufficient bucket data return 1.0 (no change).
+        """
+        stds = []
+        means = []
+        for day_buckets in pattern.day_buckets.values():
+            for bucket in day_buckets:
+                if bucket.count >= MIN_BUCKET_OBSERVATIONS and bucket.mean > 0:
+                    stds.append(bucket.std_dev)
+                    means.append(bucket.mean)
+        if not means:
+            return 1.0
+        avg_mean = sum(means) / len(means)
+        avg_std = sum(stds) / len(stds)
+        cv = avg_std / avg_mean if avg_mean > 0 else 0.0
+        multiplier = 1.0 + cv
+        return max(1.0, min(MAX_VARIANCE_MULTIPLIER, multiplier))
+
     def check_for_anomalies(
         self, current_interval_activity: dict[str, int] | None = None
     ) -> list[AnomalyResult]:
@@ -449,6 +471,10 @@ class PatternAnalyzer:
             if expected_std == 0 and expected_mean == 0:
                 continue
 
+            # Adaptive threshold (STAT-04)
+            variance_multiplier = self._get_variance_multiplier(pattern)
+            effective_threshold = self._sensitivity_threshold * variance_multiplier
+
             # Calculate Z-score
             if expected_std > 0:
                 z_score = abs(actual - expected_mean) / expected_std
@@ -458,8 +484,8 @@ class PatternAnalyzer:
             else:
                 z_score = 0.0
 
-            # Check if anomaly exceeds threshold
-            if z_score > self._sensitivity_threshold:
+            # Check if anomaly exceeds adaptive threshold
+            if z_score > effective_threshold:
                 if actual > expected_mean:
                     anomaly_type = "unusual_activity"
                     description = (
