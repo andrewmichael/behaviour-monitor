@@ -15,6 +15,8 @@ CONF_ML_LEARNING_PERIOD: Final = "ml_learning_period"
 CONF_CROSS_SENSOR_WINDOW: Final = "cross_sensor_window"
 CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 CONF_NOTIFY_SERVICES: Final = "notify_services"
+CONF_NOTIFICATION_COOLDOWN: Final = "notification_cooldown"
+CONF_MIN_NOTIFICATION_SEVERITY: Final = "min_notification_severity"
 
 # Sensitivity levels (standard deviations for Z-score)
 SENSITIVITY_LOW: Final = "low"
@@ -44,6 +46,8 @@ DEFAULT_ML_LEARNING_PERIOD: Final = 7  # days (minimum time before ML alerts)
 DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds (5 minutes)
 DEFAULT_TRACK_ATTRIBUTES: Final = True  # Track attribute changes (not just state)
 DEFAULT_NOTIFY_SERVICES: Final = []  # Empty = persistent_notification only
+DEFAULT_NOTIFICATION_COOLDOWN: Final = 30  # minutes
+DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"  # SEVERITY_SIGNIFICANT (3.5 sigma)
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
@@ -77,6 +81,8 @@ SEVERITY_THRESHOLDS: Final = {
     SEVERITY_SIGNIFICANT: 3.5, # 3.5σ
     SEVERITY_CRITICAL: 4.5,    # 4.5σ
 }
+
+WELFARE_DEBOUNCE_CYCLES: Final = 3  # consecutive update cycles before welfare notification fires (~3 min at 60s interval)
 
 # Elder care attributes
 ATTR_SEVERITY: Final = "severity"
