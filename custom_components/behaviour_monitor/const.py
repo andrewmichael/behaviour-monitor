@@ -62,9 +62,13 @@ DEFAULT_NOTIFY_SERVICES: Final = []  # Empty = persistent_notification only
 DEFAULT_NOTIFICATION_COOLDOWN: Final = 30  # minutes
 DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"  # SEVERITY_SIGNIFICANT (3.5 sigma)
 
+# New v1.1 config keys
+CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
+DEFAULT_HISTORY_WINDOW_DAYS: Final = 28  # days
+
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 2
+STORAGE_VERSION: Final = 3
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60

@@ -10,6 +10,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 import voluptuous as vol
 
 from .const import (
+    CONF_HISTORY_WINDOW_DAYS,
+    DEFAULT_HISTORY_WINDOW_DAYS,
     DOMAIN,
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
@@ -22,6 +24,42 @@ from .coordinator import BehaviourMonitorCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT]
+
+# ML config keys removed in v1.1
+_ML_KEYS_REMOVED_V3 = (
+    "enable_ml",
+    "retrain_period",
+    "ml_learning_period",
+    "cross_sensor_window",
+)
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate config entry to the current version.
+
+    v2 -> v3: Remove ML config keys, add history_window_days.
+    """
+    if config_entry.version < 3:
+        new_data = dict(config_entry.data)
+
+        # Remove deprecated ML keys
+        for key in _ML_KEYS_REMOVED_V3:
+            new_data.pop(key, None)
+
+        # Add new history_window_days with default if not already present
+        new_data.setdefault(CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS)
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            version=3,
+        )
+
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v3 — ML options removed"
+        )
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
