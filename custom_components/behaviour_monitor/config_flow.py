@@ -113,7 +113,7 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     SelectSelectorConfig(
                         options=[
                             {"value": SENSITIVITY_LOW, "label": "Low (3σ)"},
-                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2σ)"},
+                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2.5σ)"},
                             {"value": SENSITIVITY_HIGH, "label": "High (1σ)"},
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
@@ -310,7 +310,7 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                     SelectSelectorConfig(
                         options=[
                             {"value": SENSITIVITY_LOW, "label": "Low (3σ)"},
-                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2σ)"},
+                            {"value": SENSITIVITY_MEDIUM, "label": "Medium (2.5σ)"},
                             {"value": SENSITIVITY_HIGH, "label": "High (1σ)"},
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
