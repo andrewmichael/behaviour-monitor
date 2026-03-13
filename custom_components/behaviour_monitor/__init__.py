@@ -8,7 +8,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 import voluptuous as vol
-from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,

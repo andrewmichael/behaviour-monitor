@@ -740,7 +740,7 @@ class PatternAnalyzer:
         elif activity_context["status"] == "concern" or concern_count > 0:
             welfare = WELFARE_CONCERN
             if activity_context["status"] == "concern":
-                reasons.append(f"Extended time since last activity")
+                reasons.append("Extended time since last activity")
             if concern_count > 0:
                 reasons.append(f"{concern_count} sensor(s) showing concerning patterns")
         elif routine_progress["status"] in ["concerning", "alert"]:

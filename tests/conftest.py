@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,7 +19,6 @@ def _setup_ha_mocks():
     mock_ha = MagicMock()
     mock_ha_core = MagicMock()
     mock_ha_helpers = MagicMock()
-    mock_ha_components = MagicMock()
     mock_ha_const = MagicMock()
     mock_ha_util = MagicMock()
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from custom_components.behaviour_monitor.analyzer import (
     AnomalyResult,
@@ -14,7 +13,6 @@ from custom_components.behaviour_monitor.analyzer import (
     TimeBucket,
     _get_interval_index,
     _interval_to_time_str,
-    DAY_NAMES,
     DAYS_IN_WEEK,
     INTERVALS_PER_DAY,
 )
@@ -820,15 +818,10 @@ class TestAdaptiveThresholds:
         Integration test: the adaptive threshold widens enough to absorb the same
         absolute deviation on a high-variance entity.
         """
-        from datetime import datetime, timezone
 
         # Both analyzers use sensitivity=2.5
         analyzer_low = self._make_analyzer_past_learning(sensitivity=2.5)
         analyzer_high = self._make_analyzer_past_learning(sensitivity=2.5)
-
-        now = datetime.now(timezone.utc)
-        day = now.weekday()
-        interval = (now.hour * 4) + (now.minute // 15)
 
         # Low-variance entity: mean=10, std=1 → z for actual=7 is (10-7)/1=3.0 > 2.5 → flagged
         # CV = 1/10 = 0.1, multiplier ~1.1, effective_threshold ~2.75 → 3.0 > 2.75 still flagged

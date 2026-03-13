@@ -10,8 +10,6 @@ from unittest.mock import MagicMock
 
 from custom_components.behaviour_monitor.const import (
     ML_CONTAMINATION,
-    ML_EMA_ALPHA,
-    MIN_CROSS_SENSOR_OCCURRENCES,
     SENSITIVITY_HIGH,
     SENSITIVITY_MEDIUM,
 )

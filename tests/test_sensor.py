@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.behaviour_monitor.sensor import (
     BehaviourMonitorSensor,
-    BehaviourMonitorSensorDescription,
     SENSOR_DESCRIPTIONS,
     async_setup_entry,
 )
