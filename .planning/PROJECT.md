@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies using dual statistical (z-score) and ML (Half-Space Trees) analysis. After v1.0, notifications are trustworthy — suppression gates, adaptive thresholds, and ML smoothing ensure only genuinely unusual events trigger alerts.
+A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns routines from a mix of entity types (motion, doors, lights, climate, power) and provides two detection modes: acute alerts when something out of character happens right now (e.g., someone may have fallen), and drift alerts when behavior persistently changes over days or weeks.
 
 ## Core Value
 
@@ -37,44 +37,56 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Active
 
-(None — define in next milestone)
+- [ ] Routine model that learns expected behavior per entity from configurable history window (default 4 weeks)
+- [ ] Acute detection engine — flags out-of-character events in real time with configurable inactivity threshold
+- [ ] Drift detection engine — detects persistent behavior changes over days/weeks
+- [ ] New coordinator to manage routine learning, both detection engines, and notifications
+- [ ] Support for binary entities (motion, doors) and numeric entities (climate, power)
+- [ ] Config flow options for history window and alert thresholds
 
 ### Out of Scope
 
-- New anomaly types or smarter detection patterns — focus was on reducing noise, not adding features
 - Daily digest or summary notifications — may revisit in future milestone
-- Per-entity sensitivity tuning UI — global tuning delivered first; may revisit
 - Offline mode — real-time monitoring is core value
+- Keeping the old z-score/ML analyzer code — being replaced entirely
+
+## Current Milestone: v1.1 Detection Rebuild
+
+**Goal:** Replace z-score/ML analyzers and coordinator with routine-based detection — acute events + drift tracking.
+
+**Target features:**
+- Routine model learning from configurable history (default 4 weeks)
+- Acute detection with configurable inactivity thresholds
+- Drift detection via change point analysis
+- Rebuilt coordinator for new detection engines
+- Support for binary + numeric entity types
 
 ## Context
 
-Shipped v1.0 with 8,827 LOC Python.
-Tech stack: Home Assistant custom integration, Python async, River ML (optional).
-The integration had been generating floods of false positive notifications. v1.0 addressed this with a two-pronged approach: coordinator suppression gates (cooldown, dedup, severity gate, welfare debounce) plus analyzer tightening (bucket guards, adaptive thresholds, ML smoothing). Statistical false positive rate reduced from ~4.5% to ~1.2% at medium sensitivity. 240 tests passing (2 skipped).
+Shipped v1.0 with 8,827 LOC Python. Despite v1.0 false positive reduction work (FP rate from ~4.5% to ~1.2%), the z-score bucket approach is fundamentally noisy for home automation data — human behavior is too irregular for fixed time buckets. Decision: replace analyzers entirely with routine-based detection that requires sustained evidence before alerting.
 
-Known provisional values to monitor in production:
-- ML contamination (LOW=0.005, MEDIUM=0.02, HIGH=0.05)
-- Welfare debounce cycle count (N=3)
-- SENSITIVITY_MEDIUM=2.5σ only affects new installs
+Keeping: sensors (14 types), config flow (extended), storage layer, HA integration shell.
+Replacing: analyzer.py, ml_analyzer.py, coordinator.py.
+
+Tech stack: Home Assistant custom integration, Python async. River ML dependency being removed.
 
 ## Constraints
 
 - **Compatibility**: Must remain compatible with Home Assistant 2024.1.0+
-- **Non-breaking**: Config flow options and sensor entities must not change (users have automations depending on them)
-- **ML optional**: River library remains optional; ML features degrade gracefully
-- **Testing**: All threshold/logic changes must have corresponding test updates
+- **Sensor stability**: Existing sensor entity IDs must not change (users have automations depending on them)
+- **Config migration**: Existing config entries must migrate gracefully to new options
+- **Testing**: All detection logic must have corresponding tests
+- **No new dependencies**: Pure Python — no River or other ML libraries required
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Tune both analyzers | User reports false positives from both/unknown source | ✓ Good — both needed tightening |
-| Focus on thresholds and logic, not architecture | Existing dual-analyzer approach is sound; sensitivity is the issue | ✓ Good — no rearchitecture needed |
-| Coordinator suppression before analyzer tightening | Phase 1 gates have zero detection regression risk | ✓ Good — clean baseline for Phase 2 |
-| MIN_BUCKET_OBSERVATIONS=3 subsumed STAT-02 | Count guard is strictly stronger than mean guard | ✓ Good — simpler implementation |
-| SENSITIVITY_MEDIUM=2.5σ | Reduces FP rate from ~4.5% to ~1.2% | ✓ Good — significant improvement |
-| EMA alpha=0.3 for ML smoothing | Single spike from 0.5 baseline stays at 0.647, below threshold | ✓ Good — eliminates single-spike FPs |
-| Adaptive thresholds via CV | High-variance entities get wider thresholds automatically | ✓ Good — no per-entity config needed |
+| Focus on thresholds and logic, not architecture | Existing dual-analyzer approach is sound; sensitivity is the issue | ⚠️ Revisit — FPs still too high, approach itself is the problem |
+| Replace z-score/ML with routine-based detection | Bucket-based z-scores are fundamentally noisy for irregular human behavior | — Pending |
+| Drop River ML dependency | Routine model replaces ML; pure Python reduces install friction | — Pending |
+| Two detection modes (acute + drift) | Different problems need different engines: immediate events vs gradual changes | — Pending |
 
 ---
-*Last updated: 2026-03-13 after v1.0 milestone*
+*Last updated: 2026-03-13 after v1.1 milestone start*
