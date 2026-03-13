@@ -379,9 +379,9 @@ class TestCoordinatorStatePersistence:
             with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
                 await coordinator._save_data()
 
-        # Verify new format structure
+        # Verify v3 format structure (routine_model key, no analyzer key)
         assert saved_data is not None
-        assert "analyzer" in saved_data
+        assert "routine_model" in saved_data  # v3 format uses routine_model, not analyzer
         assert "coordinator" in saved_data
 
         # Verify coordinator state is included

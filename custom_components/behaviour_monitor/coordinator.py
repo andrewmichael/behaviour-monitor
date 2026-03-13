@@ -48,6 +48,7 @@ from .const import (
     WELFARE_DEBOUNCE_CYCLES,
 )
 from .ml_analyzer import ML_AVAILABLE, MLAnomalyResult, MLPatternAnalyzer, StateChangeEvent
+from .routine_model import DEFAULT_HISTORY_WINDOW_DAYS, RoutineModel, is_binary_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +73,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._ml_store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_ml.{entry.entry_id}")
         self._unsubscribe_state_changed: callable | None = None
+
+        # v1.1 RoutineModel — initialized empty, populated in async_setup
+        self._history_window_days: int = int(
+            entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_HISTORY_WINDOW_DAYS)
+        )
+        self._routine_model: RoutineModel = RoutineModel(
+            history_window_days=self._history_window_days
+        )
         self._recent_anomalies: list[AnomalyResult] = []
         self._recent_ml_anomalies: list[MLAnomalyResult] = []
         self._recent_events: list[StateChangeEvent] = []
@@ -218,101 +227,117 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_setup(self) -> None:
         """Set up the coordinator."""
-        # Load stored statistical data
+        # Load stored data and handle v2->v3 migration
         stored_data = await self._store.async_load()
         if stored_data:
-            # Handle both old format (direct analyzer dict) and new format (with coordinator state)
-            if "analyzer" in stored_data:
-                # New format with coordinator state
-                analyzer_data = stored_data["analyzer"]
-                coordinator_state = stored_data.get("coordinator", {})
+            coordinator_state = stored_data.get("coordinator", {})
 
-                # Restore coordinator state
-                last_notif_time = coordinator_state.get("last_notification_time")
-                if last_notif_time:
-                    dt = datetime.fromisoformat(last_notif_time)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                    self._last_notification_time = dt
-
-                self._last_notification_type = coordinator_state.get("last_notification_type")
-                self._last_welfare_status = coordinator_state.get("last_welfare_status")
-
-                # Restore holiday mode
-                self._holiday_mode = coordinator_state.get("holiday_mode", False)
-
-                # Restore snooze (check if not expired)
-                snooze_until_str = coordinator_state.get("snooze_until")
-                if snooze_until_str:
-                    snooze_dt = datetime.fromisoformat(snooze_until_str)
-                    if snooze_dt.tzinfo is None:
-                        snooze_dt = snooze_dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                    # Only restore if not expired
-                    if snooze_dt > dt_util.now():
-                        self._snooze_until = snooze_dt
-                    else:
-                        self._snooze_until = None
-                        _LOGGER.debug("Snooze expired, not restoring")
-
-                # Restore notification cooldowns
-                raw_cooldowns = coordinator_state.get("notification_cooldowns", {})
-                for key_str, dt_str in raw_cooldowns.items():
-                    parts = key_str.split("|", 1)
-                    if len(parts) == 2:
-                        dt = datetime.fromisoformat(dt_str)
-                        if dt.tzinfo is None:
-                            dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                        self._notification_cooldowns[(parts[0], parts[1])] = dt
-
-                self._welfare_consecutive_cycles = coordinator_state.get(
-                    "welfare_consecutive_cycles", 0
-                )
-                self._welfare_pending_status = coordinator_state.get("welfare_pending_status")
-
+            if "routine_model" in stored_data:
+                # v3 format: deserialize RoutineModel directly
+                self._routine_model = RoutineModel.from_dict(stored_data["routine_model"])
                 _LOGGER.debug(
-                    "Loaded coordinator state: last_notification=%s, last_welfare=%s, holiday_mode=%s, snoozed=%s",
-                    self._last_notification_time,
-                    self._last_welfare_status,
-                    self._holiday_mode,
-                    self.is_snoozed(),
+                    "Loaded v3 storage: RoutineModel with %d entities",
+                    len(self._routine_model._entities),
                 )
+                # Restore analyzer data if present (backward compat during transition)
+                analyzer_data = stored_data.get("analyzer")
+            elif "analyzer" in stored_data:
+                # v2 format: z-score analyzer data — discard it, start fresh RoutineModel
+                _LOGGER.info(
+                    "Behaviour Monitor: Detected v2 storage format (z-score analyzer). "
+                    "Discarding old analyzer data and starting fresh RoutineModel for v1.1."
+                )
+                self._routine_model = RoutineModel(
+                    history_window_days=self._history_window_days
+                )
+                analyzer_data = stored_data["analyzer"]
             else:
-                # Old format - stored_data is the analyzer dict directly
+                # Unknown format — start fresh
                 analyzer_data = stored_data
                 _LOGGER.debug("Loaded data in old format (analyzer only)")
 
-            self._analyzer = PatternAnalyzer.from_dict(
-                analyzer_data,
-                sensitivity_threshold=SENSITIVITY_THRESHOLDS.get(
-                    self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY), 2.0
-                ),
-                learning_period_days=int(
-                    self._entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD)
-                ),
+            # Restore coordinator state (applies to both v2 and v3)
+            last_notif_time = coordinator_state.get("last_notification_time")
+            if last_notif_time:
+                dt = datetime.fromisoformat(last_notif_time)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                self._last_notification_time = dt
+
+            self._last_notification_type = coordinator_state.get("last_notification_type")
+            self._last_welfare_status = coordinator_state.get("last_welfare_status")
+
+            # Restore holiday mode
+            self._holiday_mode = coordinator_state.get("holiday_mode", False)
+
+            # Restore snooze (check if not expired)
+            snooze_until_str = coordinator_state.get("snooze_until")
+            if snooze_until_str:
+                snooze_dt = datetime.fromisoformat(snooze_until_str)
+                if snooze_dt.tzinfo is None:
+                    snooze_dt = snooze_dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                # Only restore if not expired
+                if snooze_dt > dt_util.now():
+                    self._snooze_until = snooze_dt
+                else:
+                    self._snooze_until = None
+                    _LOGGER.debug("Snooze expired, not restoring")
+
+            # Restore notification cooldowns
+            raw_cooldowns = coordinator_state.get("notification_cooldowns", {})
+            for key_str, dt_str in raw_cooldowns.items():
+                parts = key_str.split("|", 1)
+                if len(parts) == 2:
+                    dt = datetime.fromisoformat(dt_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                    self._notification_cooldowns[(parts[0], parts[1])] = dt
+
+            self._welfare_consecutive_cycles = coordinator_state.get(
+                "welfare_consecutive_cycles", 0
             )
+            self._welfare_pending_status = coordinator_state.get("welfare_pending_status")
+
             _LOGGER.debug(
-                "Loaded stored pattern data with %d entities",
-                len(self._analyzer.patterns),
+                "Loaded coordinator state: last_notification=%s, last_welfare=%s, holiday_mode=%s, snoozed=%s",
+                self._last_notification_time,
+                self._last_welfare_status,
+                self._holiday_mode,
+                self.is_snoozed(),
             )
 
-        # Load stored ML data
-        if self._enable_ml:
-            ml_stored_data = await self._ml_store.async_load()
-            if ml_stored_data:
-                sensitivity_key = self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY)
-                self._ml_analyzer = MLPatternAnalyzer.from_dict(
-                    ml_stored_data,
-                    contamination=ML_CONTAMINATION.get(sensitivity_key, 0.05),
-                    cross_sensor_window_seconds=self._cross_sensor_window,
+            # Restore the legacy PatternAnalyzer if analyzer_data is available
+            if analyzer_data:
+                self._analyzer = PatternAnalyzer.from_dict(
+                    analyzer_data,
+                    sensitivity_threshold=SENSITIVITY_THRESHOLDS.get(
+                        self._entry.data.get(CONF_SENSITIVITY, DEFAULT_SENSITIVITY), 2.0
+                    ),
+                    learning_period_days=int(
+                        self._entry.data.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD)
+                    ),
                 )
                 _LOGGER.debug(
-                    "Loaded ML data with %d events, trained: %s",
-                    self._ml_analyzer.sample_count,
-                    self._ml_analyzer.is_trained,
+                    "Loaded stored pattern data with %d entities",
+                    len(self._analyzer.patterns),
                 )
 
-                # Retrain if needed
-                await self._check_retrain()
+        # Clean up orphaned ML storage file
+        await self._cleanup_ml_store()
+
+        # Log deprecation warnings for sensors removed in v1.1
+        _LOGGER.warning(
+            "Behaviour Monitor: Sensor 'ml_status' is deprecated and will be removed. "
+            "This sensor always returns 'Removed in v1.1'."
+        )
+        _LOGGER.warning(
+            "Behaviour Monitor: Sensor 'ml_training' is deprecated and will be removed. "
+            "This sensor always returns 'N/A'."
+        )
+        _LOGGER.warning(
+            "Behaviour Monitor: Sensor 'cross_sensor_patterns' is deprecated and will be removed. "
+            "This sensor always returns 0."
+        )
 
         # Subscribe to state changes
         self._unsubscribe_state_changed = self.hass.bus.async_listen(
@@ -348,10 +373,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._save_data()
 
     async def _save_data(self) -> None:
-        """Save pattern data to storage."""
-        # Save both analyzer and coordinator state
+        """Save pattern data to storage (v3 format)."""
+        # Save RoutineModel (v3) + coordinator state
+        # NOTE: We do NOT save the legacy "analyzer" key in v3 format.
         storage_data = {
-            "analyzer": self._analyzer.to_dict(),
+            "routine_model": self._routine_model.to_dict(),
             "coordinator": {
                 "last_notification_time": (
                     self._last_notification_time.isoformat()
@@ -376,8 +402,24 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         await self._store.async_save(storage_data)
 
-        if self._enable_ml:
-            await self._ml_store.async_save(self._ml_analyzer.to_dict())
+    async def _cleanup_ml_store(self) -> None:
+        """Delete orphaned ML storage file if it exists.
+
+        The ML analyzer was removed in v1.1. This method cleans up any
+        leftover ML storage file from previous versions. Non-critical:
+        exceptions are caught and ignored.
+        """
+        try:
+            ml_data = await self._ml_store.async_load()
+            if ml_data is not None:
+                await self._ml_store.async_remove()
+                _LOGGER.info(
+                    "Behaviour Monitor: Removed orphaned ML storage file (v1.1 cleanup)"
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug(
+                "Behaviour Monitor: ML store cleanup skipped: %s", err
+            )
 
     async def _check_retrain(self) -> None:
         """Check if ML model needs retraining."""
@@ -768,6 +810,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._snooze_until.isoformat()
                 if self._snooze_until
                 else None
+            ),
+            # v1.1 stub keys for deprecated ML sensors
+            "ml_status_stub": "Removed in v1.1",
+            "ml_training_stub": "N/A",
+            "cross_sensor_stub": 0,
+            # v1.1 RoutineModel learning status
+            "learning_status": self._routine_model.learning_status(),
+            "baseline_confidence": round(
+                self._routine_model.overall_confidence() * 100, 1
             ),
         }
 
