@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-coordinator-suppression 01-01-PLAN.md
-last_updated: "2026-03-13T11:03:37.618Z"
-last_activity: 2026-03-13 — Roadmap created; 11 v1 requirements mapped to 2 phases
+stopped_at: Completed 01-coordinator-suppression 01-02-PLAN.md
+last_updated: "2026-03-13T12:00:00.000Z"
+last_activity: 2026-03-13 — Plan 02 complete: notification suppression layer implemented, all 13 TDD tests green
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 0
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
@@ -21,33 +21,33 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation
-**Current focus:** Phase 1 — Coordinator Suppression
+**Current focus:** Phase 1 complete — Coordinator Suppression fully implemented
 
 ## Current Position
 
-Phase: 1 of 2 (Coordinator Suppression)
-Plan: 1 of 2 in current phase (01-01-PLAN.md complete)
-Status: In progress — Plan 01 done, Plan 02 next
-Last activity: 2026-03-13 — Plan 01 complete: constants, config flow fields, 13 TDD suppression scaffolds
+Phase: 1 of 2 (Coordinator Suppression — COMPLETE)
+Plan: 2 of 2 in current phase (01-02-PLAN.md complete)
+Status: Phase 1 complete — both plans done
+Last activity: 2026-03-13 — Plan 02 complete: _should_notify(), severity gate, per-entity cooldown, cross-path dedup, welfare debounce
 
-Progress: [█████░░░░░] 50%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 35 min
-- Total execution time: 0.6 hours
+- Total plans completed: 2
+- Average duration: 28 min
+- Total execution time: ~1 hour
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-coordinator-suppression | 1 | 35 min | 35 min |
+| 01-coordinator-suppression | 2 | 55 min | 28 min |
 
 **Recent Trend:**
-- Last 5 plans: 35 min
-- Trend: —
+- Last 5 plans: 35 min, 20 min
+- Trend: Faster (TDD green phase quicker than scaffold phase)
 
 *Updated after each plan completion*
 
@@ -60,9 +60,12 @@ Recent decisions affecting current work:
 
 - Init: Coordinator suppression before analyzer tightening — Phase 1 gates have zero detection regression risk; validates baseline before Phase 2 reduces raw anomaly volume
 - Init: No Phase 0 instrumentation phase — research recommended it as optional; coarse granularity folds it into Phase 1 implementation
-- [Phase 01-coordinator-suppression]: DEFAULT_MIN_NOTIFICATION_SEVERITY uses string literal not SEVERITY_SIGNIFICANT — forward reference constraint in const.py
-- [Phase 01-coordinator-suppression]: TDD red-green: test scaffolds written first in Plan 01; Plan 02 implements suppression logic to turn them green
-- [Phase 01-coordinator-suppression]: WELFARE_DEBOUNCE_CYCLES=3 extracted as named constant (not magic number) to support future tuning
+- [Phase 01-coordinator-suppression Plan 01]: DEFAULT_MIN_NOTIFICATION_SEVERITY uses string literal not SEVERITY_SIGNIFICANT — forward reference constraint in const.py
+- [Phase 01-coordinator-suppression Plan 01]: TDD red-green: test scaffolds written first in Plan 01; Plan 02 implements suppression logic to turn them green
+- [Phase 01-coordinator-suppression Plan 01]: WELFARE_DEBOUNCE_CYCLES=3 extracted as named constant (not magic number) to support future tuning
+- [Phase 01-coordinator-suppression Plan 02]: notifiable_anomalies initialized before stat block so always in scope for ML cross-path dedup
+- [Phase 01-coordinator-suppression Plan 02]: Cooldown pruning uses unfiltered stat_anomalies set (not notifiable_anomalies) to ensure reset fires even when stat_learning_complete is False
+- [Phase 01-coordinator-suppression Plan 02]: Welfare debounce applies symmetrically to escalation and de-escalation
 
 ### Pending Todos
 
@@ -76,6 +79,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13T11:03:37.615Z
-Stopped at: Completed 01-coordinator-suppression 01-01-PLAN.md
+Last session: 2026-03-13T12:00:00.000Z
+Stopped at: Completed 01-coordinator-suppression 01-02-PLAN.md
 Resume file: None
