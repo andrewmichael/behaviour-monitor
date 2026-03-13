@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
-from custom_components.behaviour_monitor.const import DOMAIN
+from custom_components.behaviour_monitor.const import (
+    CONF_MIN_NOTIFICATION_SEVERITY,
+    CONF_NOTIFICATION_COOLDOWN,
+    SEVERITY_MINOR,
+    SEVERITY_SIGNIFICANT,
+    WELFARE_DEBOUNCE_CYCLES,
+)
 from custom_components.behaviour_monitor.ml_analyzer import ML_AVAILABLE
 
 
@@ -654,6 +660,681 @@ class TestCoordinatorHolidayMode:
         assert new_coordinator.holiday_mode is True
 
 
+class TestCoordinatorNotificationSuppression:
+    """Tests for notification suppression behaviors (Plan 02 red phase).
+
+    These tests define the expected behavior after Plan 02 implements:
+    - Per-entity cooldown tracking
+    - Severity gate filtering
+    - Welfare debounce counter
+    - Cross-path deduplication
+
+    ALL suppression tests are expected to fail until Plan 02 implements the logic.
+    """
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        """Create a coordinator with suppression config."""
+        mock_config_entry.data[CONF_NOTIFICATION_COOLDOWN] = 30
+        mock_config_entry.data[CONF_MIN_NOTIFICATION_SEVERITY] = SEVERITY_SIGNIFICANT
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    @pytest.fixture
+    def stat_anomaly_factory(self):
+        """Factory for creating mock AnomalyResult objects."""
+        from custom_components.behaviour_monitor.analyzer import AnomalyResult
+
+        def _make(
+            entity_id="sensor.test1",
+            anomaly_type="unusual_activity",
+            z_score=4.0,
+            severity=SEVERITY_SIGNIFICANT,
+            description="Test anomaly",
+        ):
+            return AnomalyResult(
+                is_anomaly=True,
+                entity_id=entity_id,
+                anomaly_type=anomaly_type,
+                z_score=z_score,
+                expected_mean=2.0,
+                expected_std=0.5,
+                actual_value=5.0,
+                timestamp=datetime.now(timezone.utc),
+                time_slot="monday 09:00",
+                description=description,
+            )
+
+        return _make
+
+    @pytest.fixture
+    def ml_anomaly_factory(self):
+        """Factory for creating mock MLAnomalyResult objects."""
+        from custom_components.behaviour_monitor.ml_analyzer import MLAnomalyResult
+
+        def _make(entity_id="sensor.test1", anomaly_type="isolation_forest"):
+            return MLAnomalyResult(
+                is_anomaly=True,
+                entity_id=entity_id,
+                anomaly_score=-0.5,
+                anomaly_type=anomaly_type,
+                description="Test ML anomaly",
+                timestamp=datetime.now(timezone.utc),
+                related_entities=[],
+            )
+
+        return _make
+
+    # -------------------------------------------------------------------------
+    # Per-entity cooldown tests
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_cooldown_per_entity(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Entity A notification does not block Entity B notification.
+
+        Cooldown is tracked per (entity_id, anomaly_type) key, not globally.
+        When entity A fires, entity B should still be able to fire immediately.
+        """
+        anomaly_a = stat_anomaly_factory(entity_id="sensor.test1")
+        anomaly_b = stat_anomaly_factory(entity_id="sensor.test2")
+
+        notification_calls = []
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            mock_send.side_effect = lambda anomalies: notification_calls.extend(anomalies)
+
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[anomaly_a]
+                        ):
+                            await coordinator._async_update_data()
+
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[anomaly_b]
+                        ):
+                            await coordinator._async_update_data()
+
+        # Both entity A and entity B should have triggered notifications
+        # (cooldown is per-entity, not global)
+        assert mock_send.call_count == 2, (
+            f"Expected 2 notification calls (one per entity), got {mock_send.call_count}. "
+            "Per-entity cooldown not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooldown_suppresses_repeat(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Same entity+type within cooldown window gets no second notification.
+
+        After entity A fires, a second anomaly of the same type within the cooldown
+        window must be suppressed.
+        """
+        anomaly_a = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly_a],
+                        ):
+                            await coordinator._async_update_data()
+                            # Second call immediately after — same entity, same type
+                            await coordinator._async_update_data()
+
+        # Second notification should be suppressed by cooldown
+        assert mock_send.call_count == 1, (
+            f"Expected 1 notification (second suppressed by cooldown), got {mock_send.call_count}. "
+            "Cooldown suppression not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooldown_expires(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """After cooldown window passes, same entity+type gets notified again.
+
+        When the cooldown for (entity_id, anomaly_type) expires, a new anomaly
+        of the same type must fire a notification.
+        """
+        anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+
+        # First notification fires at t=0
+        t_zero = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
+        # After cooldown (30 min + 1 sec), notification should fire again
+        t_after_cooldown = t_zero + timedelta(minutes=31)
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly],
+                        ):
+                            with patch(
+                                "custom_components.behaviour_monitor.coordinator.dt_util.now",
+                                return_value=t_zero,
+                            ):
+                                await coordinator._async_update_data()
+
+                            with patch(
+                                "custom_components.behaviour_monitor.coordinator.dt_util.now",
+                                return_value=t_after_cooldown,
+                            ):
+                                await coordinator._async_update_data()
+
+        assert mock_send.call_count == 2, (
+            f"Expected 2 notifications (cooldown expired), got {mock_send.call_count}. "
+            "Cooldown expiry not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooldown_resets_on_clear(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """When entity returns to normal, cooldown entry is removed; re-anomaly triggers new notification.
+
+        The per-entity cooldown map should be cleared when an entity's anomaly
+        clears (no longer anomalous), so the next anomaly fires immediately.
+        """
+        anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        # First anomaly — fires notification
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly],
+                        ):
+                            await coordinator._async_update_data()
+
+                        # Entity clears (no anomaly) — should reset cooldown
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[]
+                        ):
+                            await coordinator._async_update_data()
+
+                        # Re-anomaly immediately after clear — should fire again
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly],
+                        ):
+                            await coordinator._async_update_data()
+
+        assert mock_send.call_count == 2, (
+            f"Expected 2 notifications (clear resets cooldown), got {mock_send.call_count}. "
+            "Cooldown-on-clear reset not implemented yet."
+        )
+
+    # -------------------------------------------------------------------------
+    # Deduplication tests
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_dedup_different_types_separate(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Same entity with different anomaly_type gets separate notifications.
+
+        Cooldown key is (entity_id, anomaly_type). Different types on the same
+        entity each get their own cooldown and should each fire.
+        """
+        anomaly_type_a = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+        anomaly_type_b = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="inactivity"
+        )
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly_type_a],
+                        ):
+                            await coordinator._async_update_data()
+
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[anomaly_type_b],
+                        ):
+                            await coordinator._async_update_data()
+
+        assert mock_send.call_count == 2, (
+            f"Expected 2 notifications (different types = separate cooldowns), "
+            f"got {mock_send.call_count}. Per-type cooldown not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_cross_path_dedup(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+        ml_anomaly_factory,
+    ) -> None:
+        """Stat+ML flag same entity in same cycle, only one notification fires.
+
+        When both statistical and ML analyzers detect an anomaly on the same entity
+        in the same update cycle, only one notification should fire (cross-path dedup).
+        """
+        stat_anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+        ml_anomaly = ml_anomaly_factory(
+            entity_id="sensor.test1", anomaly_type="unusual_activity"
+        )
+
+        stat_call_count = 0
+        ml_call_count = 0
+
+        async def count_stat(anomalies):
+            nonlocal stat_call_count
+            stat_call_count += 1
+
+        async def count_ml(anomalies):
+            nonlocal ml_call_count
+            ml_call_count += 1
+
+        coordinator._enable_ml = True
+        coordinator._recent_events = []
+        # Patch is_trained as a property via type() to allow patching a read-only property
+        with patch("custom_components.behaviour_monitor.coordinator.BehaviourMonitorCoordinator._async_update_data"):
+            pass  # no-op to keep context manager approach readable
+
+        with patch.object(coordinator, "_send_notification", side_effect=count_stat):
+            with patch.object(coordinator, "_send_ml_notification", side_effect=count_ml):
+                with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                    with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                        with patch.object(
+                            coordinator._analyzer, "is_learning_complete", return_value=True
+                        ):
+                            with patch.object(
+                                coordinator._analyzer,
+                                "check_for_anomalies",
+                                return_value=[stat_anomaly],
+                            ):
+                                with patch.object(
+                                    type(coordinator._ml_analyzer),
+                                    "is_trained",
+                                    new_callable=lambda: property(lambda self: True),
+                                ):
+                                    with patch.object(
+                                        coordinator._ml_analyzer,
+                                        "check_anomaly",
+                                        return_value=ml_anomaly,
+                                    ):
+                                        with patch.object(
+                                            coordinator._ml_analyzer,
+                                            "check_cross_sensor_anomalies",
+                                            return_value=[],
+                                        ):
+                                            await coordinator._async_update_data()
+
+        total_notifications = stat_call_count + ml_call_count
+        assert total_notifications == 1, (
+            f"Expected 1 notification (cross-path dedup), got {total_notifications} "
+            f"(stat={stat_call_count}, ml={ml_call_count}). "
+            "Cross-path deduplication not implemented yet."
+        )
+
+    # -------------------------------------------------------------------------
+    # Severity gate tests
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_severity_gate_suppresses(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Anomaly below configured severity does not trigger notification.
+
+        When min_notification_severity is "significant" (default), anomalies with
+        severity "minor" or "moderate" must not fire a notification.
+        """
+        # Create a minor anomaly (z_score 1.7 = SEVERITY_MINOR)
+        minor_anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1",
+            z_score=1.7,
+            severity=SEVERITY_MINOR,
+        )
+        # Ensure coordinator is configured with significant threshold
+        coordinator._entry.data[CONF_MIN_NOTIFICATION_SEVERITY] = SEVERITY_SIGNIFICANT
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[minor_anomaly],
+                        ):
+                            await coordinator._async_update_data()
+
+        assert mock_send.call_count == 0, (
+            f"Expected 0 notifications (minor below significant gate), "
+            f"got {mock_send.call_count}. Severity gate not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_severity_gate_sensor_state_unaffected(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Anomaly below gate still appears in returned sensor data.
+
+        The severity gate filters notifications, not sensor data. Even a suppressed
+        minor anomaly must still appear in the returned dict's "anomalies" list.
+        """
+        minor_anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1",
+            z_score=1.7,
+            severity=SEVERITY_MINOR,
+        )
+        coordinator._entry.data[CONF_MIN_NOTIFICATION_SEVERITY] = SEVERITY_SIGNIFICANT
+
+        with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+            with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                with patch.object(
+                    coordinator._analyzer, "is_learning_complete", return_value=True
+                ):
+                    with patch.object(
+                        coordinator._analyzer,
+                        "check_for_anomalies",
+                        return_value=[minor_anomaly],
+                    ):
+                        data = await coordinator._async_update_data()
+
+        # The anomaly should appear in sensor data even though no notification fired
+        assert len(data["anomalies"]) == 1, (
+            f"Expected anomaly in sensor data even when below gate, "
+            f"got {len(data['anomalies'])}."
+        )
+        assert data["anomalies"][0]["entity_id"] == "sensor.test1"
+
+    @pytest.mark.asyncio
+    async def test_severity_gate_passes_above_threshold(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+        stat_anomaly_factory,
+    ) -> None:
+        """Anomaly at/above configured severity fires notification.
+
+        A significant anomaly (z_score >= 3.5) when min_severity is "significant"
+        must fire a notification.
+        """
+        significant_anomaly = stat_anomaly_factory(
+            entity_id="sensor.test1",
+            z_score=4.0,
+            severity=SEVERITY_SIGNIFICANT,
+        )
+        coordinator._entry.data[CONF_MIN_NOTIFICATION_SEVERITY] = SEVERITY_SIGNIFICANT
+
+        with patch.object(
+            coordinator, "_send_notification", new_callable=AsyncMock
+        ) as mock_send:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[significant_anomaly],
+                        ):
+                            await coordinator._async_update_data()
+
+        assert mock_send.call_count == 1, (
+            f"Expected 1 notification (significant meets gate), "
+            f"got {mock_send.call_count}. Severity gate not implemented yet."
+        )
+
+    # -------------------------------------------------------------------------
+    # Welfare debounce tests
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_welfare_debounce_no_notify_first_cycle(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+    ) -> None:
+        """First cycle of new welfare status does not send notification.
+
+        When welfare status changes from "ok" to "concern", the first cycle
+        should start the debounce counter but NOT fire a notification.
+        """
+        coordinator._last_welfare_status = "ok"
+
+        welfare_concern = {"status": "concern", "message": "Test concern"}
+
+        with patch.object(
+            coordinator, "_send_welfare_notification", new_callable=AsyncMock
+        ) as mock_welfare:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer,
+                            "check_for_anomalies",
+                            return_value=[],
+                        ):
+                            with patch.object(
+                                coordinator._analyzer,
+                                "get_welfare_status",
+                                return_value=welfare_concern,
+                            ):
+                                await coordinator._async_update_data()
+
+        assert mock_welfare.call_count == 0, (
+            f"Expected 0 welfare notifications on first cycle (debounce), "
+            f"got {mock_welfare.call_count}. Welfare debounce not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_welfare_debounce_notifies_after_n_cycles(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+    ) -> None:
+        """After N=3 consecutive cycles at new status, notification fires.
+
+        After WELFARE_DEBOUNCE_CYCLES consecutive cycles with the same new welfare
+        status, a notification should fire.
+        """
+        coordinator._last_welfare_status = "ok"
+
+        welfare_concern = {"status": "concern", "message": "Test concern"}
+
+        with patch.object(
+            coordinator, "_send_welfare_notification", new_callable=AsyncMock
+        ) as mock_welfare:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[]
+                        ):
+                            with patch.object(
+                                coordinator._analyzer,
+                                "get_welfare_status",
+                                return_value=welfare_concern,
+                            ):
+                                # Run WELFARE_DEBOUNCE_CYCLES times
+                                for _ in range(WELFARE_DEBOUNCE_CYCLES):
+                                    await coordinator._async_update_data()
+
+        assert mock_welfare.call_count == 1, (
+            f"Expected 1 welfare notification after {WELFARE_DEBOUNCE_CYCLES} cycles, "
+            f"got {mock_welfare.call_count}. Welfare debounce N-cycle trigger not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_welfare_debounce_resets_on_revert(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+    ) -> None:
+        """If status reverts before N cycles, counter resets.
+
+        If welfare status changes to "concern" but reverts to "ok" before
+        WELFARE_DEBOUNCE_CYCLES complete, no notification should fire and the
+        counter should reset.
+        """
+        coordinator._last_welfare_status = "ok"
+
+        welfare_concern = {"status": "concern", "message": "Test concern"}
+        welfare_ok = {"status": "ok", "message": "All clear"}
+
+        with patch.object(
+            coordinator, "_send_welfare_notification", new_callable=AsyncMock
+        ) as mock_welfare:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[]
+                        ):
+                            # Run N-1 cycles with concern
+                            with patch.object(
+                                coordinator._analyzer,
+                                "get_welfare_status",
+                                return_value=welfare_concern,
+                            ):
+                                for _ in range(WELFARE_DEBOUNCE_CYCLES - 1):
+                                    await coordinator._async_update_data()
+
+                            # Revert to ok before N cycles complete
+                            with patch.object(
+                                coordinator._analyzer,
+                                "get_welfare_status",
+                                return_value=welfare_ok,
+                            ):
+                                await coordinator._async_update_data()
+
+        assert mock_welfare.call_count == 0, (
+            f"Expected 0 welfare notifications (reverted before N cycles), "
+            f"got {mock_welfare.call_count}. Welfare debounce revert reset not implemented yet."
+        )
+
+    @pytest.mark.asyncio
+    async def test_welfare_debounce_deescalation(
+        self,
+        coordinator: BehaviourMonitorCoordinator,
+        mock_hass: MagicMock,
+    ) -> None:
+        """De-escalation (concern to ok) also requires N cycles.
+
+        When welfare de-escalates (e.g., "concern" -> "ok"), the debounce
+        should also apply — no immediate notification on the first cycle.
+        """
+        # Start at concern status (escalated)
+        coordinator._last_welfare_status = "concern"
+
+        welfare_ok = {"status": "ok", "message": "All clear"}
+
+        with patch.object(
+            coordinator, "_send_welfare_notification", new_callable=AsyncMock
+        ) as mock_welfare:
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock):
+                with patch.object(coordinator._ml_store, "async_save", new_callable=AsyncMock):
+                    with patch.object(
+                        coordinator._analyzer, "is_learning_complete", return_value=True
+                    ):
+                        with patch.object(
+                            coordinator._analyzer, "check_for_anomalies", return_value=[]
+                        ):
+                            with patch.object(
+                                coordinator._analyzer,
+                                "get_welfare_status",
+                                return_value=welfare_ok,
+                            ):
+                                # First cycle of de-escalation — should NOT notify
+                                await coordinator._async_update_data()
+
+        assert mock_welfare.call_count == 0, (
+            f"Expected 0 welfare notifications on first de-escalation cycle (debounce), "
+            f"got {mock_welfare.call_count}. Welfare debounce for de-escalation not implemented yet."
+        )
+
+
 class TestCoordinatorSnooze:
     """Tests for coordinator snooze functionality."""
 
@@ -791,7 +1472,6 @@ class TestCoordinatorSnooze:
 
         # Set snooze
         await coordinator.async_snooze(SNOOZE_1_HOUR)
-        snooze_time = coordinator.snooze_until
 
         # Save
         saved_data = None

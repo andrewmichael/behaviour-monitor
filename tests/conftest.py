@@ -413,6 +413,8 @@ def mock_config_entry() -> MagicMock:
                 "enable_ml": True,
                 "retrain_period": 14,
                 "cross_sensor_window": 300,
+                "notification_cooldown": 30,
+                "min_notification_severity": "significant",
             }
             self.options = {}
             self.add_update_listener = MagicMock(return_value=MagicMock())
