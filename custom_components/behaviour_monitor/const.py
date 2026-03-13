@@ -30,11 +30,21 @@ SENSITIVITY_THRESHOLDS: Final = {
 }
 
 # Isolation Forest contamination (expected anomaly rate)
+# Values are provisional — see STATE.md research flag on ML contamination
 ML_CONTAMINATION: Final = {
     SENSITIVITY_LOW: 0.01,     # 1% expected anomalies
     SENSITIVITY_MEDIUM: 0.05,  # 5% expected anomalies
     SENSITIVITY_HIGH: 0.10,    # 10% expected anomalies
 }
+
+# Minimum co-occurrences for a cross-sensor pattern to be considered strong
+MIN_CROSS_SENSOR_OCCURRENCES: Final = 30
+
+# EMA smoothing factor for ML scores (lower = more smoothing)
+ML_EMA_ALPHA: Final = 0.3
+
+# Minimum observations required in a time bucket before anomaly detection fires (STAT-01, STAT-02)
+MIN_BUCKET_OBSERVATIONS: Final = 3
 
 # Default values
 DEFAULT_SENSITIVITY: Final = SENSITIVITY_MEDIUM

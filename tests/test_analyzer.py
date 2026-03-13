@@ -639,3 +639,98 @@ class TestDailyCountsPersistence:
         actual_after = progress_after["actual_today"]
 
         assert actual_before == actual_after == 3
+
+
+class TestBucketGuards:
+    """Tests for bucket observation guard that suppresses sparse-data anomalies."""
+
+    def _make_analyzer_past_learning(self) -> PatternAnalyzer:
+        """Return a PatternAnalyzer whose learning period is considered complete."""
+        analyzer = PatternAnalyzer(sensitivity_threshold=2.0, learning_period_days=1)
+        # Plant a first_observation far enough in the past that is_learning_complete() returns True
+        ts_old = datetime.now(timezone.utc) - timedelta(days=2)
+        analyzer.record_state_change("sensor.dummy", ts_old)
+        return analyzer
+
+    def _current_bucket_coords(self):
+        """Return (day_of_week, interval) matching the current UTC time."""
+        now = datetime.now(timezone.utc)
+        day = now.weekday()
+        interval = (now.hour * 4) + (now.minute // 15)
+        return day, interval
+
+    def test_sparse_bucket_skipped(self) -> None:
+        """Entity with bucket.count=1 (below MIN_BUCKET_OBSERVATIONS=3) returns no anomaly."""
+        analyzer = self._make_analyzer_past_learning()
+        day, interval = self._current_bucket_coords()
+
+        pattern = EntityPattern(entity_id="sensor.sparse")
+        # Set bucket count to 1 (below guard threshold of 3)
+        pattern.day_buckets[day][interval] = TimeBucket(count=1, sum_values=1.0, sum_squared=1.0)
+        analyzer._patterns["sensor.sparse"] = pattern
+
+        anomalies = analyzer.check_for_anomalies({"sensor.sparse": 0})
+        assert anomalies == []
+
+    def test_no_inf_z_score(self) -> None:
+        """Entity with count>=MIN_BUCKET_OBSERVATIONS, mean=1.0, std_dev=0.0 that
+        misses expected activity does NOT produce z_score=float('inf')."""
+        analyzer = self._make_analyzer_past_learning()
+        day, interval = self._current_bucket_coords()
+
+        pattern = EntityPattern(entity_id="sensor.no_variance")
+        # count=5 (above guard), mean=1.0 (sum_values=5), std_dev=0.0 (all identical values)
+        pattern.day_buckets[day][interval] = TimeBucket(count=5, sum_values=5.0, sum_squared=5.0)
+        analyzer._patterns["sensor.no_variance"] = pattern
+
+        anomalies = analyzer.check_for_anomalies({"sensor.no_variance": 0})
+        # Guard passes (count=5 >= 3), but std_dev=0 and actual(0) != mean(1.0)
+        # z_score must NOT be float('inf')
+        for a in anomalies:
+            if a.entity_id == "sensor.no_variance":
+                assert a.z_score != float("inf"), "z_score must not be inf"
+                assert math.isfinite(a.z_score), "z_score must be finite"
+
+    def test_near_zero_mean_skipped(self) -> None:
+        """Entity with bucket.count=2 (below MIN_BUCKET_OBSERVATIONS) is skipped."""
+        analyzer = self._make_analyzer_past_learning()
+        day, interval = self._current_bucket_coords()
+
+        pattern = EntityPattern(entity_id="sensor.near_zero")
+        # count=2 — below guard threshold
+        pattern.day_buckets[day][interval] = TimeBucket(count=2, sum_values=0.2, sum_squared=0.02)
+        analyzer._patterns["sensor.near_zero"] = pattern
+
+        anomalies = analyzer.check_for_anomalies({"sensor.near_zero": 0})
+        assert anomalies == []
+
+    def test_sufficient_bucket_still_detects(self) -> None:
+        """Entity with bucket.count=5, mean=10.0, std_dev=1.0 IS detected as anomaly."""
+        analyzer = self._make_analyzer_past_learning()
+        day, interval = self._current_bucket_coords()
+
+        pattern = EntityPattern(entity_id="sensor.sufficient")
+        # count=5, mean=10 (sum_values=50), std_dev=1 requires sum_squared such that
+        # variance=(sum_sq/count - mean^2) = 1 => sum_sq = (1+100)*5 = 505
+        pattern.day_buckets[day][interval] = TimeBucket(count=5, sum_values=50.0, sum_squared=505.0)
+        analyzer._patterns["sensor.sufficient"] = pattern
+
+        # actual=0, expected mean=10, std=1 => z=(10-0)/1=10 >> threshold of 2.0
+        anomalies = analyzer.check_for_anomalies({"sensor.sufficient": 0})
+        entity_anomalies = [a for a in anomalies if a.entity_id == "sensor.sufficient"]
+        assert len(entity_anomalies) == 1, "Sufficient bucket should trigger anomaly detection"
+
+
+class TestSensitivityConstants:
+    """Tests for sensitivity threshold constants."""
+
+    def test_medium_threshold_raised(self) -> None:
+        """SENSITIVITY_MEDIUM threshold must be 2.5 (raised from 2.0)."""
+        from custom_components.behaviour_monitor.const import (
+            SENSITIVITY_MEDIUM,
+            SENSITIVITY_THRESHOLDS,
+        )
+
+        assert SENSITIVITY_THRESHOLDS[SENSITIVITY_MEDIUM] == 2.5, (
+            f"Expected SENSITIVITY_MEDIUM=2.5, got {SENSITIVITY_THRESHOLDS[SENSITIVITY_MEDIUM]}"
+        )
