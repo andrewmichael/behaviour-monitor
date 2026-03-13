@@ -734,3 +734,141 @@ class TestSensitivityConstants:
         assert SENSITIVITY_THRESHOLDS[SENSITIVITY_MEDIUM] == 2.5, (
             f"Expected SENSITIVITY_MEDIUM=2.5, got {SENSITIVITY_THRESHOLDS[SENSITIVITY_MEDIUM]}"
         )
+
+
+class TestAdaptiveThresholds:
+    """Tests for per-entity adaptive thresholds based on variance profile (STAT-04)."""
+
+    def _make_pattern_with_variance(
+        self, count: int, mean: float, std_dev: float
+    ) -> "EntityPattern":
+        """Create an EntityPattern with all buckets set to given stats."""
+        pattern = EntityPattern(entity_id="sensor.test")
+        # Populate all buckets with the given count, mean, std_dev
+        # TimeBucket computes std_dev from sum_values and sum_squared:
+        # mean = sum_values / count
+        # std_dev = sqrt(sum_squared/count - mean^2)
+        # => sum_values = mean * count
+        # => sum_squared = (std_dev^2 + mean^2) * count
+        sum_values = mean * count
+        sum_squared = (std_dev**2 + mean**2) * count
+        for day in range(7):
+            for i in range(96):
+                pattern.day_buckets[day][i] = TimeBucket(
+                    count=count,
+                    sum_values=sum_values,
+                    sum_squared=sum_squared,
+                )
+        return pattern
+
+    def _make_analyzer_past_learning(
+        self, sensitivity: float = 2.5
+    ) -> "PatternAnalyzer":
+        """Return a PatternAnalyzer with learning period complete."""
+        analyzer = PatternAnalyzer(
+            sensitivity_threshold=sensitivity, learning_period_days=1
+        )
+        ts_old = datetime.now(timezone.utc) - timedelta(days=2)
+        analyzer.record_state_change("sensor.dummy", ts_old)
+        return analyzer
+
+    def test_high_variance_wider_threshold(self) -> None:
+        """Entity with high CV (std/mean ~0.8) gets multiplier > 1.5."""
+        analyzer = self._make_analyzer_past_learning(sensitivity=2.5)
+        # CV = 8.0 / 10.0 = 0.8 => multiplier = 1 + 0.8 = 1.8
+        pattern = self._make_pattern_with_variance(count=5, mean=10.0, std_dev=8.0)
+        multiplier = analyzer._get_variance_multiplier(pattern)
+        assert multiplier > 1.5, (
+            f"Expected multiplier > 1.5 for high-variance entity, got {multiplier}"
+        )
+
+    def test_low_variance_base_threshold(self) -> None:
+        """Entity with low CV (std/mean ~0.1) gets multiplier close to 1.0."""
+        analyzer = self._make_analyzer_past_learning(sensitivity=2.5)
+        # CV = 1.0 / 10.0 = 0.1 => multiplier = 1 + 0.1 = 1.1
+        pattern = self._make_pattern_with_variance(count=5, mean=10.0, std_dev=1.0)
+        multiplier = analyzer._get_variance_multiplier(pattern)
+        assert multiplier < 1.2, (
+            f"Expected multiplier < 1.2 for low-variance entity, got {multiplier}"
+        )
+
+    def test_multiplier_capped(self) -> None:
+        """Entity with extreme CV (std=100, mean=5) gets multiplier capped at MAX_VARIANCE_MULTIPLIER."""
+        from custom_components.behaviour_monitor.const import MAX_VARIANCE_MULTIPLIER
+
+        analyzer = self._make_analyzer_past_learning(sensitivity=2.5)
+        # CV = 100.0 / 5.0 = 20.0 => raw multiplier = 21.0, capped at 2.0
+        pattern = self._make_pattern_with_variance(count=5, mean=5.0, std_dev=100.0)
+        multiplier = analyzer._get_variance_multiplier(pattern)
+        assert multiplier == MAX_VARIANCE_MULTIPLIER, (
+            f"Expected multiplier == {MAX_VARIANCE_MULTIPLIER} (capped), got {multiplier}"
+        )
+
+    def test_no_qualifying_buckets(self) -> None:
+        """Entity where all buckets have count < MIN_BUCKET_OBSERVATIONS gets multiplier 1.0."""
+        analyzer = self._make_analyzer_past_learning(sensitivity=2.5)
+        # count=1 is below MIN_BUCKET_OBSERVATIONS=3
+        pattern = self._make_pattern_with_variance(count=1, mean=10.0, std_dev=5.0)
+        multiplier = analyzer._get_variance_multiplier(pattern)
+        assert multiplier == 1.0, (
+            f"Expected multiplier == 1.0 for entity with no qualifying buckets, got {multiplier}"
+        )
+
+    def test_high_variance_not_flagged(self) -> None:
+        """A deviation that flags a low-variance entity does NOT flag a high-variance entity.
+
+        Integration test: the adaptive threshold widens enough to absorb the same
+        absolute deviation on a high-variance entity.
+        """
+        from datetime import datetime, timezone
+
+        # Both analyzers use sensitivity=2.5
+        analyzer_low = self._make_analyzer_past_learning(sensitivity=2.5)
+        analyzer_high = self._make_analyzer_past_learning(sensitivity=2.5)
+
+        now = datetime.now(timezone.utc)
+        day = now.weekday()
+        interval = (now.hour * 4) + (now.minute // 15)
+
+        # Low-variance entity: mean=10, std=1 → z for actual=7 is (10-7)/1=3.0 > 2.5 → flagged
+        # CV = 1/10 = 0.1, multiplier ~1.1, effective_threshold ~2.75 → 3.0 > 2.75 still flagged
+        # Actually let's pick actual=6: z=(10-6)/1=4.0 > 2.75 → flagged
+        # High-variance entity: mean=10, std=8 → z for actual=6 is (10-6)/8=0.5
+        # CV = 8/10 = 0.8, multiplier = 1.8, effective_threshold = 2.5*1.8 = 4.5
+        # 0.5 < 4.5 → NOT flagged
+
+        # Low-variance entity: count=5, mean=10.0, std=1.0
+        sum_values_low = 10.0 * 5
+        sum_squared_low = (1.0**2 + 10.0**2) * 5  # = (1+100)*5 = 505
+        low_pattern = EntityPattern(entity_id="sensor.low_variance")
+        for d in range(7):
+            for i in range(96):
+                low_pattern.day_buckets[d][i] = TimeBucket(
+                    count=5, sum_values=sum_values_low, sum_squared=sum_squared_low
+                )
+        analyzer_low._patterns["sensor.low_variance"] = low_pattern
+
+        # High-variance entity: count=5, mean=10.0, std=8.0
+        sum_values_high = 10.0 * 5
+        sum_squared_high = (8.0**2 + 10.0**2) * 5  # = (64+100)*5 = 820
+        high_pattern = EntityPattern(entity_id="sensor.high_variance")
+        for d in range(7):
+            for i in range(96):
+                high_pattern.day_buckets[d][i] = TimeBucket(
+                    count=5, sum_values=sum_values_high, sum_squared=sum_squared_high
+                )
+        analyzer_high._patterns["sensor.high_variance"] = high_pattern
+
+        # Feed actual=6 to both (deviation of 4 from mean of 10)
+        low_anomalies = analyzer_low.check_for_anomalies({"sensor.low_variance": 6})
+        high_anomalies = analyzer_high.check_for_anomalies({"sensor.high_variance": 6})
+
+        low_flagged = [a for a in low_anomalies if a.entity_id == "sensor.low_variance"]
+        high_flagged = [a for a in high_anomalies if a.entity_id == "sensor.high_variance"]
+
+        assert len(low_flagged) == 1, (
+            "Low-variance entity should be flagged for z=4.0 (above effective threshold ~2.75)"
+        )
+        assert len(high_flagged) == 0, (
+            "High-variance entity should NOT be flagged for z=0.5 (below effective threshold ~4.5)"
+        )

@@ -46,6 +46,9 @@ ML_EMA_ALPHA: Final = 0.3
 # Minimum observations required in a time bucket before anomaly detection fires (STAT-01, STAT-02)
 MIN_BUCKET_OBSERVATIONS: Final = 3
 
+# Maximum multiplier for adaptive threshold based on entity variance profile (STAT-04)
+MAX_VARIANCE_MULTIPLIER: Final = 2.0
+
 # Default values
 DEFAULT_SENSITIVITY: Final = SENSITIVITY_MEDIUM
 DEFAULT_LEARNING_PERIOD: Final = 7  # days
