@@ -53,7 +53,11 @@ Plans:
   3. No acute alert fires from a single observation — the detector requires multiple consecutive polling cycles of sustained evidence before producing a result
   4. Drift detection identifies a persistent shift in daily activity rates using CUSUM — a minimum evidence window of several days is required before an alert is produced
   5. Calling the routine_reset service clears the drift accumulator for an entity, so a voluntary routine change (e.g., started working from home) does not continue triggering drift alerts
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Alert result types, const.py detection constants, and AcuteDetector TDD (inactivity + unusual-time)
+- [ ] 04-02-PLAN.md — DriftDetector TDD (bidirectional CUSUM with routine_reset and serialization)
 
 ### Phase 5: Integration
 **Goal**: Detection engines are wired into a rebuilt coordinator under 350 lines, all 14 sensor entity IDs remain stable and return safe defaults, and the config flow exposes history window, inactivity multiplier, and drift sensitivity options with graceful migration from v1.0 config entries
@@ -72,5 +76,5 @@ Plans:
 | 1. Coordinator Suppression | v1.0 | 2/2 | Complete | 2026-03-13 |
 | 2. Analyzer Tightening | v1.0 | 3/3 | Complete | 2026-03-13 |
 | 3. Foundation and Routine Model | 4/4 | Complete   | 2026-03-13 | - |
-| 4. Detection Engines | v1.1 | 0/? | Not started | - |
+| 4. Detection Engines | v1.1 | 0/2 | Planning complete | - |
 | 5. Integration | v1.1 | 0/? | Not started | - |
