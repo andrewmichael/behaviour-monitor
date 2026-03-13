@@ -52,23 +52,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| NOTIF-01 | — | Pending |
-| NOTIF-02 | — | Pending |
-| NOTIF-03 | — | Pending |
-| STAT-01 | — | Pending |
-| STAT-02 | — | Pending |
-| STAT-03 | — | Pending |
-| STAT-04 | — | Pending |
-| ML-01 | — | Pending |
-| ML-02 | — | Pending |
-| ML-03 | — | Pending |
-| WELF-01 | — | Pending |
+| NOTIF-01 | Phase 1 | Pending |
+| NOTIF-02 | Phase 1 | Pending |
+| NOTIF-03 | Phase 1 | Pending |
+| WELF-01 | Phase 1 | Pending |
+| STAT-01 | Phase 2 | Pending |
+| STAT-02 | Phase 2 | Pending |
+| STAT-03 | Phase 2 | Pending |
+| STAT-04 | Phase 2 | Pending |
+| ML-01 | Phase 2 | Pending |
+| ML-02 | Phase 2 | Pending |
+| ML-03 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11 ⚠️
+- Mapped to phases: 11
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after initial definition*
+*Last updated: 2026-03-13 after roadmap creation — all 11 requirements mapped*
