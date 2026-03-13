@@ -12,7 +12,15 @@ from custom_components.behaviour_monitor import (
     async_reload_entry,
     async_migrate_entry,
 )
-from custom_components.behaviour_monitor.const import DOMAIN, STORAGE_VERSION
+from custom_components.behaviour_monitor.const import (
+    DOMAIN,
+    STORAGE_VERSION,
+    SERVICE_ROUTINE_RESET,
+    SERVICE_ENABLE_HOLIDAY_MODE,
+    SERVICE_DISABLE_HOLIDAY_MODE,
+    SERVICE_SNOOZE,
+    SERVICE_CLEAR_SNOOZE,
+)
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 
 
@@ -116,6 +124,55 @@ class TestAsyncSetupEntry:
 
             with pytest.raises(Exception, match="Setup failed"):
                 await async_setup_entry(mock_hass, mock_config_entry)
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_registers_routine_reset_service(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Test that setup registers the routine_reset service."""
+        with patch(
+            "custom_components.behaviour_monitor.BehaviourMonitorCoordinator"
+        ) as mock_coordinator_class:
+            mock_coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
+            mock_coordinator.async_setup = AsyncMock()
+            mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+            mock_coordinator.monitored_entities = {"sensor.test1"}
+            mock_coordinator_class.return_value = mock_coordinator
+
+            await async_setup_entry(mock_hass, mock_config_entry)
+
+            # Verify services were registered
+            service_calls = [call[0] for call in mock_hass.services.async_register.call_args_list]
+            registered_services = [(c[0], c[1]) for c in service_calls]
+            assert (DOMAIN, SERVICE_ROUTINE_RESET) in registered_services
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_registers_all_services(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Test that setup registers all expected services."""
+        with patch(
+            "custom_components.behaviour_monitor.BehaviourMonitorCoordinator"
+        ) as mock_coordinator_class:
+            mock_coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
+            mock_coordinator.async_setup = AsyncMock()
+            mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+            mock_coordinator.monitored_entities = {"sensor.test1"}
+            mock_coordinator_class.return_value = mock_coordinator
+
+            await async_setup_entry(mock_hass, mock_config_entry)
+
+            service_calls = [call[0] for call in mock_hass.services.async_register.call_args_list]
+            registered_services = [(c[0], c[1]) for c in service_calls]
+            expected_services = [
+                (DOMAIN, SERVICE_ENABLE_HOLIDAY_MODE),
+                (DOMAIN, SERVICE_DISABLE_HOLIDAY_MODE),
+                (DOMAIN, SERVICE_SNOOZE),
+                (DOMAIN, SERVICE_CLEAR_SNOOZE),
+                (DOMAIN, SERVICE_ROUTINE_RESET),
+            ]
+            for svc in expected_services:
+                assert svc in registered_services, f"Service {svc} not registered"
 
 
 class TestAsyncUnloadEntry:

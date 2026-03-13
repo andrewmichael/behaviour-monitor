@@ -95,24 +95,22 @@ class TestSensorDescriptions:
         assert result == 85.4
 
     def test_baseline_confidence_extra_attrs(self) -> None:
-        """Test baseline_confidence sensor extra attributes."""
+        """Test baseline_confidence sensor extra attributes read from coordinator.data."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "baseline_confidence")
         coord = MagicMock()
-        coord.analyzer.is_learning_complete.return_value = True
         data = {
             "confidence": 85.0,
+            "learning_status": "complete",
             "ml_status": {
-                "enabled": True,
-                "trained": True,
-                "last_trained": "2024-01-15T10:00:00",
+                "enabled": False,
             },
         }
 
         result = sensor.extra_attrs_fn(coord, data)
 
         assert result["learning_progress"] == "complete"
-        assert result["ml_status"]["enabled"] is True
-        assert result["last_retrain"] == "2024-01-15T10:00:00"
+        assert result["ml_status"]["enabled"] is False
+        assert result["last_retrain"] is None  # No ML retraining in v1.1
 
     def test_daily_activity_count_sensor(self) -> None:
         """Test daily_activity_count sensor."""
@@ -465,11 +463,9 @@ class TestBehaviourMonitorSensor:
             "last_activity": "2024-01-15T10:30:00",
             "activity_score": 75.5,
             "anomaly_detected": False,
+            "learning_status": "learning",
+            "ml_status": {"enabled": False},
         }
-        coord.analyzer = MagicMock()
-        coord.analyzer.is_learning_complete.return_value = False
-        coord.ml_analyzer = MagicMock()
-        coord.ml_analyzer.ml_available = True
         coord.monitored_entities = {"sensor.test1", "sensor.test2"}
         return coord
 

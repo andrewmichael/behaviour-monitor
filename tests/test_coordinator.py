@@ -59,8 +59,9 @@ class TestBehaviourMonitorCoordinator:
         self, coordinator: BehaviourMonitorCoordinator, mock_config_entry: MagicMock
     ) -> None:
         """Test coordinator initialization with v1.1 engines."""
-        assert coordinator.analyzer is not None
-        assert coordinator.analyzer.is_learning_complete() is False  # no data yet
+        assert coordinator._routine_model is not None
+        assert coordinator._acute_detector is not None
+        assert coordinator._drift_detector is not None
         assert list(coordinator.monitored_entities) == ["sensor.test1", "sensor.test2"]
         assert coordinator.holiday_mode is False
         assert coordinator.is_snoozed() is False

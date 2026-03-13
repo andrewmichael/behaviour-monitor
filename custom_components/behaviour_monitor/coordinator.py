@@ -82,8 +82,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._current_welfare_status = "ok"
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._unsub_state_changed: Any = None
-        # Shim: sensor.py accesses coord.analyzer.is_learning_complete() — removed in Plan 03
-        self.analyzer = type("_S", (), {"is_learning_complete": lambda s, rm=self._routine_model: rm.learning_status() == "ready"})()
 
     @property
     def monitored_entities(self) -> list[str]:

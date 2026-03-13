@@ -1,4 +1,4 @@
-"""Tests for the config flow."""
+"""Tests for the v1.1 config flow."""
 
 from __future__ import annotations
 
@@ -11,29 +11,26 @@ from custom_components.behaviour_monitor.config_flow import (
     BehaviourMonitorOptionsFlow,
 )
 from custom_components.behaviour_monitor.const import (
-    CONF_CROSS_SENSOR_WINDOW,
-    CONF_ENABLE_ML,
+    CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
-    CONF_LEARNING_PERIOD,
+    CONF_HISTORY_WINDOW_DAYS,
+    CONF_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
-    CONF_RETRAIN_PERIOD,
-    CONF_SENSITIVITY,
-    DEFAULT_CROSS_SENSOR_WINDOW,
-    DEFAULT_ENABLE_ML,
     DEFAULT_ENABLE_NOTIFICATIONS,
-    DEFAULT_LEARNING_PERIOD,
+    DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_NOTIFICATION_COOLDOWN,
-    DEFAULT_RETRAIN_PERIOD,
-    DEFAULT_SENSITIVITY,
+    SENSITIVITY_MEDIUM,
+    SENSITIVITY_HIGH,
     SEVERITY_SIGNIFICANT,
     SEVERITY_MINOR,
 )
 
 
 class TestBehaviourMonitorConfigFlow:
-    """Tests for BehaviourMonitorConfigFlow."""
+    """Tests for BehaviourMonitorConfigFlow — v1.1 schema."""
 
     @pytest.fixture
     def config_flow(self) -> BehaviourMonitorConfigFlow:
@@ -58,12 +55,11 @@ class TestBehaviourMonitorConfigFlow:
         """Test user step with no entities selected shows error."""
         user_input = {
             CONF_MONITORED_ENTITIES: [],
-            CONF_SENSITIVITY: DEFAULT_SENSITIVITY,
-            CONF_LEARNING_PERIOD: DEFAULT_LEARNING_PERIOD,
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
-            CONF_ENABLE_ML: DEFAULT_ENABLE_ML,
-            CONF_RETRAIN_PERIOD: DEFAULT_RETRAIN_PERIOD,
-            CONF_CROSS_SENSOR_WINDOW: DEFAULT_CROSS_SENSOR_WINDOW,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
         }
 
         result = await config_flow.async_step_user(user_input=user_input)
@@ -75,18 +71,17 @@ class TestBehaviourMonitorConfigFlow:
     async def test_step_user_valid_input(
         self, config_flow: BehaviourMonitorConfigFlow
     ) -> None:
-        """Test user step with valid input creates entry."""
+        """Test user step with valid v1.1 input creates entry."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
-            CONF_SENSITIVITY: "medium",
-            CONF_LEARNING_PERIOD: 7,
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: True,
-            CONF_ENABLE_ML: True,
-            CONF_RETRAIN_PERIOD: 14,
-            CONF_CROSS_SENSOR_WINDOW: 300,
+            CONF_NOTIFICATION_COOLDOWN: 30,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
         }
 
-        # Mock the unique ID methods
         config_flow.async_set_unique_id = AsyncMock()
         config_flow._abort_if_unique_id_configured = MagicMock()
 
@@ -97,18 +92,66 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"] == user_input
 
     @pytest.mark.asyncio
+    async def test_step_user_creates_entry_with_inactivity_multiplier(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step stores inactivity_multiplier in entry data."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: 14,
+            CONF_INACTIVITY_MULTIPLIER: 5.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_HIGH,
+            CONF_ENABLE_NOTIFICATIONS: False,
+            CONF_NOTIFICATION_COOLDOWN: 60,
+        }
+
+        config_flow.async_set_unique_id = AsyncMock()
+        config_flow._abort_if_unique_id_configured = MagicMock()
+
+        result = await config_flow.async_step_user(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_INACTIVITY_MULTIPLIER] == 5.0
+
+    @pytest.mark.asyncio
+    async def test_step_user_creates_entry_with_drift_sensitivity(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step stores drift_sensitivity in entry data."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_HIGH,
+            CONF_ENABLE_NOTIFICATIONS: True,
+            CONF_NOTIFICATION_COOLDOWN: 30,
+        }
+
+        config_flow.async_set_unique_id = AsyncMock()
+        config_flow._abort_if_unique_id_configured = MagicMock()
+
+        result = await config_flow.async_step_user(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
+
+    @pytest.mark.asyncio
+    async def test_version_is_4(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 4 for the v1.1 config flow."""
+        assert config_flow.VERSION == 4
+
+    @pytest.mark.asyncio
     async def test_unique_id_based_on_entities(
         self, config_flow: BehaviourMonitorConfigFlow
     ) -> None:
         """Test unique ID is generated from sorted entity list."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.b", "sensor.a"],
-            CONF_SENSITIVITY: "medium",
-            CONF_LEARNING_PERIOD: 7,
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: True,
-            CONF_ENABLE_ML: True,
-            CONF_RETRAIN_PERIOD: 14,
-            CONF_CROSS_SENSOR_WINDOW: 300,
+            CONF_NOTIFICATION_COOLDOWN: 30,
         }
 
         unique_id_calls = []
@@ -124,9 +167,23 @@ class TestBehaviourMonitorConfigFlow:
         # Should be sorted alphabetically
         assert unique_id_calls[0] == "sensor.a_sensor.b"
 
+    def test_no_ml_fields_in_schema(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test config flow schema does not include ML-specific fields."""
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            config_flow.async_step_user(user_input=None)
+        )
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        # Should NOT have old ML keys
+        assert not any("enable_ml" in k for k in schema_keys_str)
+        assert not any("retrain_period" in k for k in schema_keys_str)
+        assert not any("ml_learning_period" in k for k in schema_keys_str)
+        assert not any("cross_sensor_window" in k for k in schema_keys_str)
+
 
 class TestBehaviourMonitorOptionsFlow:
-    """Tests for BehaviourMonitorOptionsFlow."""
+    """Tests for BehaviourMonitorOptionsFlow — v1.1 options."""
 
     @pytest.fixture
     def options_flow(self, mock_config_entry: MagicMock) -> BehaviourMonitorOptionsFlow:
@@ -155,12 +212,12 @@ class TestBehaviourMonitorOptionsFlow:
         """Test init step with no entities selected shows error."""
         user_input = {
             CONF_MONITORED_ENTITIES: [],
-            CONF_SENSITIVITY: "medium",
-            CONF_LEARNING_PERIOD: 7,
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: True,
-            CONF_ENABLE_ML: True,
-            CONF_RETRAIN_PERIOD: 14,
-            CONF_CROSS_SENSOR_WINDOW: 300,
+            CONF_NOTIFICATION_COOLDOWN: 30,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
         }
 
         result = await options_flow.async_step_init(user_input=user_input)
@@ -170,39 +227,57 @@ class TestBehaviourMonitorOptionsFlow:
 
     @pytest.mark.asyncio
     async def test_step_init_valid_input(
-        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+        self, options_flow: BehaviourMonitorOptionsFlow
     ) -> None:
-        """Test init step with valid input updates config entry."""
+        """Test init step with valid v1.1 input updates config entry."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
-            CONF_SENSITIVITY: "high",
-            CONF_LEARNING_PERIOD: 14,
+            CONF_HISTORY_WINDOW_DAYS: 14,
+            CONF_INACTIVITY_MULTIPLIER: 4.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_HIGH,
             CONF_ENABLE_NOTIFICATIONS: False,
-            CONF_ENABLE_ML: False,
-            CONF_RETRAIN_PERIOD: 7,
-            CONF_CROSS_SENSOR_WINDOW: 600,
+            CONF_NOTIFICATION_COOLDOWN: 60,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
         }
 
         result = await options_flow.async_step_init(user_input=user_input)
 
         assert result["type"] == "create_entry"
-        # Data is now stored in config entry, not returned in result
+        # v1.1 options flow returns empty data (stores in config entry)
         assert result["data"] == {}
 
     @pytest.mark.asyncio
-    async def test_step_init_preserves_defaults(
+    async def test_step_init_preserves_v4_defaults(
         self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
     ) -> None:
-        """Test init step shows current values as defaults."""
-        # Verify the v4 config entry data is accessible
-        from custom_components.behaviour_monitor.const import (
-            CONF_DRIFT_SENSITIVITY,
-            CONF_HISTORY_WINDOW_DAYS,
-            CONF_INACTIVITY_MULTIPLIER,
-        )
+        """Test init step shows v4 current values as defaults."""
         assert mock_config_entry.data[CONF_HISTORY_WINDOW_DAYS] == 28
         assert mock_config_entry.data[CONF_INACTIVITY_MULTIPLIER] == 3.0
         assert mock_config_entry.data[CONF_DRIFT_SENSITIVITY] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_step_init_shows_inactivity_multiplier_field(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test init step schema includes inactivity_multiplier field."""
+        result = await options_flow.async_step_init(user_input=None)
+
+        assert result["type"] == "form"
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_INACTIVITY_MULTIPLIER in k for k in schema_keys_str)
+
+    @pytest.mark.asyncio
+    async def test_step_init_shows_drift_sensitivity_field(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test init step schema includes drift_sensitivity field."""
+        result = await options_flow.async_step_init(user_input=None)
+
+        assert result["type"] == "form"
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_DRIFT_SENSITIVITY in k for k in schema_keys_str)
 
     @pytest.mark.asyncio
     async def test_step_init_shows_cooldown_field(
@@ -212,12 +287,9 @@ class TestBehaviourMonitorOptionsFlow:
         result = await options_flow.async_step_init(user_input=None)
 
         assert result["type"] == "form"
-        assert result["step_id"] == "init"
-        # Verify the schema contains our new field.
-        # Under test mocks, vol.Schema returns a dict directly (the schema argument).
         schema = result["data_schema"]
-        schema_keys = [str(k) for k in schema.keys()]
-        assert any(CONF_NOTIFICATION_COOLDOWN in k for k in schema_keys)
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_NOTIFICATION_COOLDOWN in k for k in schema_keys_str)
 
     @pytest.mark.asyncio
     async def test_step_init_shows_min_severity_field(
@@ -227,11 +299,70 @@ class TestBehaviourMonitorOptionsFlow:
         result = await options_flow.async_step_init(user_input=None)
 
         assert result["type"] == "form"
-        assert result["step_id"] == "init"
-        # Under test mocks, vol.Schema returns a dict directly (the schema argument).
         schema = result["data_schema"]
-        schema_keys = [str(k) for k in schema.keys()]
-        assert any(CONF_MIN_NOTIFICATION_SEVERITY in k for k in schema_keys)
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_MIN_NOTIFICATION_SEVERITY in k for k in schema_keys_str)
+
+    @pytest.mark.asyncio
+    async def test_options_flow_no_ml_fields(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test options flow schema does not include old ML fields."""
+        result = await options_flow.async_step_init(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        # Should NOT have old ML keys
+        assert not any("enable_ml" in k for k in schema_keys_str)
+        assert not any("retrain_period" in k for k in schema_keys_str)
+        assert not any("ml_learning_period" in k for k in schema_keys_str)
+        assert not any("cross_sensor_window" in k for k in schema_keys_str)
+
+    @pytest.mark.asyncio
+    async def test_options_flow_inactivity_multiplier_round_trips(
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+    ) -> None:
+        """Test inactivity_multiplier round-trips through options flow into entry data."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 5.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: True,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
+        }
+
+        result = await options_flow.async_step_init(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        options_flow.hass.config_entries.async_update_entry.assert_called_once()
+        call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
+        updated_data = call_kwargs[1]["data"]
+        assert updated_data[CONF_INACTIVITY_MULTIPLIER] == 5.0
+
+    @pytest.mark.asyncio
+    async def test_options_flow_drift_sensitivity_round_trips(
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+    ) -> None:
+        """Test drift_sensitivity round-trips through options flow into entry data."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_HIGH,
+            CONF_ENABLE_NOTIFICATIONS: True,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
+        }
+
+        result = await options_flow.async_step_init(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        options_flow.hass.config_entries.async_update_entry.assert_called_once()
+        call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
+        updated_data = call_kwargs[1]["data"]
+        assert updated_data[CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
     async def test_step_init_cooldown_round_trips(
@@ -240,12 +371,10 @@ class TestBehaviourMonitorOptionsFlow:
         """Test that cooldown value round-trips through options flow into entry data."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
-            CONF_SENSITIVITY: "medium",
-            CONF_LEARNING_PERIOD: 7,
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: True,
-            CONF_ENABLE_ML: True,
-            CONF_RETRAIN_PERIOD: 14,
-            CONF_CROSS_SENSOR_WINDOW: 300,
             CONF_NOTIFICATION_COOLDOWN: 60,
             CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
         }
@@ -253,7 +382,6 @@ class TestBehaviourMonitorOptionsFlow:
         result = await options_flow.async_step_init(user_input=user_input)
 
         assert result["type"] == "create_entry"
-        # Verify the config entry data was updated with the cooldown value
         options_flow.hass.config_entries.async_update_entry.assert_called_once()
         call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
         updated_data = call_kwargs[1]["data"]
@@ -266,12 +394,10 @@ class TestBehaviourMonitorOptionsFlow:
         """Test that min_severity value round-trips through options flow into entry data."""
         user_input = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
-            CONF_SENSITIVITY: "medium",
-            CONF_LEARNING_PERIOD: 7,
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
             CONF_ENABLE_NOTIFICATIONS: True,
-            CONF_ENABLE_ML: True,
-            CONF_RETRAIN_PERIOD: 14,
-            CONF_CROSS_SENSOR_WINDOW: 300,
             CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
             CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_MINOR,
         }
@@ -288,13 +414,11 @@ class TestBehaviourMonitorOptionsFlow:
     async def test_step_init_cooldown_defaults_when_not_in_entry(
         self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
     ) -> None:
-        """Test that cooldown defaults to DEFAULT_NOTIFICATION_COOLDOWN when not set in entry."""
-        # Ensure the new keys are absent from mock data
+        """Test that cooldown defaults gracefully when not set in entry."""
         mock_config_entry.data.pop(CONF_NOTIFICATION_COOLDOWN, None)
         mock_config_entry.data.pop(CONF_MIN_NOTIFICATION_SEVERITY, None)
 
         result = await options_flow.async_step_init(user_input=None)
 
         assert result["type"] == "form"
-        # Form should still render without error when new keys are missing from entry data
         assert result["errors"] == {}
