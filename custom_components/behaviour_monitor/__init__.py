@@ -13,8 +13,12 @@ from .const import (
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
+    CONF_LEARNING_PERIOD,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
+    DEFAULT_LEARNING_PERIOD_DAYS,
+    DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     SENSITIVITY_MEDIUM,
     SERVICE_CLEAR_SNOOZE,
@@ -56,6 +60,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     v2 -> v3: Remove ML config keys, add history_window_days.
     v3 -> v4: Remove remaining old sigma/ML keys, add inactivity_multiplier and
               drift_sensitivity defaults.
+    v4 -> v5: Add learning_period (default 7) and track_attributes (default True).
     """
     if config_entry.version < 3:
         new_data = dict(config_entry.data)
@@ -98,6 +103,23 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v4 — sigma/ML options removed, "
             "inactivity_multiplier and drift_sensitivity added"
+        )
+
+    if config_entry.version < 5:
+        new_data = dict(config_entry.data)
+
+        # Add new v2.9 config keys with defaults
+        new_data.setdefault(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS)
+        new_data.setdefault(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES)
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            version=5,
+        )
+
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v5 — learning_period and track_attributes added"
         )
 
     return True
