@@ -283,7 +283,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ml_status": {"enabled": False}, "cross_sensor_patterns": [],
             "last_notification": self._last_notification_info, "holiday_mode": self._holiday_mode,
             "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-            "ml_status_stub": "Removed in v1.1", "ml_training_stub": "N/A", "cross_sensor_stub": 0,
             "learning_status": ls, "baseline_confidence": round(conf, 1),
         }
 
@@ -296,7 +295,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "stat_training": {"complete": False, "formatted": "Unknown", "days_remaining": None, "days_elapsed": None, "total_days": self._history_window_days, "first_observation": None},
                 "ml_status": {"enabled": False}, "cross_sensor_patterns": [], "last_notification": self._last_notification_info,
                 "holiday_mode": self._holiday_mode, "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-                "ml_status_stub": "Removed in v1.1", "ml_training_stub": "N/A", "cross_sensor_stub": 0, "learning_status": "inactive", "baseline_confidence": 0.0}
+                "learning_status": "inactive", "baseline_confidence": 0.0}
 
     async def _save_fire_refresh(self, event: str, data: dict | None = None) -> None:
         await self._save_data(); self.hass.bus.async_fire(event, data or {}); await self.async_request_refresh()
