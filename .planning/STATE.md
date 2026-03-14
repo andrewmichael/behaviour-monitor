@@ -4,7 +4,7 @@ milestone: v3.0
 milestone_name: Detection Accuracy
 status: planning
 stopped_at: Completed 10-drift-accuracy 10-02-PLAN.md
-last_updated: "2026-03-14T18:59:10.295Z"
+last_updated: "2026-03-14T19:01:42.049Z"
 last_activity: 2026-03-14 — Roadmap created for v3.0
 progress:
   total_phases: 3

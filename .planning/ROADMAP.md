@@ -104,5 +104,5 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 7. Config Flow Additions | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 9. Alert Suppression | 2/2 | Complete    | 2026-03-14 | - |
-| 10. Drift Accuracy | 2/2 | Complete   | 2026-03-14 | - |
+| 10. Drift Accuracy | 2/2 | Complete    | 2026-03-14 | - |
 | 11. Adaptive Inactivity | v3.0 | 0/? | Not started | - |
