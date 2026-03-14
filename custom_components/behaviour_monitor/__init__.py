@@ -15,11 +15,15 @@ from .const import (
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
+    CONF_MAX_INACTIVITY_MULTIPLIER,
+    CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_TRACK_ATTRIBUTES,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
+    DEFAULT_MAX_INACTIVITY_MULTIPLIER,
+    DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     SENSITIVITY_MEDIUM,
@@ -134,6 +138,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v6 — alert_repeat_interval added"
+        )
+
+    if config_entry.version < 7:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER)
+        new_data.setdefault(CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=7)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v7 — adaptive inactivity bounds added"
         )
 
     return True

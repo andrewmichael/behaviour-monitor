@@ -49,7 +49,7 @@ DEFAULT_TRACK_ATTRIBUTES: Final = True
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 6
+STORAGE_VERSION: Final = 7
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
