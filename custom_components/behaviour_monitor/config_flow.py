@@ -25,6 +25,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ALERT_REPEAT_INTERVAL,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS,
@@ -35,6 +36,7 @@ from .const import (
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
@@ -81,6 +83,7 @@ def _build_data_schema(
     drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
     enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
     notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
+    alert_repeat_interval_default: int = DEFAULT_ALERT_REPEAT_INTERVAL,
     min_severity_default: str = DEFAULT_MIN_NOTIFICATION_SEVERITY,
     learning_period_default: int = DEFAULT_LEARNING_PERIOD_DAYS,
     track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
@@ -161,6 +164,17 @@ def _build_data_schema(
                 min=5,
                 max=240,
                 step=5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="minutes",
+            )
+        ),
+        vol.Required(
+            CONF_ALERT_REPEAT_INTERVAL, default=alert_repeat_interval_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=30,
+                max=1440,
+                step=30,
                 mode=NumberSelectorMode.BOX,
                 unit_of_measurement="minutes",
             )
@@ -295,6 +309,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_cooldown = self._config_entry.data.get(
             CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN
         )
+        current_alert_repeat_interval = self._config_entry.data.get(
+            CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL
+        )
         current_min_severity = self._config_entry.data.get(
             CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
         )
@@ -312,6 +329,7 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             drift_sensitivity_default=current_drift_sensitivity,
             enable_notifications_default=current_notifications,
             notification_cooldown_default=current_cooldown,
+            alert_repeat_interval_default=current_alert_repeat_interval,
             min_severity_default=current_min_severity,
             learning_period_default=current_learning_period,
             track_attributes_default=current_track_attributes,
