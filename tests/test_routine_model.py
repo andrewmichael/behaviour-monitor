@@ -558,3 +558,135 @@ class TestIsBinaryState:
 
     def test_empty_string_not_binary(self) -> None:
         assert is_binary_state("") is False
+
+
+# ---------------------------------------------------------------------------
+# ActivitySlot.interval_cv() and EntityRoutine.interval_cv()
+# ---------------------------------------------------------------------------
+
+
+def _make_slot_with_times(timestamps: list[str]) -> ActivitySlot:
+    """Return an ActivitySlot with the given event_times pre-loaded."""
+    slot = ActivitySlot()
+    for ts in timestamps:
+        slot.event_times.append(ts)
+    return slot
+
+
+class TestActivitySlotIntervalCv:
+    """Tests for ActivitySlot.interval_cv()."""
+
+    def test_cv_returns_none_when_sparse_less_than_min(self) -> None:
+        """Fewer than MIN_SLOT_OBSERVATIONS (4) events → None."""
+        slot = _make_slot_with_times(_make_timestamps(3))
+        assert slot.interval_cv() is None
+
+    def test_cv_returns_none_when_empty(self) -> None:
+        """Empty event_times → None."""
+        slot = ActivitySlot()
+        assert slot.interval_cv() is None
+
+    def test_cv_returns_none_when_only_one_interval(self) -> None:
+        """Exactly 2 events yields 1 interval — stdev requires >= 2 intervals → None."""
+        # MIN_SLOT_OBSERVATIONS=4, so 2 events fails the first guard already
+        # But to exercise the "len(intervals) < 2" guard we'd need MIN=2.
+        # Instead test with 2 events to verify first guard catches it.
+        slot = _make_slot_with_times(_make_timestamps(2))
+        assert slot.interval_cv() is None
+
+    def test_cv_zero_for_identical_intervals(self) -> None:
+        """4 events exactly 1h apart → 3 identical intervals → stdev=0 → CV=0.0."""
+        slot = _make_slot_with_times(_make_timestamps(4))
+        result = slot.interval_cv()
+        assert result == 0.0
+
+    def test_cv_zero_for_regular_intervals_five_events(self) -> None:
+        """5 events 3600s apart → CV=0.0 (all intervals equal)."""
+        slot = _make_slot_with_times(_make_timestamps(5))
+        result = slot.interval_cv()
+        assert result == 0.0
+
+    def test_cv_nonzero_for_irregular_intervals(self) -> None:
+        """Irregular intervals [3600, 7200, 1800] → CV = stdev/mean > 0."""
+        from datetime import datetime, timedelta, timezone
+
+        base = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        times = [
+            base.isoformat(),
+            (base + timedelta(seconds=3600)).isoformat(),
+            (base + timedelta(seconds=3600 + 7200)).isoformat(),
+            (base + timedelta(seconds=3600 + 7200 + 1800)).isoformat(),
+        ]
+        slot = _make_slot_with_times(times)
+        result = slot.interval_cv()
+        assert result is not None
+        assert result > 0.0
+
+    def test_cv_correct_value_for_known_intervals(self) -> None:
+        """Verify CV calculation: intervals [3600, 7200, 1800] → stdev/mean."""
+        from datetime import datetime, timedelta, timezone
+        from statistics import mean, stdev
+
+        base = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        times = [
+            base.isoformat(),
+            (base + timedelta(seconds=3600)).isoformat(),
+            (base + timedelta(seconds=3600 + 7200)).isoformat(),
+            (base + timedelta(seconds=3600 + 7200 + 1800)).isoformat(),
+        ]
+        slot = _make_slot_with_times(times)
+        intervals = [3600.0, 7200.0, 1800.0]
+        expected_cv = stdev(intervals) / mean(intervals)
+
+        result = slot.interval_cv()
+        assert result is not None
+        assert abs(result - expected_cv) < 1e-9
+
+    def test_cv_zero_when_mean_is_zero(self) -> None:
+        """All events at identical timestamps → all intervals=0 → mean=0 → CV=0.0."""
+        ts = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+        slot = _make_slot_with_times([ts, ts, ts, ts])
+        result = slot.interval_cv()
+        assert result == 0.0
+
+    def test_cv_returns_none_for_numeric_slot(self) -> None:
+        """Numeric entity slot: event_times is empty → None."""
+        slot = ActivitySlot()
+        slot.record_numeric(1.0)
+        slot.record_numeric(2.0)
+        slot.record_numeric(3.0)
+        slot.record_numeric(4.0)
+        slot.record_numeric(5.0)
+        # numeric slot — event_times is still empty
+        assert slot.interval_cv() is None
+
+
+class TestEntityRoutineIntervalCv:
+    """Tests for EntityRoutine.interval_cv() delegation."""
+
+    def test_delegates_to_correct_slot(self) -> None:
+        """interval_cv(hour, dow) returns the CV for the correct slot."""
+        er = EntityRoutine(entity_id="sensor.test", is_binary=True)
+        hour, dow = 10, 0
+        idx = er.slot_index(hour, dow)
+        # Populate the target slot with 4 identical timestamps → CV=0.0
+        for ts in _make_timestamps(4):
+            er.slots[idx].event_times.append(ts)
+        result = er.interval_cv(hour, dow)
+        assert result == 0.0
+
+    def test_returns_none_for_empty_slot(self) -> None:
+        """Empty slot → None."""
+        er = EntityRoutine(entity_id="sensor.test", is_binary=True)
+        assert er.interval_cv(10, 0) is None
+
+    def test_different_slots_are_independent(self) -> None:
+        """CV for slot (10, 0) does not bleed into slot (11, 0)."""
+        er = EntityRoutine(entity_id="sensor.test", is_binary=True)
+        idx = er.slot_index(10, 0)
+        for ts in _make_timestamps(4):
+            er.slots[idx].event_times.append(ts)
+        # slot (11, 0) is untouched → None
+        assert er.interval_cv(11, 0) is None
+        # slot (10, 0) has data → 0.0
+        assert er.interval_cv(10, 0) == 0.0

@@ -130,6 +130,35 @@ class ActivitySlot:
             return None
         return float(median(intervals))
 
+    def interval_cv(self) -> float | None:
+        """Return the coefficient of variation (stdev/mean) of inter-event intervals.
+
+        Returns None when the slot has fewer than MIN_SLOT_OBSERVATIONS events,
+        when timestamps cannot be parsed, or when fewer than 2 intervals are
+        available (stdev is undefined for a single-element list).
+        Returns 0.0 when mean is zero (all events at identical timestamps).
+        """
+        if len(self.event_times) < MIN_SLOT_OBSERVATIONS:
+            return None
+        try:
+            times = sorted(
+                datetime.fromisoformat(ts) for ts in self.event_times
+            )
+        except (ValueError, TypeError):
+            return None
+        intervals = [
+            (times[i + 1] - times[i]).total_seconds()
+            for i in range(len(times) - 1)
+        ]
+        if len(intervals) < 2:
+            return None
+        from statistics import mean, stdev
+
+        m = mean(intervals)
+        if m == 0.0:
+            return 0.0
+        return stdev(intervals) / m
+
     def slot_distribution(self) -> tuple[float, float] | None:
         """Return (mean, stdev) for numeric observations.
 
@@ -243,6 +272,14 @@ class EntityRoutine:
         Returns None when the slot has insufficient data.
         """
         return self.slots[self.slot_index(hour, dow)].expected_gap_seconds()
+
+    def interval_cv(self, hour: int, dow: int) -> float | None:
+        """Return the coefficient of variation for the specified slot.
+
+        Returns None when the slot has insufficient data or fewer than 2 intervals.
+        Returns 0.0 when mean is zero.
+        """
+        return self.slots[self.slot_index(hour, dow)].interval_cv()
 
     def daily_activity_rate(self, target_date: date) -> int:
         """Count the number of state change events recorded on target_date.
