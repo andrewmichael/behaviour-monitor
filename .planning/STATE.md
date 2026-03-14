@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: Housekeeping & Config
 status: planning
-stopped_at: Completed 07-02-PLAN.md — coordinator wiring and test coverage for CONF_LEARNING_PERIOD and CONF_TRACK_ATTRIBUTES
-last_updated: "2026-03-14T11:49:47.014Z"
+stopped_at: Completed 08-01-PLAN.md — post-bootstrap _save_data() fix and regression tests
+last_updated: "2026-03-14T13:05:57.373Z"
 last_activity: 2026-03-14 — Roadmap created, phases 6-8 defined
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 0
 ---
 
@@ -50,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 06-dead-code-removal P06-02 | 2min | 2 tasks | 2 files |
 | Phase 07-config-flow-additions P07-01 | 3min | 3 tasks | 3 files |
 | Phase 07-config-flow-additions P07-02 | 4min | 2 tasks | 4 files |
+| Phase 08-bootstrap-fix-and-closeout P08-01 | 5min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 07-config-flow-additions]: New config fields learning_period and track_attributes placed after CONF_HISTORY_WINDOW_DAYS in schema
 - [Phase 07-config-flow-additions]: CONF_LEARNING_PERIOD passed to RoutineModel as history_window_days (confidence ramp-up window), distinct from _history_window_days (recorder bootstrap fetch window)
 - [Phase 07-config-flow-additions]: Pre-existing test failures from plan 07-01 (STORAGE_VERSION/VERSION 4->5, migration call count changes) fixed as Rule 1 auto-fix in plan 07-02
+- [Phase 08-bootstrap-fix-and-closeout]: DEBT-04 resolved: await self._save_data() added after _bootstrap_from_recorder() in async_setup bootstrap branch
 
 ### Blockers/Concerns
 
@@ -83,6 +85,6 @@ None active.
 
 ## Session Continuity
 
-Last session: 2026-03-14T11:47:07.380Z
-Stopped at: Completed 07-02-PLAN.md — coordinator wiring and test coverage for CONF_LEARNING_PERIOD and CONF_TRACK_ATTRIBUTES
+Last session: 2026-03-14T13:05:57.370Z
+Stopped at: Completed 08-01-PLAN.md — post-bootstrap _save_data() fix and regression tests
 Resume file: None

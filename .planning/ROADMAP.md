@@ -89,4 +89,4 @@ Plans:
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
 | 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
 | 7. Config Flow Additions | 2/2 | Complete   | 2026-03-14 | - |
-| 8. Bootstrap Fix and Closeout | v2.9 | 0/2 | Not started | - |
+| 8. Bootstrap Fix and Closeout | 1/2 | In Progress|  | - |
