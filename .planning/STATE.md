@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: Housekeeping & Config
-status: defining_requirements
+status: ready_to_plan
 stopped_at: null
 last_updated: "2026-03-14"
-last_activity: 2026-03-14 — Milestone v2.9 started
+last_activity: 2026-03-14 — Roadmap created, phases 6-8 defined
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,14 +21,31 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** v2.9 Housekeeping & Config
+**Current focus:** v2.9 Housekeeping & Config — Phase 6: Dead Code Removal
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 6 of 8 (Dead Code Removal)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-03-14 — Milestone v2.9 started
+Status: Ready to plan
+Last activity: 2026-03-14 — Roadmap created, phases 6-8 defined
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: —
+- Total execution time: —
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
@@ -40,11 +57,11 @@ See PROJECT.md Key Decisions table for full log.
 
 None active.
 
-### Known Tech Debt (from v1.1 audit)
+### Known Tech Debt (resolved this milestone)
 
-- Post-bootstrap `_save_data()` missing in coordinator — re-bootstrap risk on immediate restart
-- Legacy constants dead code in const.py lines 129-184
-- Coordinator emits unused stub keys for deprecated sensors
+- Post-bootstrap `_save_data()` missing — tracked as DEBT-04, Phase 8
+- Legacy constants dead code in const.py lines 129-184 — tracked as DEBT-02, Phase 6
+- Coordinator emits unused stub keys for deprecated sensors — tracked as DEBT-01, Phase 6
 
 ### Quick Tasks Completed
 
@@ -54,6 +71,6 @@ None active.
 
 ## Session Continuity
 
-Last session: 2026-03-13
-Stopped at: v1.1 milestone complete
+Last session: 2026-03-14
+Stopped at: Roadmap created for v2.9 — ready to plan Phase 6
 Resume file: None
