@@ -29,7 +29,7 @@
 
 **Milestone Goal:** Clean out all v1.1 tech debt, remove dead ML remnants, and expose hardcoded config options in the UI.
 
-- [ ] **Phase 6: Dead Code Removal** - Strip deprecated ML sensor stubs and dead constants from const.py and sensor.py
+- [x] **Phase 6: Dead Code Removal** - Strip deprecated ML sensor stubs and dead constants from const.py and sensor.py (completed 2026-03-14)
 - [ ] **Phase 7: Config Flow Additions** - Expose learning period and attribute tracking as user-configurable options, with migration
 - [ ] **Phase 8: Bootstrap Fix and Closeout** - Fix missing post-bootstrap save and record milestone versioning convention
 
@@ -79,6 +79,6 @@ Plans:
 | 3. Foundation and Routine Model | v1.1 | 4/4 | Complete | 2026-03-13 |
 | 4. Detection Engines | v1.1 | 2/2 | Complete | 2026-03-13 |
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
-| 6. Dead Code Removal | 1/2 | In Progress|  | - |
+| 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
 | 7. Config Flow Additions | v2.9 | 0/TBD | Not started | - |
 | 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: Housekeeping & Config
 status: planning
-stopped_at: Completed 06-01-PLAN.md — dead code removal from sensor.py, coordinator.py, const.py
-last_updated: "2026-03-14T11:22:09.063Z"
+stopped_at: Completed 06-02-PLAN.md — test alignment after ML stub removal
+last_updated: "2026-03-14T11:25:05.263Z"
 last_activity: 2026-03-14 — Roadmap created, phases 6-8 defined
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -47,6 +47,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 06-dead-code-removal P06-01 | 3min | 3 tasks | 3 files |
+| Phase 06-dead-code-removal P06-02 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -55,6 +56,8 @@ Progress: [░░░░░░░░░░] 0%
 See PROJECT.md Key Decisions table for full log.
 - [Phase 06-dead-code-removal]: ATTR_ML_STATUS import kept in sensor.py — still consumed by baseline_confidence extra_attrs_fn
 - [Phase 06-dead-code-removal]: ml_status and cross_sensor_patterns data keys kept in coordinator output — consumed by baseline_confidence sensor, not stubs
+- [Phase 06-dead-code-removal]: TestDeprecatedSensorStubs class deleted entirely — all methods referenced sensors removed in Plan 01
+- [Phase 06-dead-code-removal]: ml_status references retained in test_baseline_confidence_extra_attrs — these test the data key, not the removed sensor
 
 ### Blockers/Concerns
 
@@ -74,6 +77,6 @@ None active.
 
 ## Session Continuity
 
-Last session: 2026-03-14T11:22:09.060Z
-Stopped at: Completed 06-01-PLAN.md — dead code removal from sensor.py, coordinator.py, const.py
+Last session: 2026-03-14T11:25:05.260Z
+Stopped at: Completed 06-02-PLAN.md — test alignment after ML stub removal
 Resume file: None
