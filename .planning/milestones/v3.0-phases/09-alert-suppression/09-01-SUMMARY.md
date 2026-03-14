@@ -118,3 +118,14 @@ None - no external service configuration required.
 ---
 *Phase: 09-alert-suppression*
 *Completed: 2026-03-14*
+
+## Self-Check: PASSED
+
+- FOUND: custom_components/behaviour_monitor/const.py
+- FOUND: custom_components/behaviour_monitor/coordinator.py
+- FOUND: tests/test_coordinator.py
+- FOUND: .planning/phases/09-alert-suppression/09-01-SUMMARY.md
+- FOUND commit: cfa4e27 (Task 1 — constants)
+- FOUND commit: aa37548 (Task 2 RED — failing tests)
+- FOUND commit: 8c7c413 (Task 2 GREEN — implementation)
+- All 341 tests passing
