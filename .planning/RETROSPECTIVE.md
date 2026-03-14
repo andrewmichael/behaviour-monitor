@@ -83,6 +83,46 @@
 
 ---
 
+## Milestone: v2.9 — Housekeeping & Config
+
+**Shipped:** 2026-03-14
+**Phases:** 3 | **Plans:** 6
+
+### What Was Built
+- Removed 3 deprecated ML sensor stubs (ml_status, cross_sensor_patterns, ml_training_remaining) from sensor.py, coordinator.py, and all tests
+- Removed dead legacy constants block from const.py (15 constants + 7 unused CONF_* names)
+- Added learning period (1-30 days, default 7) as user-configurable option in HA config UI
+- Added attribute tracking toggle (default enabled) as user-configurable option in HA config UI
+- Config v4→v5 migration with setdefault — existing installs auto-upgrade with no user action required
+- Fixed post-bootstrap persistence gap — coordinator now calls _save_data() after bootstrapping from recorder; immediate restart no longer re-bootstraps
+
+### What Worked
+- Surgical approach to dead code: grep first, remove all instances in one pass, verify tests pass — zero stragglers
+- TDD for the one-line bootstrap fix: write failing test first, apply fix, confirm green — the discipline matters even for trivial changes
+- Separate learning_period from history_window_days conceptually in the plan — caught a subtle naming collision before it became a bug
+- setdefault migration pattern: avoids clobbering user values, idempotent on repeat migration calls
+
+### What Was Inefficient
+- MILESTONES.md entry was created by Plan 08-02 using a live git range, but required the executor to determine the final commit hash at execution time — slightly awkward but worked correctly
+- Phase 8 could have been a single plan; splitting bootstrap fix and MILESTONES entry into two autonomous wave-1 plans added trivial coordination overhead
+
+### Patterns Established
+- setdefault migration: the canonical pattern for injecting new config keys with defaults without overwriting existing user values
+- Separate learning window from history fetch window — two different concepts should have distinct constants even if they default to the same value
+- TDD red-green even for one-liners: the test catches the absence, the fix makes it green, the second test (no-save-when-storage-exists) prevents over-eager saves
+
+### Key Lessons
+1. Tech debt cleanup is fastest when scoped as its own milestone — no feature pressure means clean removal without backward-compatibility gymnastics
+2. The post-bootstrap _save_data() bug was documented in v1.1 SUMMARY but not fixed — cross-phase continuity gaps need explicit tracking (add to MILESTONES.md Known Debt, not just SUMMARY)
+3. Config UI fields are cheap to add when migration is already planned — the schema extension, migration block, and coordinator read are a predictable 3-step pattern
+
+### Cost Observations
+- Model mix: orchestrators on sonnet, executors and verifiers on sonnet
+- Sessions: 2 (planning + execution were combined in one session, completion in second)
+- Notable: All 3 phases completed in under 2 hours — housekeeping milestones are fast when scope is tightly defined
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -91,6 +131,7 @@
 |-----------|--------|-------|------------|
 | v1.0 | 2 | 5 | Tuning existing code — thresholds, guards, smoothing |
 | v1.1 | 3 | 9 | Full architecture replacement — routine model + detection engines |
+| v2.9 | 3 | 6 | Tech debt clearance + config UI surface area expansion |
 
 ### Cumulative Quality
 
@@ -98,9 +139,11 @@
 |-----------|-------|------------|
 | v1.0 | 240 | FP rate 4.5% to 1.2% |
 | v1.1 | 343 | Sustained-evidence gating eliminates single-point FPs entirely |
+| v2.9 | 333 | Zero tech debt items remaining; learning period and attribute tracking configurable |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. False positive reduction requires architectural change, not just threshold tuning — v1.0 proved tuning has limits, v1.1 proved routine-based detection is fundamentally better
 2. HA-free pure-Python components are dramatically faster to develop and test — established in v1.1, should be mandatory for all future detection logic
 3. TDD red-green split across plans is fast and safe for integration work — verified in both v1.0 and v1.1
+4. Tech debt milestones are fast and high-value — v2.9 cleared 8 requirements in under 2 hours; keep a short-cycle housekeeping milestone between major features

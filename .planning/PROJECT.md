@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns per-entity routines from a mix of entity types (motion, doors, lights, climate, power) using 168 hour-of-day × day-of-week slots. Provides two detection modes: acute alerts for out-of-character events happening right now (inactivity, unusual timing), and drift alerts when behavior persistently changes over days or weeks (CUSUM change-point detection).
+A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns per-entity routines from a mix of entity types (motion, doors, lights, climate, power) using 168 hour-of-day × day-of-week slots. Provides two detection modes: acute alerts for out-of-character events happening right now (inactivity, unusual timing), and drift alerts when behavior persistently changes over days or weeks (CUSUM change-point detection). Learning period and attribute tracking are user-configurable from the HA config UI.
 
 ## Core Value
 
@@ -27,17 +27,16 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Deprecated ML sensors preserved as stubs (no broken automations) — v1.1
 - ✓ 14 sensor entity IDs remain stable across upgrades — v1.1
 - ✓ Pure Python — no River ML or external dependencies required — v1.1
+- ✓ Deprecated ML sensor stubs and coordinator stub keys removed — v2.9
+- ✓ Dead legacy constants block removed from const.py — v2.9
+- ✓ Post-bootstrap _save_data() call added — routine model survives immediate restart — v2.9
+- ✓ Learning period configurable from HA config UI (default 7 days) — v2.9
+- ✓ Attribute tracking toggle configurable from HA config UI (default enabled) — v2.9
+- ✓ Config v4→v5 migration with automatic defaults for existing installs — v2.9
 
 ### Active
 
-- [ ] Remove deprecated ML sensor stubs and associated coordinator stub keys — v2.9
-- [ ] Remove dead legacy constants block from const.py (lines 129-184) — v2.9
-- [ ] Remove unused CONF_* keys from const.py (ML and old z-score remnants) — v2.9
-- [ ] Fix missing post-bootstrap _save_data() in coordinator — v2.9
-- [ ] Expose learning period as user-configurable option in config flow — v2.9
-- [ ] Expose attribute tracking toggle as user-configurable option in config flow — v2.9
-- [ ] Add config migration step for new options with sensible defaults — v2.9
-- [ ] Align GSD milestone versioning to match package version (v2.9 target) — v2.9
+*(No active requirements — planning next milestone)*
 
 ### Out of Scope
 
@@ -51,7 +50,7 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v1.1 with 7,934 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 343 tests passing.
+Shipped v2.9 with 7,863 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 333 tests passing.
 
 Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies).
 
@@ -59,15 +58,12 @@ Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics)
 - `acute_detector.py` — inactivity and unusual-time detection with sustained-evidence gating
 - `drift_detector.py` — bidirectional CUSUM change-point detection
-- `coordinator.py` — 348-line DataUpdateCoordinator wiring all engines
-- `sensor.py` — 14 sensor entity descriptions
-- `config_flow.py` — v4 config with history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration (holiday, snooze, routine_reset), config migration chain
+- `coordinator.py` — DataUpdateCoordinator wiring all engines; now saves after bootstrap
+- `sensor.py` — 11 sensor entity descriptions (3 ML stubs removed)
+- `config_flow.py` — v5 config with learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5)
 
-Known tech debt (from v1.1 audit):
-- Post-bootstrap `_save_data()` missing in coordinator — re-bootstrap risk on immediate restart
-- Legacy constants dead code in const.py (lines 129-184)
-- Coordinator emits unused stub keys for deprecated sensors
+Known tech debt: None from prior milestones — v2.9 cleared all v1.1 tech debt items.
 
 ## Constraints
 
@@ -90,17 +86,9 @@ Known tech debt (from v1.1 audit):
 | Coordinator rewrite (not patch) | Old 1,213 lines shared almost no code with target architecture | ✓ Good — 348 lines, clean wiring |
 | Sustained evidence gating (3 cycles) | Single-observation alerts are too noisy for home automation | ✓ Good — eliminates single-point false positives |
 | Bidirectional CUSUM for drift | Detects both increases and decreases in activity | ✓ Good — catches both "stopped going outside" and "new nighttime activity" |
-
-## Current Milestone: v2.9 Housekeeping & Config
-
-**Goal:** Clean out all v1.1 tech debt, remove dead ML remnants, and expose hardcoded config options in the UI.
-
-**Target features:**
-- Remove deprecated ML sensor stubs + coordinator stub keys
-- Remove dead legacy constants from const.py
-- Fix missing post-bootstrap _save_data() in coordinator
-- Expose learning period and attribute tracking in config flow
-- Config migration for new options with defaults
+| Remove ML stubs entirely (v2.9) | Stubs created risk of users building automations on stub sensors; clean removal is safer | ✓ Good — 3 dead sensor descriptions gone, no automation regression risk |
+| learning_period separate from history_window (v2.9) | Learning window (when baseline is "ready") differs conceptually from history fetch window | ✓ Good — coordinator now passes learning_period_days to RoutineModel instead of conflating with history_window_days |
+| setdefault for v4→v5 migration (v2.9) | Preserves any values users may have set; only injects defaults where keys are absent | ✓ Good — zero broken configs on upgrade |
 
 ---
-*Last updated: 2026-03-14 after v2.9 milestone start*
+*Last updated: 2026-03-14 after v2.9 milestone*

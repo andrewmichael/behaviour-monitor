@@ -2,6 +2,15 @@
 
 ## v2.9 Housekeeping & Config (Shipped: 2026-03-14)
 
+**Phases completed:** 3 phases, 6 plans, 0 tasks
+
+**Key accomplishments:**
+- (none recorded)
+
+---
+
+## v2.9 Housekeeping & Config (Shipped: 2026-03-14)
+
 **Phases completed:** 3 phases, 6 plans
 
 **Files modified:** 40 | **Lines of code:** 7,863 Python
