@@ -41,17 +41,17 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SUPR-01 | — | Pending |
-| SUPR-02 | — | Pending |
-| SUPR-03 | — | Pending |
-| DRFT-01 | — | Pending |
-| DRFT-02 | — | Pending |
-| INAC-01 | — | Pending |
+| SUPR-01 | Phase 9 | Pending |
+| SUPR-02 | Phase 9 | Pending |
+| SUPR-03 | Phase 9 | Pending |
+| DRFT-01 | Phase 10 | Pending |
+| DRFT-02 | Phase 10 | Pending |
+| INAC-01 | Phase 11 | Pending |
 
 **Coverage:**
 - v3.0 requirements: 6 total
-- Mapped to phases: 0
-- Unmapped: 6 ⚠️
+- Mapped to phases: 6
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-14*
