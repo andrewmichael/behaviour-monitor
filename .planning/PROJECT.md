@@ -30,7 +30,14 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Active
 
-(None — define in next milestone via `/gsd:new-milestone`)
+- [ ] Remove deprecated ML sensor stubs and associated coordinator stub keys — v2.9
+- [ ] Remove dead legacy constants block from const.py (lines 129-184) — v2.9
+- [ ] Remove unused CONF_* keys from const.py (ML and old z-score remnants) — v2.9
+- [ ] Fix missing post-bootstrap _save_data() in coordinator — v2.9
+- [ ] Expose learning period as user-configurable option in config flow — v2.9
+- [ ] Expose attribute tracking toggle as user-configurable option in config flow — v2.9
+- [ ] Add config migration step for new options with sensible defaults — v2.9
+- [ ] Align GSD milestone versioning to match package version (v2.9 target) — v2.9
 
 ### Out of Scope
 
@@ -84,5 +91,16 @@ Known tech debt (from v1.1 audit):
 | Sustained evidence gating (3 cycles) | Single-observation alerts are too noisy for home automation | ✓ Good — eliminates single-point false positives |
 | Bidirectional CUSUM for drift | Detects both increases and decreases in activity | ✓ Good — catches both "stopped going outside" and "new nighttime activity" |
 
+## Current Milestone: v2.9 Housekeeping & Config
+
+**Goal:** Clean out all v1.1 tech debt, remove dead ML remnants, and expose hardcoded config options in the UI.
+
+**Target features:**
+- Remove deprecated ML sensor stubs + coordinator stub keys
+- Remove dead legacy constants from const.py
+- Fix missing post-bootstrap _save_data() in coordinator
+- Expose learning period and attribute tracking in config flow
+- Config migration for new options with defaults
+
 ---
-*Last updated: 2026-03-13 after v1.1 milestone*
+*Last updated: 2026-03-14 after v2.9 milestone start*

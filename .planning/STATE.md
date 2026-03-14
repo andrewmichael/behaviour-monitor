@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
-milestone: null
-milestone_name: null
-status: between_milestones
-stopped_at: v1.1 milestone complete
-last_updated: "2026-03-13"
-last_activity: 2026-03-13 — v1.1 Detection Rebuild shipped (3 phases, 9 plans, 12/12 requirements)
+milestone: v2.9
+milestone_name: Housekeeping & Config
+status: defining_requirements
+stopped_at: null
+last_updated: "2026-03-14"
+last_activity: 2026-03-14 — Milestone v2.9 started
 progress:
   total_phases: 0
   completed_phases: 0
@@ -18,17 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-13)
+See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Between milestones — run `/gsd:new-milestone` to start next cycle
+**Current focus:** v2.9 Housekeeping & Config
 
 ## Current Position
 
-Phase: None (between milestones)
-Plan: N/A
-Status: v1.1 shipped, ready for next milestone
-Last activity: 2026-03-13 — v1.1 Detection Rebuild shipped
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-14 — Milestone v2.9 started
 
 ## Accumulated Context
 
