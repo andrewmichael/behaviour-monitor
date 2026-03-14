@@ -977,6 +977,367 @@ class TestDayTypeSplitIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Scenario tests — end-to-end success criteria validation
+# ---------------------------------------------------------------------------
+
+
+class TestWeekendIsolationScenario:
+    """End-to-end scenario tests validating DRFT-01 success criteria.
+
+    Criterion 1: A weekend-only behavior change triggers a drift alert without
+                 being diluted by weekday data.
+    Criterion 3: Entities with insufficient day-type-split data still receive
+                 drift detection via fallback.
+    """
+
+    def test_weekend_shift_alerts_without_weekday_dilution(self) -> None:
+        """Weekend 4x shift detected despite 20 weekday history days.
+
+        History: 20 weekdays at rate=5, 8 weekends at rate=5 (stable).
+        Today: Saturday with rate=20 (4x weekend baseline).
+
+        With day-type split active (8 weekend days >= MIN_EVIDENCE_DAYS=3),
+        the weekday days do NOT dilute the weekend baseline. The 4x shift
+        must trigger an alert within 5 consecutive Saturday checks.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        # Build history starting from 2024-01-19 (Friday) going back 28 days.
+        # This gives us a mix of weekday and weekend dates.
+        # Base: 2024-01-20 = Saturday (today in the simulation).
+        # We use 2024-01-19 as the day before "first Saturday today".
+        routine = EntityRoutine(entity_id="sensor.weekend_test", is_binary=True)
+
+        from datetime import timedelta
+
+        history_start = date(2024, 1, 19)  # Friday (most recent history day)
+        for day_offset in range(28):
+            history_date = history_start - timedelta(days=day_offset)
+            for event_i in range(5):
+                ts = datetime(
+                    history_date.year,
+                    history_date.month,
+                    history_date.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+
+        detector = DriftDetector()
+        alert_fired = False
+        alert_direction: str | None = None
+
+        # Simulate 5 consecutive Saturdays starting 2024-01-20
+        for week_offset in range(5):
+            saturday = date(2024, 1, 20) + timedelta(weeks=week_offset)
+            assert saturday.weekday() == 5, f"{saturday} should be Saturday"
+
+            # Record 20 events on this Saturday (4x the weekend baseline of 5)
+            for event_i in range(20):
+                ts = datetime(
+                    saturday.year,
+                    saturday.month,
+                    saturday.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+
+            now = datetime(
+                saturday.year, saturday.month, saturday.day,
+                23, 0, 0, tzinfo=timezone.utc,
+            )
+            result = detector.check("sensor.weekend_test", routine, saturday, now)
+            if result is not None:
+                alert_fired = True
+                alert_direction = result.details.get("direction")
+                break
+
+        assert alert_fired, (
+            "Expected drift alert within 5 Saturday checks for 4x weekend shift"
+        )
+        assert alert_direction == "increase", (
+            f"Expected direction='increase', got '{alert_direction}'"
+        )
+
+    def test_fallback_still_detects_drift_with_few_weekend_days(self) -> None:
+        """Fallback combined pool detects drift when weekend evidence is sparse.
+
+        History: 14 weekdays at rate=5, only 2 weekend days at rate=5
+                 (2 < MIN_EVIDENCE_DAYS=3 — triggers fallback).
+        Today: Saturday with rate=20.
+
+        The fallback combined pool (weekday + weekend) still sees a rate=20
+        vs baseline ~5 shift and must alert within 8 Saturday checks.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+        from datetime import timedelta
+
+        routine = EntityRoutine(entity_id="sensor.fallback_test", is_binary=True)
+
+        # Add 14 weekday history days at rate=5
+        # Starting from 2024-01-19 (Friday) and going back through weekdays
+        monday = date(2024, 1, 15)  # Monday
+        weekday_count = 0
+        day_offset = 0
+        while weekday_count < 14:
+            history_date = monday - timedelta(days=day_offset)
+            day_offset += 1
+            if history_date.weekday() >= 5:
+                continue  # skip weekends
+            for event_i in range(5):
+                ts = datetime(
+                    history_date.year,
+                    history_date.month,
+                    history_date.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+            weekday_count += 1
+
+        # Add exactly 2 weekend history days at rate=5
+        # Use 2024-01-13 (Saturday) and 2024-01-14 (Sunday)
+        for weekend_date in [date(2024, 1, 13), date(2024, 1, 14)]:
+            for event_i in range(5):
+                ts = datetime(
+                    weekend_date.year,
+                    weekend_date.month,
+                    weekend_date.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+
+        detector = DriftDetector()
+        alert_fired = False
+
+        # Simulate up to 8 consecutive Saturdays starting 2024-01-20
+        for week_offset in range(8):
+            saturday = date(2024, 1, 20) + timedelta(weeks=week_offset)
+            assert saturday.weekday() == 5, f"{saturday} should be Saturday"
+
+            # Record 20 events on this Saturday (4x baseline)
+            for event_i in range(20):
+                ts = datetime(
+                    saturday.year,
+                    saturday.month,
+                    saturday.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+
+            now = datetime(
+                saturday.year, saturday.month, saturday.day,
+                23, 0, 0, tzinfo=timezone.utc,
+            )
+            result = detector.check("sensor.fallback_test", routine, saturday, now)
+            if result is not None:
+                alert_fired = True
+                break
+
+        assert alert_fired, (
+            "Expected drift alert within 8 Saturday checks for 4x shift "
+            "using fallback combined pool (only 2 weekend history days)"
+        )
+
+
+class TestRecencyWeightingScenario:
+    """End-to-end scenario tests validating DRFT-02 success criterion 2.
+
+    Criterion 2: Recent days contribute more to the baseline than data from
+                 60+ days ago (exponential decay weighting).
+    """
+
+    @staticmethod
+    def _build_recency_routine(
+        entity_id: str,
+        check_date: date,
+        today_rate: int,
+        old_rate: int,
+        recent_rate: int,
+        n_old: int = 15,
+        n_recent: int = 7,
+        old_start_offset: int = 15,
+    ) -> "EntityRoutine":
+        """Build a routine with clearly-separated old and recent history periods.
+
+        History structure (weekday-only):
+          - n_old weekday days starting at old_start_offset before check_date:
+            each at old_rate events/day.
+          - n_recent weekday days at offsets 1..(1+n_recent) before check_date:
+            each at recent_rate events/day.
+          - check_date itself: today_rate events recorded.
+
+        The gap between the two periods (offsets old_start_offset down to
+        1+n_recent) prevents any date from accumulating events from both
+        periods, ensuring a clean baseline contrast.
+
+        Args:
+            entity_id:         Entity identifier.
+            check_date:        The "today" date (must be a weekday).
+            today_rate:        Events recorded on check_date.
+            old_rate:          Events per day for the old history period.
+            recent_rate:       Events per day for the recent history period.
+            n_old:             Number of old weekday days to create.
+            n_recent:          Number of recent weekday days to create.
+            old_start_offset:  Starting offset (days before check_date) for
+                               old history; must be > n_recent to maintain gap.
+
+        Returns:
+            EntityRoutine populated with history and today's events.
+        """
+        from datetime import timedelta
+
+        routine = EntityRoutine(entity_id=entity_id, is_binary=True)
+
+        # --- Old history (far back, low weight under decay) ---
+        old_count = 0
+        offset = old_start_offset
+        while old_count < n_old:
+            history_date = check_date - timedelta(days=offset)
+            offset += 1
+            if history_date.weekday() >= 5:
+                continue  # weekdays only
+            for event_i in range(old_rate):
+                ts = datetime(
+                    history_date.year,
+                    history_date.month,
+                    history_date.day,
+                    event_i % 24,
+                    0,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+            old_count += 1
+
+        # --- Recent history (close in time, high weight under decay) ---
+        recent_count = 0
+        offset = 1
+        while recent_count < n_recent:
+            history_date = check_date - timedelta(days=offset)
+            offset += 1
+            if history_date.weekday() >= 5:
+                continue  # weekdays only
+            for event_i in range(recent_rate):
+                ts = datetime(
+                    history_date.year,
+                    history_date.month,
+                    history_date.day,
+                    event_i % 24,
+                    event_i % 60,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+                routine.record(ts, "on")
+            recent_count += 1
+
+        # --- Today's events ---
+        for event_i in range(today_rate):
+            ts = datetime(
+                check_date.year,
+                check_date.month,
+                check_date.day,
+                event_i % 24,
+                0,
+                0,
+                tzinfo=timezone.utc,
+            )
+            routine.record(ts, "on")
+
+        return routine
+
+    def test_recency_weighted_baseline_reflects_recent_data(self) -> None:
+        """Decay weighting causes recent high-rate data to dominate the baseline.
+
+        History structure (all weekday-only to avoid day-type split effects):
+          - 15 old weekday days (offsets 15+ before today): rate=2 (very low)
+          - 7 recent weekday days (offsets 1..7 before today): rate=20 (high)
+
+        Today: rate=2 (matches old baseline, LOW relative to recent rate=20).
+
+        A fresh routine is built for each simulated day so the baseline
+        contrast remains consistent across all simulation days. This mirrors
+        the pattern used in the core CUSUM tests.
+
+        With exponential decay (0.95/day), the 7 recent days at rate=20 have
+        much higher weight than the 15 old days at rate=2. The weighted mean
+        lands near 15-18, making today's rate=2 a clear downward shift
+        (z ≈ −2). CUSUM s_neg crosses h=4.0 within a few days and stays
+        above it for MIN_EVIDENCE_DAYS=3, triggering the alert.
+
+        Without recency weighting (arithmetic mean):
+          mean = (15×2 + 7×20) / 22 ≈ 7.7; z for rate=2 ≈ −0.66 — too
+          weak to trigger CUSUM within the simulation window.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+        from datetime import timedelta
+
+        # Monday 2024-02-12: clean weekday reference with no month-boundary effects
+        base_date = date(2024, 2, 12)
+        assert base_date.weekday() == 0, f"{base_date} should be Monday"
+
+        detector = DriftDetector()
+        alert_fired = False
+        alert_direction: str | None = None
+
+        # Simulate up to 8 consecutive weekdays. Each day gets a fresh routine
+        # with the same baseline shape so the baseline mean stays consistent.
+        weekday_sim = 0
+        for day_offset in range(12):
+            check_date = base_date + timedelta(days=day_offset)
+            if check_date.weekday() >= 5:
+                continue  # skip weekends
+            weekday_sim += 1
+
+            # Fresh routine per simulated day: fixed old/recent history + today.
+            # old_start_offset=15 ensures the recent window (offsets 1..9) and
+            # old window (offsets 15+) never overlap on the same calendar date.
+            routine = self._build_recency_routine(
+                entity_id="sensor.recency_test",
+                check_date=check_date,
+                today_rate=2,
+                old_rate=2,
+                recent_rate=20,
+                n_old=15,
+                n_recent=7,
+                old_start_offset=15,
+            )
+
+            now = datetime(
+                check_date.year, check_date.month, check_date.day,
+                23, 0, 0, tzinfo=timezone.utc,
+            )
+            result = detector.check("sensor.recency_test", routine, check_date, now)
+            if result is not None:
+                alert_fired = True
+                alert_direction = result.details.get("direction")
+                break
+
+        assert alert_fired, (
+            f"Expected downward drift alert within {weekday_sim} weekdays: "
+            "recent rate=20 history (7 days, high decay weight) dominates the "
+            "baseline, making today's rate=2 appear far below the weighted mean."
+        )
+        assert alert_direction == "decrease", (
+            f"Expected direction='decrease' (today=2 < decay-weighted baseline≈18), "
+            f"got '{alert_direction}'"
+        )
+
+
+# ---------------------------------------------------------------------------
 # HA import guard test
 # ---------------------------------------------------------------------------
 
