@@ -10,11 +10,13 @@ from homeassistant.core import HomeAssistant, ServiceCall
 import voluptuous as vol
 
 from .const import (
+    CONF_ALERT_REPEAT_INTERVAL,
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
     CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
@@ -120,6 +122,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v5 — learning_period and track_attributes added"
+        )
+
+    if config_entry.version < 6:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL)
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            version=6,
+        )
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v6 — alert_repeat_interval added"
         )
 
     return True

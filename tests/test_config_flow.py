@@ -158,9 +158,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_5(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 5 after v2.9 config flow additions."""
-        assert config_flow.VERSION == 5
+    async def test_version_is_6(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 6 after v3.0 config flow additions."""
+        assert config_flow.VERSION == 6
 
     @pytest.mark.asyncio
     async def test_unique_id_based_on_entities(
