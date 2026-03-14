@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Detection Accuracy
 status: planning
-stopped_at: Completed 09-alert-suppression 09-01-PLAN.md
-last_updated: "2026-03-14T18:12:52.509Z"
+stopped_at: Completed 09-alert-suppression 09-02-PLAN.md
+last_updated: "2026-03-14T18:19:26.277Z"
 last_activity: 2026-03-14 — Roadmap created for v3.0
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -39,6 +39,8 @@ Progress: [░░░░░░░░░░] 0%
 See PROJECT.md Key Decisions table for full log.
 - [Phase 09-alert-suppression]: Keep _notification_cooldowns intact for backward compatibility; _alert_suppression is the new active suppression gate
 - [Phase 09-alert-suppression]: DEFAULT_ALERT_REPEAT_INTERVAL = 240 min (4 hours); clear-on-resolve prunes suppression entries when conditions disappear
+- [Phase 09-alert-suppression]: STORAGE_VERSION and ConfigFlow.VERSION both bumped to 6 simultaneously to keep storage and config entry versions aligned
+- [Phase 09-alert-suppression]: alert_repeat_interval placed after notification_cooldown in schema to group notification-related fields
 
 ### Blockers/Concerns
 
@@ -56,6 +58,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-03-14T18:12:52.506Z
-Stopped at: Completed 09-alert-suppression 09-01-PLAN.md
+Last session: 2026-03-14T18:19:26.273Z
+Stopped at: Completed 09-alert-suppression 09-02-PLAN.md
 Resume file: None

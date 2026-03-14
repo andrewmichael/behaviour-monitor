@@ -39,7 +39,7 @@
 
 **Milestone Goal:** Reduce false positives and notification fatigue by making detection smarter — weekday/weekend-aware drift, recency-weighted baselines, auto-learned inactivity thresholds, and persistent alert suppression.
 
-- [ ] **Phase 9: Alert Suppression** — Fire-once-then-throttle notifications with configurable repeat interval
+- [x] **Phase 9: Alert Suppression** — Fire-once-then-throttle notifications with configurable repeat interval (completed 2026-03-14)
 - [ ] **Phase 10: Drift Accuracy** — Weekday/weekend split and recency-weighted CUSUM baselines
 - [ ] **Phase 11: Adaptive Inactivity** — Per-entity inactivity thresholds auto-learned from observed variance
 
@@ -103,6 +103,6 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 6. Dead Code Removal | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 7. Config Flow Additions | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
-| 9. Alert Suppression | 1/2 | In Progress|  | - |
+| 9. Alert Suppression | 2/2 | Complete   | 2026-03-14 | - |
 | 10. Drift Accuracy | v3.0 | 0/? | Not started | - |
 | 11. Adaptive Inactivity | v3.0 | 0/? | Not started | - |
