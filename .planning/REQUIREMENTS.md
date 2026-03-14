@@ -18,7 +18,7 @@
 
 ### Inactivity Detection
 
-- [ ] **INAC-01**: The inactivity threshold for each entity is derived from that entity's own observed inter-event variance rather than applying a single global multiplier uniformly
+- [x] **INAC-01**: The inactivity threshold for each entity is derived from that entity's own observed inter-event variance rather than applying a single global multiplier uniformly
 
 ## Future Requirements
 
@@ -46,7 +46,7 @@
 | SUPR-03 | Phase 9 | Complete |
 | DRFT-01 | Phase 10 | Complete |
 | DRFT-02 | Phase 10 | Complete |
-| INAC-01 | Phase 11 | Pending |
+| INAC-01 | Phase 11 | Complete |
 
 **Coverage:**
 - v3.0 requirements: 6 total
