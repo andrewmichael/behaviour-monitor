@@ -4,7 +4,7 @@ milestone: v3.0
 milestone_name: Detection Accuracy
 status: planning
 stopped_at: Completed 11-adaptive-inactivity 11-02-PLAN.md
-last_updated: "2026-03-14T19:57:03.297Z"
+last_updated: "2026-03-14T20:00:08.743Z"
 last_activity: 2026-03-14 — Roadmap created for v3.0
 progress:
   total_phases: 3
