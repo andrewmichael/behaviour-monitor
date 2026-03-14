@@ -36,7 +36,10 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Active
 
-*(No active requirements — planning next milestone)*
+- [ ] Alert suppression — fire once, then re-notify at reduced frequency while condition persists — v3.0
+- [ ] Weekday/weekend split drift baseline — separate Saturday from Tuesday in CUSUM — v3.0
+- [ ] Recency-weighted drift baseline — weight recent days more heavily to adapt to routine changes — v3.0
+- [ ] Per-entity inactivity threshold — auto-learn tolerance from each entity's observed variance — v3.0
 
 ### Out of Scope
 
@@ -90,5 +93,15 @@ Known tech debt: None from prior milestones — v2.9 cleared all v1.1 tech debt 
 | learning_period separate from history_window (v2.9) | Learning window (when baseline is "ready") differs conceptually from history fetch window | ✓ Good — coordinator now passes learning_period_days to RoutineModel instead of conflating with history_window_days |
 | setdefault for v4→v5 migration (v2.9) | Preserves any values users may have set; only injects defaults where keys are absent | ✓ Good — zero broken configs on upgrade |
 
+## Current Milestone: v3.0 Detection Accuracy
+
+**Goal:** Reduce false positives and notification fatigue by making detection smarter — weekday/weekend-aware drift, recency-weighted baselines, auto-learned inactivity thresholds, and persistent alert suppression.
+
+**Target features:**
+- Alert suppression: fire once, reduce frequency while condition persists
+- Weekday/weekend split CUSUM baseline
+- Recency-weighted (exponentially decayed) drift baseline
+- Per-entity inactivity threshold auto-learned from observed variance
+
 ---
-*Last updated: 2026-03-14 after v2.9 milestone*
+*Last updated: 2026-03-14 after v3.0 milestone start*

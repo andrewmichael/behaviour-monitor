@@ -1,35 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.9
-milestone_name: Housekeeping & Config
-status: complete
-stopped_at: v2.9 milestone archived — planning next milestone
-last_updated: "2026-03-14T14:00:00.000Z"
-last_activity: 2026-03-14 — v2.9 milestone complete and archived
+milestone: v3.0
+milestone_name: Detection Accuracy
+status: planning
+stopped_at: Milestone v3.0 started — defining requirements
+last_updated: "2026-03-14T14:30:00.000Z"
+last_activity: 2026-03-14 — Milestone v3.0 started
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-14 after v2.9 milestone)
+See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Planning next milestone
+**Current focus:** v3.0 Detection Accuracy — defining requirements
 
 ## Current Position
 
-Milestone: v2.9 complete and archived
-Status: Ready for next milestone
-Last activity: 2026-03-14 — v2.9 milestone archived, PROJECT.md and RETROSPECTIVE.md updated
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-14 — Milestone v3.0 started
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0%
 
 ## Accumulated Context
 
@@ -37,15 +38,13 @@ Progress: [██████████] 100%
 
 See PROJECT.md Key Decisions table for full log.
 
-All v2.9 decisions archived — see `.planning/milestones/v2.9-ROADMAP.md` for full phase detail.
-
 ### Blockers/Concerns
 
 None.
 
 ### Known Tech Debt
 
-None from prior milestones — v2.9 cleared all v1.1 tech debt items.
+None from prior milestones.
 
 ### Quick Tasks Completed
 
@@ -56,5 +55,5 @@ None from prior milestones — v2.9 cleared all v1.1 tech debt items.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: v2.9 milestone archived — ready for /gsd:new-milestone
+Stopped at: Milestone v3.0 started — requirements phase
 Resume file: None
