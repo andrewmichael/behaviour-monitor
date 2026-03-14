@@ -13,8 +13,8 @@
 
 ### Drift Detection
 
-- [ ] **DRFT-01**: The CUSUM drift baseline splits daily activity rates by day-type (weekdays vs weekends) so weekend activity is only compared to other weekend days
-- [ ] **DRFT-02**: The drift baseline applies exponential decay weighting so recent days influence the baseline more than data from 60+ days ago
+- [x] **DRFT-01**: The CUSUM drift baseline splits daily activity rates by day-type (weekdays vs weekends) so weekend activity is only compared to other weekend days
+- [x] **DRFT-02**: The drift baseline applies exponential decay weighting so recent days influence the baseline more than data from 60+ days ago
 
 ### Inactivity Detection
 
@@ -44,8 +44,8 @@
 | SUPR-01 | Phase 9 | Complete |
 | SUPR-02 | Phase 9 | Complete |
 | SUPR-03 | Phase 9 | Complete |
-| DRFT-01 | Phase 10 | Pending |
-| DRFT-02 | Phase 10 | Pending |
+| DRFT-01 | Phase 10 | Complete |
+| DRFT-02 | Phase 10 | Complete |
 | INAC-01 | Phase 11 | Pending |
 
 **Coverage:**
