@@ -16,6 +16,10 @@ CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
 CONF_INACTIVITY_MULTIPLIER: Final = "inactivity_multiplier"
 CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
 
+# New v2.9 config keys
+CONF_LEARNING_PERIOD: Final = "learning_period"
+CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
+
 # Sensitivity levels
 SENSITIVITY_LOW: Final = "low"
 SENSITIVITY_MEDIUM: Final = "medium"
@@ -30,10 +34,12 @@ DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"
 # New v1.1 defaults
 DEFAULT_HISTORY_WINDOW_DAYS: Final = 28  # days
 DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
+DEFAULT_LEARNING_PERIOD_DAYS: Final = 7  # days
+DEFAULT_TRACK_ATTRIBUTES: Final = True
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 4
+STORAGE_VERSION: Final = 5
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
@@ -44,7 +50,6 @@ ATTR_MONITORED_ENTITIES: Final = "monitored_entities"
 ATTR_LEARNING_PROGRESS: Final = "learning_progress"
 ATTR_ANOMALY_DETAILS: Final = "anomaly_details"
 ATTR_ML_STATUS: Final = "ml_status"
-ATTR_CROSS_SENSOR_PATTERNS: Final = "cross_sensor_patterns"
 ATTR_LAST_RETRAIN: Final = "last_retrain"
 
 # Elder care severity levels
