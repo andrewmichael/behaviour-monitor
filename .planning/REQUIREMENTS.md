@@ -7,9 +7,9 @@
 
 ### Alert Suppression
 
-- [ ] **SUPR-01**: After an alert fires for a given entity+alert-type, subsequent notifications are suppressed for a configurable repeat interval (default 4 hours) rather than firing every polling cycle
+- [x] **SUPR-01**: After an alert fires for a given entity+alert-type, subsequent notifications are suppressed for a configurable repeat interval (default 4 hours) rather than firing every polling cycle
 - [ ] **SUPR-02**: The alert repeat interval is user-configurable from the HA config UI
-- [ ] **SUPR-03**: Suppression state resets when the alert condition clears — if the condition resolves and re-triggers, a fresh notification fires immediately
+- [x] **SUPR-03**: Suppression state resets when the alert condition clears — if the condition resolves and re-triggers, a fresh notification fires immediately
 
 ### Drift Detection
 
@@ -41,9 +41,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SUPR-01 | Phase 9 | Pending |
+| SUPR-01 | Phase 9 | Complete |
 | SUPR-02 | Phase 9 | Pending |
-| SUPR-03 | Phase 9 | Pending |
+| SUPR-03 | Phase 9 | Complete |
 | DRFT-01 | Phase 10 | Pending |
 | DRFT-02 | Phase 10 | Pending |
 | INAC-01 | Phase 11 | Pending |
