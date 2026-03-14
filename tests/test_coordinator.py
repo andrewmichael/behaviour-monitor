@@ -10,6 +10,8 @@ import pytest
 
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import (
+    CONF_ALERT_REPEAT_INTERVAL,
+    DEFAULT_ALERT_REPEAT_INTERVAL,
     WELFARE_DEBOUNCE_CYCLES,
 )
 from custom_components.behaviour_monitor.alert_result import (
@@ -919,3 +921,165 @@ class TestStorageFormat:
             await coordinator.async_setup()
         # snooze_until should be set (tz-aware comparison may differ in test env)
         assert coordinator._snooze_until is not None
+
+
+# ---------------------------------------------------------------------------
+# TestAlertSuppression
+# ---------------------------------------------------------------------------
+
+
+class TestAlertSuppression:
+    """Tests for fire-once-then-throttle alert suppression logic."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        coord = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        coord._enable_notifications = True
+        coord._min_notification_severity = "minor"  # gate = LOW, passes MEDIUM
+        return coord
+
+    @pytest.mark.asyncio
+    async def test_first_alert_fires_and_records(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """First alert for a key fires and records timestamp in _alert_suppression."""
+        alert = _make_alert(severity=AlertSeverity.MEDIUM)
+        now = datetime.now(timezone.utc)
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock) as mock_send:
+            await coordinator._handle_alerts([alert], now)
+        mock_send.assert_called_once()
+        key = "sensor.test1|inactivity"
+        assert key in coordinator._alert_suppression
+        assert coordinator._alert_suppression[key] == now
+
+    @pytest.mark.asyncio
+    async def test_repeat_suppressed_within_interval(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """Same key within repeat interval is suppressed (notification not sent)."""
+        alert = _make_alert(severity=AlertSeverity.MEDIUM)
+        now = datetime.now(timezone.utc)
+        # Pre-set suppression as if just notified
+        coordinator._alert_suppression["sensor.test1|inactivity"] = now
+        coordinator._alert_repeat_interval = 240  # 4 hours
+
+        # Call 30 minutes later — well within 240-minute interval
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock) as mock_send:
+            await coordinator._handle_alerts([alert], now + timedelta(minutes=30))
+        mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_repeat_fires_after_interval_elapses(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """Same key fires again after the repeat interval has elapsed."""
+        alert = _make_alert(severity=AlertSeverity.MEDIUM)
+        then = datetime.now(timezone.utc) - timedelta(hours=5)
+        coordinator._alert_suppression["sensor.test1|inactivity"] = then
+        coordinator._alert_repeat_interval = 240  # 4 hours
+
+        now = datetime.now(timezone.utc)  # 5 hours later > 240 minutes
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock) as mock_send:
+            await coordinator._handle_alerts([alert], now)
+        mock_send.assert_called_once()
+        # Timestamp updated to new now
+        assert coordinator._alert_suppression["sensor.test1|inactivity"] == now
+
+    @pytest.mark.asyncio
+    async def test_suppression_clears_when_condition_resolves(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """When an alert key is absent from current cycle results, its suppression entry is removed."""
+        now = datetime.now(timezone.utc)
+        coordinator._alert_suppression["sensor.test1|inactivity"] = now
+
+        # Call with empty alerts (condition has cleared)
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock):
+            await coordinator._handle_alerts([], now)
+
+        assert "sensor.test1|inactivity" not in coordinator._alert_suppression
+
+    @pytest.mark.asyncio
+    async def test_re_trigger_after_clear_fires_immediately(
+        self, coordinator: BehaviourMonitorCoordinator, mock_hass: MagicMock
+    ) -> None:
+        """After a condition clears and re-appears, the alert fires immediately without waiting."""
+        alert = _make_alert(severity=AlertSeverity.MEDIUM)
+        now = datetime.now(timezone.utc)
+
+        # Step 1: Condition active, fires and gets suppressed
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock) as mock_send:
+            await coordinator._handle_alerts([alert], now)
+        assert mock_send.call_count == 1
+
+        # Step 2: Condition clears — entry removed
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock):
+            await coordinator._handle_alerts([], now + timedelta(minutes=1))
+        assert "sensor.test1|inactivity" not in coordinator._alert_suppression
+
+        # Step 3: Condition re-appears 2 minutes later (within normal interval) — fires immediately
+        with patch.object(coordinator, "_send_notification", new_callable=AsyncMock) as mock_send2:
+            await coordinator._handle_alerts([alert], now + timedelta(minutes=2))
+        mock_send2.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_suppression_state_persists_to_storage(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_alert_suppression is serialised into storage coordinator block as 'alert_suppression'."""
+        now = datetime.now(timezone.utc)
+        coordinator._alert_suppression["sensor.test1|inactivity"] = now
+
+        saved_data = None
+
+        async def capture(data: dict[str, Any]) -> None:
+            nonlocal saved_data
+            saved_data = data
+
+        with patch.object(coordinator._store, "async_save", side_effect=capture):
+            await coordinator._save_data()
+
+        assert saved_data is not None
+        assert "alert_suppression" in saved_data["coordinator"]
+        assert "sensor.test1|inactivity" in saved_data["coordinator"]["alert_suppression"]
+        # Value is an ISO string
+        assert isinstance(saved_data["coordinator"]["alert_suppression"]["sensor.test1|inactivity"], str)
+
+    @pytest.mark.asyncio
+    async def test_suppression_state_restored_from_storage(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_alert_suppression is restored from storage on async_setup."""
+        now = datetime.now(timezone.utc)
+        stored = {
+            "routine_model": RoutineModel().to_dict(),
+            "cusum_states": {},
+            "coordinator": {
+                "alert_suppression": {
+                    "sensor.test1|inactivity": now.isoformat(),
+                }
+            },
+        }
+        new_coord = BehaviourMonitorCoordinator(coordinator.hass, coordinator._entry)
+        with patch.object(new_coord._store, "async_load", return_value=stored):
+            await new_coord.async_setup()
+
+        assert "sensor.test1|inactivity" in new_coord._alert_suppression
+
+    def test_coordinator_reads_alert_repeat_interval(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Coordinator reads CONF_ALERT_REPEAT_INTERVAL from entry.data with fallback."""
+        # Default fallback
+        coord = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coord._alert_repeat_interval == DEFAULT_ALERT_REPEAT_INTERVAL
+
+        # Custom value
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_ALERT_REPEAT_INTERVAL: 120,
+        }
+        coord2 = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coord2._alert_repeat_interval == 120
