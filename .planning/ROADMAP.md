@@ -54,11 +54,11 @@
   2. The alert repeat interval is configurable from the HA options flow and persists across restarts
   3. When an alert condition clears and later re-triggers, a fresh notification fires immediately without waiting for the repeat interval
   4. Config migration upgrades existing entries to include the new repeat interval default without user intervention
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
+- [ ] 09-01-PLAN.md — Core suppression logic: constants + coordinator _alert_suppression dict with clear-on-resolve
+- [ ] 09-02-PLAN.md — Config UI + v5->v6 migration: options flow field, schema version bump, migration block
 
 ### Phase 10: Drift Accuracy
 **Goal**: CUSUM drift detection uses day-type-aware and recency-weighted baselines so weekend behavior is only compared to weekends and recent patterns outweigh stale history
@@ -103,6 +103,6 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 6. Dead Code Removal | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 7. Config Flow Additions | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
-| 9. Alert Suppression | v3.0 | 0/? | Not started | - |
+| 9. Alert Suppression | v3.0 | 0/2 | Not started | - |
 | 10. Drift Accuracy | v3.0 | 0/? | Not started | - |
 | 11. Adaptive Inactivity | v3.0 | 0/? | Not started | - |
