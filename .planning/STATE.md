@@ -4,7 +4,7 @@ milestone: v2.9
 milestone_name: Housekeeping & Config
 status: planning
 stopped_at: Completed 06-02-PLAN.md — test alignment after ML stub removal
-last_updated: "2026-03-14T11:25:05.263Z"
+last_updated: "2026-03-14T11:27:53.573Z"
 last_activity: 2026-03-14 — Roadmap created, phases 6-8 defined
 progress:
   total_phases: 3
