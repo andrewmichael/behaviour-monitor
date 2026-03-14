@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Detection Accuracy
 status: planning
-stopped_at: Completed 10-drift-accuracy 10-01-PLAN.md
-last_updated: "2026-03-14T18:48:39.438Z"
+stopped_at: Completed 10-drift-accuracy 10-02-PLAN.md
+last_updated: "2026-03-14T18:59:10.295Z"
 last_activity: 2026-03-14 — Roadmap created for v3.0
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -44,6 +44,8 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 10-drift-accuracy]: Keep _compute_baseline_rates intact for fallback path in DriftDetector
 - [Phase 10-drift-accuracy]: decay_factor=0.95 for CUSUM baseline: halves weight every ~14 days
 - [Phase 10-drift-accuracy]: _compute_baseline_rates_for_day_type returns dict[date,int] to preserve age for decay weighting
+- [Phase 10-drift-accuracy]: Fresh routine per simulated day in recency weighting test prevents baseline decay over simulation iterations
+- [Phase 10-drift-accuracy]: old_start_offset=15 gap in _build_recency_routine ensures old/recent history windows never overlap on a calendar date
 
 ### Blockers/Concerns
 
@@ -61,6 +63,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-03-14T18:48:39.429Z
-Stopped at: Completed 10-drift-accuracy 10-01-PLAN.md
+Last session: 2026-03-14T18:59:10.292Z
+Stopped at: Completed 10-drift-accuracy 10-02-PLAN.md
 Resume file: None
