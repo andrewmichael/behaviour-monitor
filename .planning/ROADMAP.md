@@ -79,6 +79,6 @@ Plans:
 | 3. Foundation and Routine Model | v1.1 | 4/4 | Complete | 2026-03-13 |
 | 4. Detection Engines | v1.1 | 2/2 | Complete | 2026-03-13 |
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
-| 6. Dead Code Removal | v2.9 | 0/2 | Not started | - |
+| 6. Dead Code Removal | 1/2 | In Progress|  | - |
 | 7. Config Flow Additions | v2.9 | 0/TBD | Not started | - |
 | 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |

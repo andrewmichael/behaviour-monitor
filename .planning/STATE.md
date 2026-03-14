@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: Housekeeping & Config
-status: ready_to_plan
-stopped_at: null
-last_updated: "2026-03-14"
+status: planning
+stopped_at: Completed 06-01-PLAN.md — dead code removal from sensor.py, coordinator.py, const.py
+last_updated: "2026-03-14T11:22:09.063Z"
 last_activity: 2026-03-14 — Roadmap created, phases 6-8 defined
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
   percent: 0
 ---
 
@@ -46,12 +46,15 @@ Progress: [░░░░░░░░░░] 0%
 | - | - | - | - |
 
 *Updated after each plan completion*
+| Phase 06-dead-code-removal P06-01 | 3min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
 ### Decisions
 
 See PROJECT.md Key Decisions table for full log.
+- [Phase 06-dead-code-removal]: ATTR_ML_STATUS import kept in sensor.py — still consumed by baseline_confidence extra_attrs_fn
+- [Phase 06-dead-code-removal]: ml_status and cross_sensor_patterns data keys kept in coordinator output — consumed by baseline_confidence sensor, not stubs
 
 ### Blockers/Concerns
 
@@ -71,6 +74,6 @@ None active.
 
 ## Session Continuity
 
-Last session: 2026-03-14
-Stopped at: Roadmap created for v2.9 — ready to plan Phase 6
+Last session: 2026-03-14T11:22:09.060Z
+Stopped at: Completed 06-01-PLAN.md — dead code removal from sensor.py, coordinator.py, const.py
 Resume file: None
