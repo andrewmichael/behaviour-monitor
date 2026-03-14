@@ -44,7 +44,11 @@
   2. The coordinator update method no longer emits stub keys for the removed sensor descriptions
   3. The dead constants block (lines 129-184 of const.py) is absent from the file and all tests still pass
   4. The unused CONF_* constant names (CONF_SENSITIVITY, CONF_ENABLE_ML, CONF_RETRAIN_PERIOD, CONF_ML_LEARNING_PERIOD, CONF_CROSS_SENSOR_WINDOW, CONF_TRACK_ATTRIBUTES, CONF_LEARNING_PERIOD) are absent from const.py
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Remove deprecated sensor descriptions, coordinator stubs, and dead constants from production files
+- [ ] 06-02-PLAN.md — Update tests to remove ML stub assertions and deleted sensor test methods
 
 ### Phase 7: Config Flow Additions
 **Goal**: Users can configure learning period and attribute tracking from the HA config UI, and existing installs upgrade without manual reconfiguration
@@ -75,6 +79,6 @@
 | 3. Foundation and Routine Model | v1.1 | 4/4 | Complete | 2026-03-13 |
 | 4. Detection Engines | v1.1 | 2/2 | Complete | 2026-03-13 |
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
-| 6. Dead Code Removal | v2.9 | 0/TBD | Not started | - |
+| 6. Dead Code Removal | v2.9 | 0/2 | Not started | - |
 | 7. Config Flow Additions | v2.9 | 0/TBD | Not started | - |
 | 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |
