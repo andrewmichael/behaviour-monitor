@@ -142,7 +142,6 @@ class TestBehaviourMonitorCoordinator:
             "confidence", "daily_count", "welfare", "routine", "activity_context",
             "entity_status", "stat_training", "ml_status", "cross_sensor_patterns",
             "last_notification", "holiday_mode", "snooze_active", "snooze_until",
-            "ml_status_stub", "ml_training_stub", "cross_sensor_stub",
             "learning_status", "baseline_confidence",
         ]
         for key in required_keys:
@@ -155,16 +154,6 @@ class TestBehaviourMonitorCoordinator:
         data = await coordinator._async_update_data()
         assert data is not None
         assert isinstance(data, dict)
-
-    @pytest.mark.asyncio
-    async def test_async_update_data_ml_status_stub(
-        self, coordinator: BehaviourMonitorCoordinator
-    ) -> None:
-        data = await coordinator._async_update_data()
-        assert data["ml_status"] == {"enabled": False}
-        assert data["ml_status_stub"] == "Removed in v1.1"
-        assert data["ml_training_stub"] == "N/A"
-        assert data["cross_sensor_stub"] == 0
 
     @pytest.mark.asyncio
     async def test_async_update_data_holiday_mode_returns_safe_defaults(
