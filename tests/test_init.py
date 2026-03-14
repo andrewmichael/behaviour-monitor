@@ -23,8 +23,10 @@ from custom_components.behaviour_monitor.const import (
 )
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import (
+    CONF_ALERT_REPEAT_INTERVAL,
     CONF_LEARNING_PERIOD,
     CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_TRACK_ATTRIBUTES,
 )
@@ -742,3 +744,66 @@ class TestMigrateEntry:
         new_data = call_args[1]["data"]
         # setdefault should NOT overwrite the existing value
         assert new_data["history_window_days"] == 14
+
+
+class TestMigrateEntryV5ToV6:
+    """Tests for v5->v6 migration (alert_repeat_interval)."""
+
+    def _make_config_entry(self, version: int, data: dict) -> MagicMock:
+        """Create a mock config entry with given version and data."""
+        entry = MagicMock()
+        entry.version = version
+        entry.data = data
+        return entry
+
+    @pytest.mark.asyncio
+    async def test_migrate_v5_to_v6(self) -> None:
+        """Migration from v5 adds alert_repeat_interval=240 and bumps to version=6."""
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(
+            version=5,
+            data={
+                "monitored_entities": ["sensor.test"],
+                "history_window_days": 28,
+                "inactivity_multiplier": 3.0,
+                "drift_sensitivity": "medium",
+                "learning_period": 7,
+                "track_attributes": True,
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        hass.config_entries.async_update_entry.assert_called_once()
+        call_args = hass.config_entries.async_update_entry.call_args
+        updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert updated_data[CONF_ALERT_REPEAT_INTERVAL] == DEFAULT_ALERT_REPEAT_INTERVAL
+        version = call_args.kwargs.get("version") or call_args[1].get("version")
+        assert version == 6
+
+    @pytest.mark.asyncio
+    async def test_migrate_v5_to_v6_preserves_existing(self) -> None:
+        """Migration from v5 preserves an existing alert_repeat_interval value."""
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(
+            version=5,
+            data={
+                "monitored_entities": ["sensor.test"],
+                CONF_ALERT_REPEAT_INTERVAL: 120,  # already set to custom value
+            },
+        )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert updated_data[CONF_ALERT_REPEAT_INTERVAL] == 120
+
+    def test_config_flow_version_is_6(self) -> None:
+        """BehaviourMonitorConfigFlow.VERSION should be 6 after v3.0 migration."""
+        from custom_components.behaviour_monitor.config_flow import BehaviourMonitorConfigFlow
+        assert BehaviourMonitorConfigFlow.VERSION == 6
