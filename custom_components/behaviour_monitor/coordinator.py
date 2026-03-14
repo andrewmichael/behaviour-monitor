@@ -120,6 +120,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
         elif not self._routine_model._entities:
             await self._bootstrap_from_recorder()
+            await self._save_data()
         self._unsub_state_changed = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
 
     async def async_shutdown(self) -> None:

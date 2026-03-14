@@ -379,6 +379,28 @@ class TestCoordinatorStatePersistence:
                 await coordinator.async_setup()
         mock_bootstrap.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_async_setup_saves_after_bootstrap(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """async_setup() calls _save_data() once after bootstrapping from recorder."""
+        with patch.object(coordinator._store, "async_load", return_value=None):
+            with patch.object(coordinator, "_bootstrap_from_recorder", new_callable=AsyncMock):
+                with patch.object(coordinator._store, "async_save", new_callable=AsyncMock) as mock_save:
+                    await coordinator.async_setup()
+        mock_save.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_setup_no_save_when_storage_exists(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """async_setup() does NOT call _save_data() when loading from existing storage."""
+        stored = {"routine_model": RoutineModel().to_dict(), "cusum_states": {}, "coordinator": {}}
+        with patch.object(coordinator._store, "async_load", return_value=stored):
+            with patch.object(coordinator._store, "async_save", new_callable=AsyncMock) as mock_save:
+                await coordinator.async_setup()
+        mock_save.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # TestCoordinatorHolidayMode
