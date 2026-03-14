@@ -6,14 +6,7 @@ DOMAIN: Final = "behaviour_monitor"
 
 # Configuration keys
 CONF_MONITORED_ENTITIES: Final = "monitored_entities"
-CONF_SENSITIVITY: Final = "sensitivity"
-CONF_LEARNING_PERIOD: Final = "learning_period"
 CONF_ENABLE_NOTIFICATIONS: Final = "enable_notifications"
-CONF_ENABLE_ML: Final = "enable_ml"
-CONF_RETRAIN_PERIOD: Final = "retrain_period"
-CONF_ML_LEARNING_PERIOD: Final = "ml_learning_period"
-CONF_CROSS_SENSOR_WINDOW: Final = "cross_sensor_window"
-CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 CONF_NOTIFY_SERVICES: Final = "notify_services"
 CONF_NOTIFICATION_COOLDOWN: Final = "notification_cooldown"
 CONF_MIN_NOTIFICATION_SEVERITY: Final = "min_notification_severity"
@@ -124,43 +117,6 @@ SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
 SERVICE_ROUTINE_RESET: Final = "routine_reset"
-
-# ---------------------------------------------------------------------------
-# Legacy constants kept for backward compatibility with old analyzer/coordinator
-# (will be removed when those files are replaced in Plan 02)
-# ---------------------------------------------------------------------------
-
-SENSITIVITY_THRESHOLDS: Final = {
-    SENSITIVITY_LOW: 3.0,
-    SENSITIVITY_MEDIUM: 2.5,
-    SENSITIVITY_HIGH: 1.0,
-}
-
-ML_CONTAMINATION: Final = {
-    SENSITIVITY_LOW: 0.005,
-    SENSITIVITY_MEDIUM: 0.02,
-    SENSITIVITY_HIGH: 0.05,
-}
-
-MIN_CROSS_SENSOR_OCCURRENCES: Final = 30
-ML_EMA_ALPHA: Final = 0.3
-MIN_BUCKET_OBSERVATIONS: Final = 3
-MAX_VARIANCE_MULTIPLIER: Final = 2.0
-DEFAULT_SENSITIVITY: Final = SENSITIVITY_MEDIUM
-DEFAULT_LEARNING_PERIOD: Final = 7  # days
-DEFAULT_ENABLE_ML: Final = True
-DEFAULT_RETRAIN_PERIOD: Final = 14  # days
-DEFAULT_ML_LEARNING_PERIOD: Final = 7  # days
-DEFAULT_CROSS_SENSOR_WINDOW: Final = 300  # seconds
-DEFAULT_TRACK_ATTRIBUTES: Final = True
-MIN_SAMPLES_FOR_ML: Final = 100
-
-SEVERITY_THRESHOLDS: Final = {
-    SEVERITY_MINOR: 1.5,
-    SEVERITY_MODERATE: 2.5,
-    SEVERITY_SIGNIFICANT: 3.5,
-    SEVERITY_CRITICAL: 4.5,
-}
 
 # ---------------------------------------------------------------------------
 # Detection engine constants (v1.1)
