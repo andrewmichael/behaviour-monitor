@@ -15,13 +15,17 @@ from custom_components.behaviour_monitor.const import (
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
+    CONF_LEARNING_PERIOD,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
+    DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_NOTIFICATION_COOLDOWN,
+    DEFAULT_TRACK_ATTRIBUTES,
     SENSITIVITY_MEDIUM,
     SENSITIVITY_HIGH,
     SEVERITY_SIGNIFICANT,
@@ -47,6 +51,22 @@ class TestBehaviourMonitorConfigFlow:
         assert result["type"] == "form"
         assert result["step_id"] == "user"
         assert result["errors"] == {}
+
+    @pytest.mark.asyncio
+    async def test_step_user_schema_includes_new_fields(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test that initial setup schema includes learning_period and track_attributes."""
+        result = await config_flow.async_step_user(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys = {str(k) for k in schema.keys()}
+        assert any(CONF_LEARNING_PERIOD in k for k in schema_keys), (
+            f"learning_period missing from schema keys: {schema_keys}"
+        )
+        assert any(CONF_TRACK_ATTRIBUTES in k for k in schema_keys), (
+            f"track_attributes missing from schema keys: {schema_keys}"
+        )
 
     @pytest.mark.asyncio
     async def test_step_user_no_entities_selected(
@@ -136,9 +156,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_4(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 4 for the v1.1 config flow."""
-        assert config_flow.VERSION == 4
+    async def test_version_is_5(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 5 after v2.9 config flow additions."""
+        assert config_flow.VERSION == 5
 
     @pytest.mark.asyncio
     async def test_unique_id_based_on_entities(
@@ -409,6 +429,25 @@ class TestBehaviourMonitorOptionsFlow:
         call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
         updated_data = call_kwargs[1]["data"]
         assert updated_data[CONF_MIN_NOTIFICATION_SEVERITY] == SEVERITY_MINOR
+
+    @pytest.mark.asyncio
+    async def test_options_flow_schema_includes_new_fields(self) -> None:
+        """Test that options schema includes learning_period and track_attributes."""
+        config_entry = MagicMock()
+        config_entry.data = {
+            "monitored_entities": ["sensor.test"],
+            CONF_LEARNING_PERIOD: 14,
+            CONF_TRACK_ATTRIBUTES: False,
+        }
+        options_flow = BehaviourMonitorOptionsFlow(config_entry)
+        options_flow.hass = MagicMock()
+
+        result = await options_flow.async_step_init(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys = {str(k) for k in schema.keys()}
+        assert any(CONF_LEARNING_PERIOD in k for k in schema_keys)
+        assert any(CONF_TRACK_ATTRIBUTES in k for k in schema_keys)
 
     @pytest.mark.asyncio
     async def test_step_init_cooldown_defaults_when_not_in_entry(

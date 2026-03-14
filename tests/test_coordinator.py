@@ -66,6 +66,36 @@ class TestBehaviourMonitorCoordinator:
         assert coordinator.holiday_mode is False
         assert coordinator.is_snoozed() is False
 
+    def test_coordinator_reads_learning_period(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        """Coordinator reads CONF_LEARNING_PERIOD from config entry data."""
+        from custom_components.behaviour_monitor.const import CONF_LEARNING_PERIOD
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_LEARNING_PERIOD: 14,
+        }
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._learning_period_days == 14
+
+    def test_coordinator_reads_track_attributes(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        """Coordinator reads CONF_TRACK_ATTRIBUTES from config entry data."""
+        from custom_components.behaviour_monitor.const import CONF_TRACK_ATTRIBUTES
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_TRACK_ATTRIBUTES: False,
+        }
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._track_attributes is False
+
+    def test_coordinator_track_attributes_defaults_true(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        """Coordinator defaults track_attributes to True when not in config."""
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._track_attributes is True
+
+    def test_coordinator_learning_period_defaults_to_7(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        """Coordinator defaults learning_period_days to 7 when not in config."""
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._learning_period_days == 7
+
     def test_monitored_entities(self, coordinator: BehaviourMonitorCoordinator) -> None:
         entities = coordinator.monitored_entities
         assert "sensor.test1" in entities
