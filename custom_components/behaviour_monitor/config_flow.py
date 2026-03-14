@@ -29,16 +29,20 @@ from .const import (
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
+    CONF_LEARNING_PERIOD,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
+    DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN,
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
@@ -78,6 +82,8 @@ def _build_data_schema(
     enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
     notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
     min_severity_default: str = DEFAULT_MIN_NOTIFICATION_SEVERITY,
+    learning_period_default: int = DEFAULT_LEARNING_PERIOD_DAYS,
+    track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -95,6 +101,20 @@ def _build_data_schema(
                 unit_of_measurement="days",
             )
         ),
+        vol.Required(
+            CONF_LEARNING_PERIOD, default=learning_period_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1,
+                max=30,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="days",
+            )
+        ),
+        vol.Required(
+            CONF_TRACK_ATTRIBUTES, default=track_attributes_default
+        ): BooleanSelector(),
         vol.Required(
             CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
         ): NumberSelector(
@@ -184,7 +204,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 4
+    VERSION = 5
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -278,6 +298,12 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_min_severity = self._config_entry.data.get(
             CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
         )
+        current_learning_period = self._config_entry.data.get(
+            CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS
+        )
+        current_track_attributes = self._config_entry.data.get(
+            CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -287,6 +313,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             enable_notifications_default=current_notifications,
             notification_cooldown_default=current_cooldown,
             min_severity_default=current_min_severity,
+            learning_period_default=current_learning_period,
+            track_attributes_default=current_track_attributes,
         )
 
         return self.async_show_form(
