@@ -20,6 +20,12 @@ CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
 CONF_LEARNING_PERIOD: Final = "learning_period"
 CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 
+# New v3.0 config keys
+CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
+
+# New v3.0 defaults
+DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240  # minutes (4 hours)
+
 # Sensitivity levels
 SENSITIVITY_LOW: Final = "low"
 SENSITIVITY_MEDIUM: Final = "medium"
