@@ -1,5 +1,21 @@
 # Milestones
 
+## v2.9 Housekeeping & Config (Shipped: 2026-03-14)
+
+**Phases completed:** 3 phases, 6 plans
+
+**Files modified:** 40 | **Lines of code:** 7,863 Python
+**Git range:** `27791e6` (refactor(06-01)) → `51d6049` (docs(08-01))
+
+**Key accomplishments:**
+1. Removed deprecated ML sensor stubs (ml_status, cross_sensor_patterns, ml_training_remaining) and dead constants block from const.py
+2. Removed unused CONF_* constant definitions (CONF_SENSITIVITY, CONF_ENABLE_ML, CONF_RETRAIN_PERIOD, and others)
+3. Exposed learning period (days) and attribute tracking toggle as user-configurable options in the HA config UI
+4. Added v4→v5 config migration so existing installs upgrade without manual reconfiguration
+5. Fixed missing post-bootstrap _save_data() call — routine model now survives an immediate restart after first load
+
+---
+
 ## v1.1 Detection Rebuild (Shipped: 2026-03-13)
 
 **Phases completed:** 3 phases, 9 plans, 2 tasks
