@@ -72,7 +72,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. After a fresh HA restart with no prior storage file, the coordinator calls _save_data() following bootstrap so that an immediate second restart does not re-bootstrap from recorder history
   2. MILESTONES.md records the package version range covered by v2.9 when the milestone closes
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Fix post-bootstrap _save_data() call in coordinator and add regression test
+- [ ] 08-02-PLAN.md — Add v2.9 milestone entry to MILESTONES.md
 
 ## Progress
 
@@ -85,4 +89,4 @@ Plans:
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
 | 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
 | 7. Config Flow Additions | 2/2 | Complete   | 2026-03-14 | - |
-| 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |
+| 8. Bootstrap Fix and Closeout | v2.9 | 0/2 | Not started | - |
