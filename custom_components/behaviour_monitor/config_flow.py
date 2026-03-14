@@ -31,6 +31,8 @@ from .const import (
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
+    CONF_MAX_INACTIVITY_MULTIPLIER,
+    CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
@@ -41,6 +43,8 @@ from .const import (
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
+    DEFAULT_MAX_INACTIVITY_MULTIPLIER,
+    DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
@@ -80,6 +84,8 @@ def _build_data_schema(
     entities_default: list[str] | None = None,
     history_window_default: int = DEFAULT_HISTORY_WINDOW_DAYS,
     inactivity_multiplier_default: float = DEFAULT_INACTIVITY_MULTIPLIER,
+    min_inactivity_multiplier_default: float = DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+    max_inactivity_multiplier_default: float = DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
     enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
     notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
@@ -124,6 +130,28 @@ def _build_data_schema(
             NumberSelectorConfig(
                 min=1.5,
                 max=10.0,
+                step=0.5,
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required(
+            CONF_MIN_INACTIVITY_MULTIPLIER,
+            default=min_inactivity_multiplier_default,
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0.5,
+                max=5.0,
+                step=0.5,
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required(
+            CONF_MAX_INACTIVITY_MULTIPLIER,
+            default=max_inactivity_multiplier_default,
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=2.0,
+                max=20.0,
                 step=0.5,
                 mode=NumberSelectorMode.BOX,
             )
@@ -218,7 +246,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 6
+    VERSION = 7
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -227,7 +255,19 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_MONITORED_ENTITIES):
+            min_val = float(
+                user_input.get(
+                    CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
+                )
+            )
+            max_val = float(
+                user_input.get(
+                    CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
+                )
+            )
+            if min_val > max_val:
+                errors["base"] = "inactivity_min_exceeds_max"
+            elif not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
             else:
                 unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
@@ -268,7 +308,19 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_MONITORED_ENTITIES):
+            min_val = float(
+                user_input.get(
+                    CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
+                )
+            )
+            max_val = float(
+                user_input.get(
+                    CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
+                )
+            )
+            if min_val > max_val:
+                errors["base"] = "inactivity_min_exceeds_max"
+            elif not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
             else:
                 # Merge user input with existing data to preserve all fields
@@ -321,11 +373,19 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_track_attributes = self._config_entry.data.get(
             CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
+        current_min_inactivity_multiplier = self._config_entry.data.get(
+            CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
+        )
+        current_max_inactivity_multiplier = self._config_entry.data.get(
+            CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
             history_window_default=current_history_window,
             inactivity_multiplier_default=current_inactivity_multiplier,
+            min_inactivity_multiplier_default=current_min_inactivity_multiplier,
+            max_inactivity_multiplier_default=current_max_inactivity_multiplier,
             drift_sensitivity_default=current_drift_sensitivity,
             enable_notifications_default=current_notifications,
             notification_cooldown_default=current_cooldown,

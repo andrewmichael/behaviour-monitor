@@ -17,6 +17,8 @@ from custom_components.behaviour_monitor.const import (
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
+    CONF_MIN_INACTIVITY_MULTIPLIER,
+    CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
     CONF_NOTIFICATION_COOLDOWN,
@@ -26,6 +28,8 @@ from custom_components.behaviour_monitor.const import (
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
+    DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+    DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_TRACK_ATTRIBUTES,
     SENSITIVITY_MEDIUM,
@@ -158,9 +162,79 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_6(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 6 after v3.0 config flow additions."""
-        assert config_flow.VERSION == 6
+    async def test_version_is_7(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 7 after v3.0 adaptive inactivity config flow additions."""
+        assert config_flow.VERSION == 7
+
+    @pytest.mark.asyncio
+    async def test_step_user_min_exceeds_max_returns_error(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step: submitting min > max returns inactivity_min_exceeds_max error."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_MIN_INACTIVITY_MULTIPLIER: 5.0,
+            CONF_MAX_INACTIVITY_MULTIPLIER: 2.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+        }
+
+        result = await config_flow.async_step_user(user_input=user_input)
+
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "inactivity_min_exceeds_max"
+
+    @pytest.mark.asyncio
+    async def test_step_user_min_equal_max_creates_entry(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step: submitting min == max with valid entities creates entry."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_MIN_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_MAX_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+        }
+
+        config_flow.async_set_unique_id = AsyncMock()
+        config_flow._abort_if_unique_id_configured = MagicMock()
+
+        result = await config_flow.async_step_user(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+
+    @pytest.mark.asyncio
+    async def test_schema_includes_min_inactivity_multiplier(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step schema includes min_inactivity_multiplier field."""
+        result = await config_flow.async_step_user(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_MIN_INACTIVITY_MULTIPLIER in k for k in schema_keys_str), (
+            f"min_inactivity_multiplier missing from schema keys: {schema_keys_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_schema_includes_max_inactivity_multiplier(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        """Test user step schema includes max_inactivity_multiplier field."""
+        result = await config_flow.async_step_user(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_MAX_INACTIVITY_MULTIPLIER in k for k in schema_keys_str), (
+            f"max_inactivity_multiplier missing from schema keys: {schema_keys_str}"
+        )
 
     @pytest.mark.asyncio
     async def test_unique_id_based_on_entities(
@@ -552,3 +626,70 @@ class TestBehaviourMonitorOptionsFlow:
         call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
         updated_data = call_kwargs[1]["data"]
         assert updated_data[CONF_ALERT_REPEAT_INTERVAL] == 480
+
+    @pytest.mark.asyncio
+    async def test_step_init_min_exceeds_max_returns_error(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test init step: submitting min > max returns inactivity_min_exceeds_max error."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_MIN_INACTIVITY_MULTIPLIER: 8.0,
+            CONF_MAX_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+        }
+
+        result = await options_flow.async_step_init(user_input=user_input)
+
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "inactivity_min_exceeds_max"
+
+    @pytest.mark.asyncio
+    async def test_step_init_min_less_than_max_with_entities_succeeds(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test init step: submitting min <= max with valid entities updates entry."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_MIN_INACTIVITY_MULTIPLIER: 1.5,
+            CONF_MAX_INACTIVITY_MULTIPLIER: 10.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+        }
+
+        result = await options_flow.async_step_init(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+
+    @pytest.mark.asyncio
+    async def test_options_schema_includes_min_inactivity_multiplier(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test options init schema includes min_inactivity_multiplier field."""
+        result = await options_flow.async_step_init(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_MIN_INACTIVITY_MULTIPLIER in k for k in schema_keys_str), (
+            f"min_inactivity_multiplier missing from options schema: {schema_keys_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_options_schema_includes_max_inactivity_multiplier(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        """Test options init schema includes max_inactivity_multiplier field."""
+        result = await options_flow.async_step_init(user_input=None)
+
+        schema = result["data_schema"]
+        schema_keys_str = [str(k) for k in schema.keys()]
+        assert any(CONF_MAX_INACTIVITY_MULTIPLIER in k for k in schema_keys_str), (
+            f"max_inactivity_multiplier missing from options schema: {schema_keys_str}"
+        )

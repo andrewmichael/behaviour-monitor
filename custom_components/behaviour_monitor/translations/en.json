@@ -14,7 +14,10 @@
           "retrain_period": "ML retrain period",
           "cross_sensor_window": "Cross-sensor correlation window",
           "track_attributes": "Track attribute changes",
-          "notify_services": "Mobile notification services"
+          "notify_services": "Mobile notification services",
+          "inactivity_multiplier": "Inactivity sensitivity scaling",
+          "min_inactivity_multiplier": "Min inactivity multiplier",
+          "max_inactivity_multiplier": "Max inactivity multiplier"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -26,7 +29,10 @@
           "retrain_period": "How often to retrain the ML model with new data.",
           "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors.",
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
-          "notify_services": "Services to send mobile notifications (e.g., notify.mobile_app_iphone). Add multiple services to notify multiple devices. Leave empty to only use persistent notifications in the HA UI."
+          "notify_services": "Services to send mobile notifications (e.g., notify.mobile_app_iphone). Add multiple services to notify multiple devices. Leave empty to only use persistent notifications in the HA UI.",
+          "inactivity_multiplier": "Scales the auto-learned per-entity threshold. 1.0 = use learned threshold as-is; higher = more tolerant.",
+          "min_inactivity_multiplier": "Lower bound on the adaptive threshold multiplier (default 1.5). Prevents thresholds from becoming too tight on highly regular entities.",
+          "max_inactivity_multiplier": "Upper bound on the adaptive threshold multiplier (default 10.0). Prevents thresholds from becoming too loose on erratic entities."
         }
       }
     },
@@ -51,7 +57,10 @@
           "ml_learning_period": "ML learning period",
           "retrain_period": "ML retrain period",
           "cross_sensor_window": "Cross-sensor correlation window",
-          "track_attributes": "Track attribute changes"
+          "track_attributes": "Track attribute changes",
+          "inactivity_multiplier": "Inactivity sensitivity scaling",
+          "min_inactivity_multiplier": "Min inactivity multiplier",
+          "max_inactivity_multiplier": "Max inactivity multiplier"
         }
       }
     },
