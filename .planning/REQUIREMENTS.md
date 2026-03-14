@@ -14,9 +14,9 @@
 
 ### Config UI
 
-- [ ] **CONF-01**: User can configure the learning period (days) from the config flow UI, with a default of 7
-- [ ] **CONF-02**: User can toggle attribute tracking on/off from the config flow UI, defaulting to on
-- [ ] **CONF-03**: Existing installs automatically receive the new config options with defaults on upgrade (no manual reconfiguration required)
+- [x] **CONF-01**: User can configure the learning period (days) from the config flow UI, with a default of 7
+- [x] **CONF-02**: User can toggle attribute tracking on/off from the config flow UI, defaulting to on
+- [x] **CONF-03**: Existing installs automatically receive the new config options with defaults on upgrade (no manual reconfiguration required)
 
 ### Versioning
 
@@ -43,9 +43,9 @@
 | DEBT-02 | Phase 6 | Complete |
 | DEBT-03 | Phase 6 | Complete |
 | DEBT-04 | Phase 8 | Pending |
-| CONF-01 | Phase 7 | Pending |
-| CONF-02 | Phase 7 | Pending |
-| CONF-03 | Phase 7 | Pending |
+| CONF-01 | Phase 7 | Complete |
+| CONF-02 | Phase 7 | Complete |
+| CONF-03 | Phase 7 | Complete |
 | VERS-01 | Phase 8 | Pending |
 
 **Coverage:**

@@ -84,5 +84,5 @@ Plans:
 | 4. Detection Engines | v1.1 | 2/2 | Complete | 2026-03-13 |
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
 | 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
-| 7. Config Flow Additions | v2.9 | 0/2 | Not started | - |
+| 7. Config Flow Additions | 1/2 | In Progress|  | - |
 | 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |
