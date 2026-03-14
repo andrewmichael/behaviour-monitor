@@ -233,6 +233,72 @@ class DriftDetector:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _compute_baseline_rates_for_day_type(
+        self,
+        routine: EntityRoutine,
+        exclude_today: date,
+        day_type: str,  # "weekday" or "weekend"
+    ) -> dict[date, int]:
+        """Return date->count mapping filtered to matching day_type.
+
+        Args:
+            routine:      EntityRoutine with populated event_times.
+            exclude_today: Calendar date to exclude from baseline (today's data).
+            day_type:     "weekday" (Mon-Fri) or "weekend" (Sat-Sun).
+
+        Returns:
+            Dict mapping each matching date to its event count.
+        """
+        is_weekend = day_type == "weekend"
+        date_counts: dict[date, int] = {}
+        for slot in routine.slots:
+            for ts_str in slot.event_times:
+                try:
+                    dt = datetime.fromisoformat(ts_str)
+                    event_date = dt.date()
+                except (ValueError, TypeError):
+                    continue
+                if event_date == exclude_today:
+                    continue
+                dow = event_date.weekday()
+                event_is_weekend = dow >= 5
+                if event_is_weekend != is_weekend:
+                    continue
+                date_counts[event_date] = date_counts.get(event_date, 0) + 1
+        return date_counts
+
+    @staticmethod
+    def _compute_weighted_mean(
+        date_counts: dict[date, int],
+        reference_date: date,
+        decay_factor: float = 0.95,
+    ) -> float:
+        """Compute exponentially decay-weighted mean of daily counts.
+
+        Recent dates have weight closer to 1.0; older dates approach 0.
+        decay_factor=0.95 halves weight every ~14 days.
+
+        Args:
+            date_counts:    Dict mapping event dates to their daily counts.
+            reference_date: The date from which age is measured (typically today).
+            decay_factor:   Per-day decay multiplier (default 0.95).
+
+        Returns:
+            Weighted mean count, or 0.0 if date_counts is empty.
+        """
+        if not date_counts:
+            return 0.0
+        total_weight = 0.0
+        weighted_sum = 0.0
+        for event_date, count in date_counts.items():
+            age_days = (reference_date - event_date).days
+            weight = decay_factor ** max(0, age_days)
+            weighted_sum += count * weight
+            total_weight += weight
+        if total_weight == 0.0:
+            return 0.0
+        return weighted_sum / total_weight
+
     def _compute_baseline_rates(
         self, routine: EntityRoutine, exclude_today: date
     ) -> list[int]:

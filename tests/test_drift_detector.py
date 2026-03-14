@@ -647,6 +647,335 @@ class TestDriftDetectorSerialization:
 
 
 # ---------------------------------------------------------------------------
+# Day-type baseline filter tests
+# ---------------------------------------------------------------------------
+
+
+class TestDayTypeBaseline:
+    """Tests for _compute_baseline_rates_for_day_type filtering."""
+
+    def _build_mixed_routine(self, entity_id: str) -> "EntityRoutine":
+        """Build a routine with 7 Monday events and 4 Saturday events."""
+        from datetime import timedelta
+
+        routine = EntityRoutine(entity_id=entity_id, is_binary=True)
+        # Find a Monday (weekday=0) and a Saturday (weekday=5)
+        # 2024-01-15 is a Monday, 2024-01-13 is a Saturday
+        monday = date(2024, 1, 15)
+        saturday = date(2024, 1, 13)
+
+        for i in range(7):
+            # Spread across 7 Mondays (weekly)
+            mon_date = monday - timedelta(weeks=i)
+            ts = datetime(
+                mon_date.year, mon_date.month, mon_date.day, 10, i, 0,
+                tzinfo=timezone.utc,
+            )
+            routine.record(ts, "on")
+
+        for i in range(4):
+            # 4 events on the one Saturday
+            ts = datetime(
+                saturday.year, saturday.month, saturday.day, 10, i, 0,
+                tzinfo=timezone.utc,
+            )
+            routine.record(ts, "on")
+
+        return routine
+
+    def test_weekday_filter_excludes_weekend_dates(self) -> None:
+        """_compute_baseline_rates_for_day_type with 'weekday' returns only weekday dates."""
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        routine = self._build_mixed_routine("sensor.mixed")
+        detector = DriftDetector()
+        exclude_today = date(2024, 1, 22)  # a future date not in routine
+
+        result = detector._compute_baseline_rates_for_day_type(
+            routine, exclude_today=exclude_today, day_type="weekday"
+        )
+
+        # All returned dates must be weekdays (weekday() < 5)
+        for d in result.keys():
+            assert d.weekday() < 5, f"Expected weekday, got weekday()={d.weekday()} for {d}"
+        # Should have 7 weekday dates (7 Mondays)
+        assert len(result) == 7
+
+    def test_weekend_filter_excludes_weekday_dates(self) -> None:
+        """_compute_baseline_rates_for_day_type with 'weekend' returns only weekend dates."""
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        routine = self._build_mixed_routine("sensor.mixed2")
+        detector = DriftDetector()
+        exclude_today = date(2024, 1, 22)
+
+        result = detector._compute_baseline_rates_for_day_type(
+            routine, exclude_today=exclude_today, day_type="weekend"
+        )
+
+        # All returned dates must be weekends (weekday() >= 5)
+        for d in result.keys():
+            assert d.weekday() >= 5, f"Expected weekend, got weekday()={d.weekday()} for {d}"
+        # Should have 1 weekend date (the one Saturday)
+        assert len(result) == 1
+
+    def test_exclude_today_respected_in_day_type_filter(self) -> None:
+        """today's date never appears in the returned dict from _compute_baseline_rates_for_day_type."""
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        routine = EntityRoutine(entity_id="sensor.excl", is_binary=True)
+        # Monday 2024-01-15 — add it to the routine
+        target_monday = date(2024, 1, 15)
+        ts = datetime(
+            target_monday.year, target_monday.month, target_monday.day,
+            10, 0, 0, tzinfo=timezone.utc,
+        )
+        routine.record(ts, "on")
+        # Add another Monday so we have data
+        other_monday = date(2024, 1, 8)
+        ts2 = datetime(
+            other_monday.year, other_monday.month, other_monday.day,
+            10, 0, 0, tzinfo=timezone.utc,
+        )
+        routine.record(ts2, "on")
+
+        detector = DriftDetector()
+        result = detector._compute_baseline_rates_for_day_type(
+            routine, exclude_today=target_monday, day_type="weekday"
+        )
+
+        assert target_monday not in result, "exclude_today must not appear in result"
+        assert other_monday in result
+
+
+# ---------------------------------------------------------------------------
+# Decay weighting tests
+# ---------------------------------------------------------------------------
+
+
+class TestDecayWeighting:
+    """Tests for _compute_weighted_mean exponential decay weighting."""
+
+    def test_recent_day_outweighs_old_day(self) -> None:
+        """Weighted mean is closer to recent count than old count.
+
+        1 day old at count=5, 30 days old at count=10.
+        Weighted mean should be between 5 and 10 but closer to 5.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        reference_date = date(2024, 1, 15)
+        recent_date = date(2024, 1, 14)   # 1 day old
+        old_date = date(2024, 1, 16) - __import__("datetime").timedelta(days=30)  # noqa
+
+        date_counts = {
+            recent_date: 5,
+            old_date: 10,
+        }
+
+        result = DriftDetector._compute_weighted_mean(date_counts, reference_date)
+
+        # Should be between 5 and 10
+        assert 5.0 < result < 10.0, f"Expected result between 5 and 10, got {result}"
+        # Should be closer to 5 (recent) than to 10 (old)
+        assert result < 7.5, f"Expected result closer to 5 than to 10, got {result}"
+
+    def test_all_same_age_equals_arithmetic_mean(self) -> None:
+        """When all dates are on the same day, weighted mean equals arithmetic mean."""
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        reference_date = date(2024, 1, 15)
+        same_date = date(2024, 1, 14)  # all 1 day old
+
+        date_counts = {same_date: 6}
+        result = DriftDetector._compute_weighted_mean(date_counts, reference_date)
+        # Only one entry; weighted mean == that count
+        assert result == pytest.approx(6.0)
+
+    def test_empty_date_counts_returns_zero(self) -> None:
+        """_compute_weighted_mean returns 0.0 when date_counts is empty."""
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        result = DriftDetector._compute_weighted_mean({}, date(2024, 1, 15))
+        assert result == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Day-type split integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestDayTypeSplitIntegration:
+    """Integration tests for check() using day-type-split, recency-weighted baselines."""
+
+    def _make_weekday_weekend_routine(
+        self,
+        entity_id: str,
+        weekday_rate: int,
+        weekend_rate: int,
+        n_weekdays: int,
+        n_weekends: int,
+        reference_monday: date,
+    ) -> "EntityRoutine":
+        """Build routine with separate weekday and weekend rates.
+
+        Places events on consecutive weekdays and weekends going backward
+        from reference_monday.
+        """
+        from datetime import timedelta
+
+        routine = EntityRoutine(entity_id=entity_id, is_binary=True)
+
+        # Place weekday events: Monday, Tuesday, ... of successive weeks
+        weekday_count = 0
+        for week_offset in range(20):  # look back up to 20 weeks
+            if weekday_count >= n_weekdays:
+                break
+            for dow in range(5):  # Mon=0 to Fri=4
+                if weekday_count >= n_weekdays:
+                    break
+                day = reference_monday - timedelta(weeks=week_offset, days=0) + timedelta(days=dow)
+                # Skip if in future relative to today
+                for i in range(weekday_rate):
+                    ts = datetime(day.year, day.month, day.day, i % 24, i % 60, 0, tzinfo=timezone.utc)
+                    routine.record(ts, "on")
+                weekday_count += 1
+
+        # Place weekend events: Saturday/Sunday
+        weekend_count = 0
+        for week_offset in range(10):
+            if weekend_count >= n_weekends:
+                break
+            for dow in [5, 6]:  # Sat=5, Sun=6
+                if weekend_count >= n_weekends:
+                    break
+                day = reference_monday - timedelta(weeks=week_offset) + timedelta(days=dow - 7)
+                for i in range(weekend_rate):
+                    ts = datetime(day.year, day.month, day.day, i % 24, i % 60, 0, tzinfo=timezone.utc)
+                    routine.record(ts, "on")
+                weekend_count += 1
+
+        return routine
+
+    def test_weekend_drift_not_diluted_by_weekdays(self) -> None:
+        """Drift on a Saturday is detected despite large weekday baseline pool.
+
+        Build: 14 weekdays at rate=5, 3 weekends at rate=5.
+        Today: Saturday at rate=20 (4x normal).
+        Expect: check() accumulates CUSUM (s_pos > 0) on this Saturday.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+        from datetime import timedelta
+
+        # 2024-01-15 is Monday; previous Saturday is 2024-01-13
+        reference_monday = date(2024, 1, 8)  # start building from this Monday
+        saturday_today = date(2024, 1, 13)   # the Saturday we call check() for
+
+        routine = self._make_weekday_weekend_routine(
+            entity_id="sensor.weekend",
+            weekday_rate=5,
+            weekend_rate=5,
+            n_weekdays=14,
+            n_weekends=3,
+            reference_monday=reference_monday,
+        )
+        # Add today's (Saturday) events at rate=20
+        for i in range(20):
+            ts = datetime(saturday_today.year, saturday_today.month, saturday_today.day,
+                          i % 24, i % 60, 0, tzinfo=timezone.utc)
+            routine.record(ts, "on")
+
+        detector = DriftDetector()
+        now = datetime(saturday_today.year, saturday_today.month, saturday_today.day,
+                       23, 0, 0, tzinfo=timezone.utc)
+        result = detector.check("sensor.weekend", routine, saturday_today, now)
+
+        # The detector may not fire on day 1, but CUSUM should accumulate
+        state = detector.get_or_create_state("sensor.weekend")
+        assert state.s_pos > 0 or result is not None, (
+            "Expected CUSUM to accumulate for clear upward drift on weekend day"
+        )
+
+    def test_fallback_when_insufficient_day_type_data(self) -> None:
+        """check() does NOT return None when only 1 weekend day exists.
+
+        With 1 weekend day (< MIN_EVIDENCE_DAYS=3), should fall back to combined
+        pool. Combined pool has 14 weekdays, so check() should proceed rather than
+        returning None due to insufficient weekend data.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        reference_monday = date(2024, 2, 5)   # a Monday
+        saturday_today = date(2024, 2, 3)      # Saturday
+
+        routine = self._make_weekday_weekend_routine(
+            entity_id="sensor.fallback",
+            weekday_rate=5,
+            weekend_rate=5,
+            n_weekdays=14,
+            n_weekends=1,  # only 1 weekend day — below MIN_EVIDENCE_DAYS
+            reference_monday=reference_monday,
+        )
+        # Add today's events at normal rate to avoid drift
+        for i in range(5):
+            ts = datetime(saturday_today.year, saturday_today.month, saturday_today.day,
+                          i % 24, i % 60, 0, tzinfo=timezone.utc)
+            routine.record(ts, "on")
+
+        detector = DriftDetector()
+        now = datetime(saturday_today.year, saturday_today.month, saturday_today.day,
+                       23, 0, 0, tzinfo=timezone.utc)
+
+        # The key assertion: check() should NOT return None due to insufficient weekend data
+        # It may return None if no drift detected, but it must at least process the baseline
+        # We verify this by checking that the state was updated (last_update_date is set)
+        detector.check("sensor.fallback", routine, saturday_today, now)
+        state = detector.get_or_create_state("sensor.fallback")
+        assert state.last_update_date == saturday_today.isoformat(), (
+            "check() should have processed and updated state even with insufficient weekend data"
+        )
+
+    def test_weekday_check_uses_only_weekday_baseline(self) -> None:
+        """Monday check uses weekday baseline, not inflated by high weekend rates.
+
+        Build: 5 weekdays at rate=5, 5 weekends at rate=50.
+        Today: Monday at rate=6 (just slightly above weekday baseline).
+        Expect: baseline_mean should be close to 5, not inflated by 50.
+        """
+        from custom_components.behaviour_monitor.drift_detector import DriftDetector
+
+        reference_monday = date(2024, 3, 4)  # a Monday
+        monday_today = date(2024, 3, 11)      # the Monday we call check() for
+
+        routine = self._make_weekday_weekend_routine(
+            entity_id="sensor.weekday_baseline",
+            weekday_rate=5,
+            weekend_rate=50,  # high weekend noise
+            n_weekdays=5,
+            n_weekends=5,
+            reference_monday=reference_monday,
+        )
+        # Add today's Monday events at rate=6
+        for i in range(6):
+            ts = datetime(monday_today.year, monday_today.month, monday_today.day,
+                          i % 24, i % 60, 0, tzinfo=timezone.utc)
+            routine.record(ts, "on")
+
+        detector = DriftDetector()
+        now = datetime(monday_today.year, monday_today.month, monday_today.day,
+                       23, 0, 0, tzinfo=timezone.utc)
+        detector.check("sensor.weekday_baseline", routine, monday_today, now)
+
+        # The CUSUM should be small (rate=6 vs baseline=5 is not a big shift)
+        state = detector.get_or_create_state("sensor.weekday_baseline")
+        # If baseline were ~50 (weekend diluted), z would be very negative, s_neg would grow
+        # With correct weekday-only baseline (~5), s_pos should be small (not large s_neg)
+        assert state.s_neg < 5.0, (
+            f"Expected s_neg < 5 (weekday baseline ~5, today=6), got s_neg={state.s_neg}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # HA import guard test
 # ---------------------------------------------------------------------------
 
