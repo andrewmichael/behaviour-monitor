@@ -83,10 +83,11 @@ Plans:
   1. Each entity's inactivity threshold reflects that entity's historical inter-event timing variance, not a uniform global multiplier
   2. Entities with highly regular patterns (low variance) get tighter thresholds; entities with irregular patterns (high variance) get looser thresholds
   3. The global inactivity multiplier config option continues to function as a scaling factor applied on top of the per-entity learned threshold
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 11-01: TBD
+- [ ] 11-01-PLAN.md — Core logic: interval_cv() on ActivitySlot + EntityRoutine; adaptive threshold in AcuteDetector; new min/max constants; coordinator wiring; unit tests
+- [ ] 11-02-PLAN.md — Config + migration: two new NumberSelector fields; min>max validation in both flows; STORAGE_VERSION + ConfigFlow.VERSION bump to 7; v6→v7 migration block; tests
 
 ## Progress
 
@@ -105,4 +106,4 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 9. Alert Suppression | 2/2 | Complete    | 2026-03-14 | - |
 | 10. Drift Accuracy | 2/2 | Complete    | 2026-03-14 | - |
-| 11. Adaptive Inactivity | v3.0 | 0/? | Not started | - |
+| 11. Adaptive Inactivity | v3.0 | 0/2 | Not started | - |
