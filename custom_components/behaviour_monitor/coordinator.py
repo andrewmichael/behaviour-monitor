@@ -16,13 +16,13 @@ from homeassistant.util import dt as dt_util
 from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
-    CONF_DRIFT_SENSITIVITY, CONF_ENABLE_NOTIFICATIONS, CONF_HISTORY_WINDOW_DAYS,
-    CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD, CONF_MIN_NOTIFICATION_SEVERITY,
-    CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN, CONF_NOTIFY_SERVICES,
-    CONF_TRACK_ATTRIBUTES,
-    DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS, DEFAULT_INACTIVITY_MULTIPLIER,
-    DEFAULT_LEARNING_PERIOD_DAYS, DEFAULT_MIN_NOTIFICATION_SEVERITY, DEFAULT_NOTIFICATION_COOLDOWN,
-    DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
+    CONF_ALERT_REPEAT_INTERVAL, CONF_DRIFT_SENSITIVITY, CONF_ENABLE_NOTIFICATIONS,
+    CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
+    CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
+    CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS, DEFAULT_MIN_NOTIFICATION_SEVERITY,
+    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY, STORAGE_VERSION,
     UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
@@ -77,6 +77,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._drift_detector = DriftDetector(d.get(CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM))
         self._last_seen: dict[str, datetime] = {}
         self._notification_cooldowns: dict[str, datetime] = {}
+        self._alert_repeat_interval: int = int(d.get(CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL))
+        self._alert_suppression: dict[str, datetime] = {}
         self._holiday_mode = False
         self._snooze_until: datetime | None = None
         self._today_count = 0
@@ -118,6 +120,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_seen = {e: dt for e, ts in c.get("last_seen", {}).items() if (dt := _parse_dt(ts))}
             self._last_notification_info = c.get("last_notification_info", {"timestamp": None, "type": None})
             self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
+            self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
         elif not self._routine_model._entities:
             await self._bootstrap_from_recorder()
             await self._save_data()
@@ -139,6 +142,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "last_seen": {e: dt.isoformat() for e, dt in self._last_seen.items()},
                 "last_notification_info": self._last_notification_info,
                 "notification_cooldowns": {k: v.isoformat() for k, v in self._notification_cooldowns.items()},
+                "alert_suppression": {k: v.isoformat() for k, v in self._alert_suppression.items()},
             },
         })
 
@@ -191,14 +195,21 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return alerts
 
     async def _handle_alerts(self, alerts: list[AlertResult], now: datetime) -> None:
+        # Clear suppression entries whose condition has resolved (key not in current alerts)
+        current_keys = {f"{a.entity_id}|{a.alert_type.value}" for a in alerts}
+        for key in list(self._alert_suppression):
+            if key not in current_keys:
+                del self._alert_suppression[key]
+
         if not self._enable_notifications or not alerts:
             return
         gate = _SEV_GATE.get(self._min_notification_severity, AlertSeverity.MEDIUM)
         def _ok(a: AlertResult) -> bool:
-            last = self._notification_cooldowns.get(f"{a.entity_id}|{a.alert_type.value}")
-            cd_ok = last is None or (now - last).total_seconds() / 60 >= self._notification_cooldown
+            key = f"{a.entity_id}|{a.alert_type.value}"
+            last = self._alert_suppression.get(key)
+            sup_ok = last is None or (now - last).total_seconds() / 60 >= self._alert_repeat_interval
             sev_ok = _SEV_ORDER.index(a.severity) >= _SEV_ORDER.index(gate)
-            return cd_ok and sev_ok
+            return sup_ok and sev_ok
         notifiable = [a for a in alerts if _ok(a)]
         drift_ok = [a for a in notifiable if a.alert_type == AlertType.DRIFT]
         acute_ok = [a for a in notifiable if a.alert_type != AlertType.DRIFT]
@@ -217,6 +228,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         await self._send_notification(to_send)
         for a in to_send:
+            self._alert_suppression[f"{a.entity_id}|{a.alert_type.value}"] = now
             self._notification_cooldowns[f"{a.entity_id}|{a.alert_type.value}"] = now
         self._last_notification_info = {"timestamp": now.isoformat(), "type": to_send[0].alert_type.value}
 

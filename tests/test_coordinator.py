@@ -577,11 +577,11 @@ class TestCoordinatorNotificationSuppression:
     ) -> None:
         now = datetime.now(timezone.utc)
         alert = _make_alert(severity=AlertSeverity.MEDIUM)
-        # Pre-set cooldown as if just notified
-        coordinator._notification_cooldowns["sensor.test1|inactivity"] = now
-        coordinator._notification_cooldown = 30  # 30 minutes
+        # Pre-set alert suppression as if just notified (new suppression mechanism)
+        coordinator._alert_suppression["sensor.test1|inactivity"] = now
+        coordinator._alert_repeat_interval = 240  # 4 hours
 
-        await coordinator._handle_alerts([alert], now + timedelta(minutes=5))  # 5 min < 30 min
+        await coordinator._handle_alerts([alert], now + timedelta(minutes=5))  # 5 min < 240 min
         mock_hass.services.async_call.assert_not_called()
 
     @pytest.mark.asyncio
@@ -590,8 +590,9 @@ class TestCoordinatorNotificationSuppression:
     ) -> None:
         now = datetime.now(timezone.utc)
         alert = _make_alert(severity=AlertSeverity.MEDIUM)
-        coordinator._notification_cooldowns["sensor.test1|inactivity"] = now - timedelta(hours=1)
-        coordinator._notification_cooldown = 30  # 60 min > 30 min → should notify
+        # Pre-set alert suppression as if notified 5 hours ago (new suppression mechanism)
+        coordinator._alert_suppression["sensor.test1|inactivity"] = now - timedelta(hours=5)
+        coordinator._alert_repeat_interval = 240  # 5 hours > 240 minutes → should notify
 
         await coordinator._handle_alerts([alert], now)
         mock_hass.services.async_call.assert_called()
