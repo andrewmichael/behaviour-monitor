@@ -21,7 +21,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ANOMALY_DETAILS,
-    ATTR_CROSS_SENSOR_PATTERNS,
     ATTR_ENTITY_STATUS,
     ATTR_EXPECTED_BY_NOW,
     ATTR_LAST_RETRAIN,
@@ -94,26 +93,6 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             ATTR_MONITORED_ENTITIES: list(coord.monitored_entities),
         },
     ),
-    BehaviourMonitorSensorDescription(
-        key="cross_sensor_patterns",
-        name="Cross-Sensor Patterns",
-        icon="mdi:relation-many-to-many",
-        value_fn=lambda data: 0,
-        extra_attrs_fn=lambda coord, data: {
-            "deprecated": True,
-            "removal_version": "1.2",
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="ml_status",
-        name="ML Status",
-        icon="mdi:brain",
-        value_fn=lambda data: "Removed in v1.1",
-        extra_attrs_fn=lambda coord, data: {
-            "deprecated": True,
-            "removal_version": "1.2",
-        },
-    ),
     # Elder Care Sensors
     BehaviourMonitorSensorDescription(
         key="welfare_status",
@@ -180,16 +159,6 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "days_elapsed": data.get("stat_training", {}).get("days_elapsed"),
             "total_days": data.get("stat_training", {}).get("total_days"),
             "first_observation": data.get("stat_training", {}).get("first_observation"),
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="ml_training_remaining",
-        name="ML Training Remaining",
-        icon="mdi:timer-sand",
-        value_fn=lambda data: "N/A",
-        extra_attrs_fn=lambda coord, data: {
-            "deprecated": True,
-            "removal_version": "1.2",
         },
     ),
     BehaviourMonitorSensorDescription(
