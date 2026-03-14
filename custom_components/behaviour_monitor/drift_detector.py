@@ -152,19 +152,38 @@ class DriftDetector:
         if state.last_update_date == today_iso:
             return None
 
-        # --- Compute baseline rates ---
-        baseline_rates = self._compute_baseline_rates(routine, exclude_today=today)
-        if len(baseline_rates) < MIN_EVIDENCE_DAYS:
-            return None
+        # --- Determine day type ---
+        day_type = "weekend" if today.weekday() >= 5 else "weekday"
 
-        baseline_mean = statistics.mean(baseline_rates)
+        # --- Compute baseline rates (day-type-split with recency weighting) ---
+        day_type_counts = self._compute_baseline_rates_for_day_type(
+            routine, exclude_today=today, day_type=day_type
+        )
+        if len(day_type_counts) >= MIN_EVIDENCE_DAYS:
+            baseline_rates_for_stdev = list(day_type_counts.values())
+            baseline_mean = self._compute_weighted_mean(day_type_counts, today)
+        else:
+            # Fallback: combined pool (all day types)
+            all_counts = self._compute_baseline_rates(routine, exclude_today=today)
+            if len(all_counts) < MIN_EVIDENCE_DAYS:
+                return None
+            combined_counts: dict[date, int] = {}
+            for dt_type in ("weekday", "weekend"):
+                combined_counts.update(
+                    self._compute_baseline_rates_for_day_type(
+                        routine, exclude_today=today, day_type=dt_type
+                    )
+                )
+            baseline_rates_for_stdev = list(combined_counts.values())
+            baseline_mean = self._compute_weighted_mean(combined_counts, today)
+
         if baseline_mean == 0:
             return None
 
         # --- Compute baseline stdev ---
-        if len(baseline_rates) >= 2:
+        if len(baseline_rates_for_stdev) >= 2:
             try:
-                baseline_stdev = statistics.stdev(baseline_rates)
+                baseline_stdev = statistics.stdev(baseline_rates_for_stdev)
             except statistics.StatisticsError:
                 baseline_stdev = 0.0
         else:

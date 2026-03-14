@@ -381,20 +381,22 @@ class TestCUSUMAccumulation:
         state.days_above_threshold = 1
         state.last_update_date = "2024-04-01"
 
-        # Day 2: returns to baseline — z will be 0, so s_pos drops by k=0.5 to 4.0
-        # 4.0 is NOT > 4.0 (strict), so days_above_threshold resets to 0
+        # Day 2: today_rate is slightly below baseline so z < 0 but |z| < k.
+        # s_pos = max(0, 4.5 + z - k) drops below h=4.0 -> counter resets.
+        # s_neg = max(0, 0 - z - k) = max(0, small - 0.5) stays at 0 -> no trigger.
         check_date_2 = date(2024, 4, 2)
         now_2 = datetime(2024, 4, 2, 14, 0, 0, tzinfo=timezone.utc)
         routine_2 = _build_routine_with_history(entity_id, [baseline_rate] * 14, base_date=check_date_2 - timedelta(days=1))
-        # Today has exactly baseline_rate events
-        for i in range(baseline_rate):
+        # Today has 4 events (one below baseline=5); z ≈ -1/stdev, s_pos drops below h
+        today_below_baseline = 4
+        for i in range(today_below_baseline):
             ts = datetime(2024, 4, 2, i % 24, i % 60, 0, tzinfo=timezone.utc)
             routine_2.record(ts, "on")
         detector.check(entity_id, routine_2, check_date_2, now_2)
 
         state_after = detector.get_or_create_state(entity_id)
         assert state_after.days_above_threshold == 0, (
-            f"Expected days_above_threshold=0 after returning to baseline, got {state_after.days_above_threshold}"
+            f"Expected days_above_threshold=0 after returning well below baseline, got {state_after.days_above_threshold}"
         )
 
     def test_cusum_params_1sigma_medium_sensitivity(self) -> None:
@@ -865,7 +867,6 @@ class TestDayTypeSplitIntegration:
         Expect: check() accumulates CUSUM (s_pos > 0) on this Saturday.
         """
         from custom_components.behaviour_monitor.drift_detector import DriftDetector
-        from datetime import timedelta
 
         # 2024-01-15 is Monday; previous Saturday is 2024-01-13
         reference_monday = date(2024, 1, 8)  # start building from this Monday
