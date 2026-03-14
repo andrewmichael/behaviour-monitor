@@ -1,5 +1,20 @@
 # Milestones
 
+## v3.0 Detection Accuracy (Shipped: 2026-03-14)
+
+**Phases completed:** 3 phases, 6 plans, 5 tasks
+**Files modified:** 29 | **Lines of code:** ~9,892 Python (2,746 integration + 7,146 tests)
+**Git range:** `584782e` (feat(09-01)) → `7cf8b8a` (docs(phase-11))
+
+**Key accomplishments:**
+1. Fire-once-then-throttle alert suppression — `_alert_suppression` dict prevents same-condition spam, persisted to HA storage with clear-on-resolve
+2. Alert repeat interval configurable in HA options UI (30–1440 min, default 4 h) with seamless v5→v6 migration
+3. CUSUM drift baseline split by day-type (weekday vs weekend) — weekend anomalies no longer diluted by 5× more weekday history
+4. Exponential decay weighting (0.95/day) makes recent activity dominate over 60+ day stale history
+5. Per-entity CV-adaptive inactivity thresholds — regular entities get 1.5× floor, erratic entities up to 10× ceiling; min/max bounds configurable in UI with v6→v7 migration
+
+---
+
 ## v2.9 Housekeeping & Config (Shipped: 2026-03-14)
 
 **Phases completed:** 3 phases, 6 plans, 0 tasks

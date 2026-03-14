@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns per-entity routines from a mix of entity types (motion, doors, lights, climate, power) using 168 hour-of-day × day-of-week slots. Provides two detection modes: acute alerts for out-of-character events happening right now (inactivity, unusual timing), and drift alerts when behavior persistently changes over days or weeks (CUSUM change-point detection). Learning period and attribute tracking are user-configurable from the HA config UI.
+A Home Assistant custom integration that monitors entity behavior patterns and detects anomalies. Learns per-entity routines from a mix of entity types (motion, doors, lights, climate, power) using 168 hour-of-day × day-of-week slots. Provides two detection modes: acute alerts for out-of-character events happening right now (inactivity, unusual timing), and drift alerts when behavior persistently changes over days or weeks (CUSUM change-point detection). Inactivity thresholds auto-adapt to each entity's observed variance; drift baselines split weekday from weekend activity with recency weighting; notifications fire once then throttle at a configurable interval. All detection parameters are user-configurable from the HA config UI.
 
 ## Core Value
 
@@ -34,12 +34,14 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Attribute tracking toggle configurable from HA config UI (default enabled) — v2.9
 - ✓ Config v4→v5 migration with automatic defaults for existing installs — v2.9
 
+- ✓ Alert suppression — fire once, then throttle at configurable repeat interval — v3.0
+- ✓ Weekday/weekend split drift baseline — separate Saturday from Tuesday in CUSUM — v3.0
+- ✓ Recency-weighted drift baseline — exponential decay weights recent days more heavily — v3.0
+- ✓ Per-entity adaptive inactivity threshold — auto-learned from observed timing variance — v3.0
+
 ### Active
 
-- [ ] Alert suppression — fire once, then re-notify at reduced frequency while condition persists — v3.0
-- [ ] Weekday/weekend split drift baseline — separate Saturday from Tuesday in CUSUM — v3.0
-- [ ] Recency-weighted drift baseline — weight recent days more heavily to adapt to routine changes — v3.0
-- [ ] Per-entity inactivity threshold — auto-learn tolerance from each entity's observed variance — v3.0
+(None — planning next milestone)
 
 ### Out of Scope
 
@@ -53,20 +55,21 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v2.9 with 7,863 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 333 tests passing.
+Shipped v3.0 with ~9,892 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 403 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies).
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v7.
 
 Architecture:
-- `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics)
-- `acute_detector.py` — inactivity and unusual-time detection with sustained-evidence gating
-- `drift_detector.py` — bidirectional CUSUM change-point detection
-- `coordinator.py` — DataUpdateCoordinator wiring all engines; now saves after bootstrap
-- `sensor.py` — 11 sensor entity descriptions (3 ML stubs removed)
-- `config_flow.py` — v5 config with learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5)
+- `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance computation
+- `acute_detector.py` — inactivity detection with CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
+- `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
+- `coordinator.py` — DataUpdateCoordinator wiring all engines; fire-once-then-throttle alert suppression via `_alert_suppression` dict
+- `sensor.py` — 11 sensor entity descriptions
+- `config_flow.py` — v7 config with alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity; min>max cross-field validation
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7)
+- `translations/en.json` — user-friendly labels for all config fields
 
-Known tech debt: None from prior milestones — v2.9 cleared all v1.1 tech debt items.
+Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
 
 ## Constraints
 
@@ -92,16 +95,11 @@ Known tech debt: None from prior milestones — v2.9 cleared all v1.1 tech debt 
 | Remove ML stubs entirely (v2.9) | Stubs created risk of users building automations on stub sensors; clean removal is safer | ✓ Good — 3 dead sensor descriptions gone, no automation regression risk |
 | learning_period separate from history_window (v2.9) | Learning window (when baseline is "ready") differs conceptually from history fetch window | ✓ Good — coordinator now passes learning_period_days to RoutineModel instead of conflating with history_window_days |
 | setdefault for v4→v5 migration (v2.9) | Preserves any values users may have set; only injects defaults where keys are absent | ✓ Good — zero broken configs on upgrade |
-
-## Current Milestone: v3.0 Detection Accuracy
-
-**Goal:** Reduce false positives and notification fatigue by making detection smarter — weekday/weekend-aware drift, recency-weighted baselines, auto-learned inactivity thresholds, and persistent alert suppression.
-
-**Target features:**
-- Alert suppression: fire once, reduce frequency while condition persists
-- Weekday/weekend split CUSUM baseline
-- Recency-weighted (exponentially decayed) drift baseline
-- Per-entity inactivity threshold auto-learned from observed variance
+| Fire-once-then-throttle suppression (v3.0) | Polling-based detectors fire every cycle; first-fire semantics prevent notification spam | ✓ Good — `_alert_suppression` dict with clear-on-resolve; 4 h default throttle |
+| Day-type split for CUSUM baseline (v3.0) | Weekend behavior diluted by 5× more weekday data under unified baseline | ✓ Good — weekend anomalies now detected in isolation |
+| CV-based adaptive inactivity threshold (v3.0) | Uniform multiplier was too tight for irregular entities, too loose for regular ones | ✓ Good — per-slot CV auto-calibrates threshold to observed variance |
+| Compute CV at query time, no new storage (v3.0) | Avoids storage schema complexity; existing `event_times` deques hold enough data | ✓ Good — zero new persistence, all data already captured |
+| setdefault for v6→v7 migration (v3.0) | Consistent with v2.9 pattern; preserves any pre-existing custom values | ✓ Good — identical to v5 migration pattern |
 
 ---
-*Last updated: 2026-03-14 after v3.0 milestone start*
+*Last updated: 2026-03-14 after v3.0 milestone*

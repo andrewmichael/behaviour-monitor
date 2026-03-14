@@ -123,6 +123,49 @@
 
 ---
 
+## Milestone: v3.0 — Detection Accuracy
+
+**Shipped:** 2026-03-14
+**Phases:** 3 | **Plans:** 6
+
+### What Was Built
+- Fire-once-then-throttle alert suppression with clear-on-resolve — `_alert_suppression` dict keyed by entity+alert-type, persisted to HA storage
+- Alert repeat interval configurable in HA options UI (30-1440 min, default 4h); v5→v6 migration adds default to existing installs
+- CUSUM drift baseline split by day-type (weekday vs weekend) — `_compute_baseline_rates_for_day_type` + exponential decay weighting via `_compute_weighted_mean`
+- CV-adaptive inactivity thresholds — `ActivitySlot.interval_cv()` feeds `AcuteDetector` with per-slot variance; min/max bounds configurable in UI
+- v6→v7 migration adds min/max inactivity multiplier defaults to existing installs; 403 tests passing
+
+### What Worked
+- All 3 phases were independent and could execute in parallel — each built on Phase 8 without depending on each other, enabling true Wave 1 parallelism if desired
+- Per-slot CV computation reused existing `event_times` deques with zero new persistence — the data was already there, just not being used
+- Plan verification (gsd-plan-checker) caught the translation file omission in Phase 11 Plan 02 before execution — saved a regression
+- TDD within-task pattern (same task writes tests then implements) was clean and fast for the mathematically well-defined CV formula
+- Config migration setdefault pattern (established in v2.9) applied identically for v6→v7 — zero friction, well-understood pattern
+
+### What Was Inefficient
+- Phase 9 phase-level VALIDATION.md was never created (only the plan-level VALIDATION.md existed at planning time) — all 3 phases lack Nyquist compliance records
+- MILESTONES.md accomplishments auto-population from SUMMARY.md frontmatter requires `one_liner` field to be populated; none of the v3.0 SUMMARYs set it — required manual update
+- Phase 10's fallback path was implemented with two separate baseline derivations (once as `list[int]`, once as `dict[date,int]`) — works correctly but adds cognitive complexity
+
+### Patterns Established
+- CV-based adaptive threshold: `threshold = global_multiplier × clamp(1+cv, min_bound, max_bound) × expected_gap` — dimensionless variance metric that self-calibrates per entity
+- Day-type routing: `day_type = "weekend" if today.weekday() >= 5 else "weekday"` — clean, simple guard used in `check()`
+- Exponential decay weighting: `decay_factor = 0.95 ** age_days` applied per-date before weighted mean — composable with any per-date dict
+- Cross-field validation in config flow: validate `min > max` in both `async_step_user` and `async_step_init` — symmetric validation prevents invalid config in either entry point
+
+### Key Lessons
+1. When all phases are independent, execute them in separate waves rather than one mega-plan — isolation means one phase's tests can't interfere with another's
+2. Plan-level verification agents catch scope omissions that manual review misses — the translation file catch in Phase 11 validates the automated verification investment
+3. CV as a dimensionless variance metric is more portable than raw stdev — it works regardless of the expected_gap magnitude, making the adaptive formula entity-agnostic
+4. SUMMARY.md `one_liner` frontmatter field should be explicitly populated by executors — it feeds MILESTONES.md; blank values require manual fixup
+
+### Cost Observations
+- Model mix: orchestrators on sonnet, executors and verifiers on sonnet
+- Sessions: 2 (planning in one session, execution + completion in second)
+- Notable: 403 tests passing after 3 independent phases with 5 tasks — TDD discipline kept regression count at zero
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -132,6 +175,7 @@
 | v1.0 | 2 | 5 | Tuning existing code — thresholds, guards, smoothing |
 | v1.1 | 3 | 9 | Full architecture replacement — routine model + detection engines |
 | v2.9 | 3 | 6 | Tech debt clearance + config UI surface area expansion |
+| v3.0 | 3 | 6 | Detection intelligence — adaptive thresholds, day-type awareness, suppression |
 
 ### Cumulative Quality
 
@@ -140,10 +184,12 @@
 | v1.0 | 240 | FP rate 4.5% to 1.2% |
 | v1.1 | 343 | Sustained-evidence gating eliminates single-point FPs entirely |
 | v2.9 | 333 | Zero tech debt items remaining; learning period and attribute tracking configurable |
+| v3.0 | 403 | CV-adaptive + day-type-aware + suppressed notifications; zero regressions across 5 tasks |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. False positive reduction requires architectural change, not just threshold tuning — v1.0 proved tuning has limits, v1.1 proved routine-based detection is fundamentally better
 2. HA-free pure-Python components are dramatically faster to develop and test — established in v1.1, should be mandatory for all future detection logic
-3. TDD red-green split across plans is fast and safe for integration work — verified in both v1.0 and v1.1
+3. TDD red-green split across plans is fast and safe for integration work — verified in v1.0, v1.1, and v3.0
 4. Tech debt milestones are fast and high-value — v2.9 cleared 8 requirements in under 2 hours; keep a short-cycle housekeeping milestone between major features
+5. Automated plan verification pays for itself — the gsd-plan-checker caught a scope omission in v3.0 Phase 11 that manual review missed
