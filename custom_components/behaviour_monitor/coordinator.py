@@ -17,10 +17,12 @@ from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_DRIFT_SENSITIVITY, CONF_ENABLE_NOTIFICATIONS, CONF_HISTORY_WINDOW_DAYS,
-    CONF_INACTIVITY_MULTIPLIER, CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES,
-    CONF_NOTIFICATION_COOLDOWN, CONF_NOTIFY_SERVICES,
+    CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD, CONF_MIN_NOTIFICATION_SEVERITY,
+    CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN, CONF_NOTIFY_SERVICES,
+    CONF_TRACK_ATTRIBUTES,
     DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS, DEFAULT_INACTIVITY_MULTIPLIER,
-    DEFAULT_MIN_NOTIFICATION_SEVERITY, DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_LEARNING_PERIOD_DAYS, DEFAULT_MIN_NOTIFICATION_SEVERITY, DEFAULT_NOTIFICATION_COOLDOWN,
+    DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY, STORAGE_VERSION,
     UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
@@ -68,7 +70,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._notify_services: list[str] = list(d.get(CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES))
         self._notification_cooldown: int = int(d.get(CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN))
         self._min_notification_severity: str = d.get(CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY)
-        self._routine_model = RoutineModel(self._history_window_days)
+        self._learning_period_days: int = int(d.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS))
+        self._track_attributes: bool = bool(d.get(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES))
+        self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)))
         self._drift_detector = DriftDetector(d.get(CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM))
         self._last_seen: dict[str, datetime] = {}
@@ -145,6 +149,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ns = event.data.get("new_state")
         if ns is None:
             return
+        if not self._track_attributes:
+            old_state = event.data.get("old_state")
+            if old_state is not None and old_state.state == ns.state:
+                return
         now, sv = dt_util.now(), str(ns.state)
         self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
         self._last_seen[eid] = now
