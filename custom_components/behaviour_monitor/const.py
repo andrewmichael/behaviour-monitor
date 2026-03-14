@@ -22,9 +22,13 @@ CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 
 # New v3.0 config keys
 CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
+CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
+CONF_MAX_INACTIVITY_MULTIPLIER: Final = "max_inactivity_multiplier"
 
 # New v3.0 defaults
 DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240  # minutes (4 hours)
+DEFAULT_MIN_INACTIVITY_MULTIPLIER: Final = 1.5
+DEFAULT_MAX_INACTIVITY_MULTIPLIER: Final = 10.0
 
 # Sensitivity levels
 SENSITIVITY_LOW: Final = "low"

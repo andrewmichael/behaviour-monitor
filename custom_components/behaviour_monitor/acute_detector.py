@@ -15,6 +15,8 @@ from datetime import datetime
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     DEFAULT_INACTIVITY_MULTIPLIER,
+    DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+    DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     MINIMUM_CONFIDENCE_FOR_UNUSUAL_TIME,
     SUSTAINED_EVIDENCE_CYCLES,
 )
@@ -33,9 +35,13 @@ class AcuteDetector:
         self,
         inactivity_multiplier: float = DEFAULT_INACTIVITY_MULTIPLIER,
         sustained_cycles: int = SUSTAINED_EVIDENCE_CYCLES,
+        min_multiplier: float = DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+        max_multiplier: float = DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     ) -> None:
         self._inactivity_multiplier = inactivity_multiplier
         self._sustained_cycles = sustained_cycles
+        self._min_multiplier = min_multiplier
+        self._max_multiplier = max_multiplier
 
         # Per-entity counters for sustained-evidence requirement
         self._inactivity_cycles: dict[str, int] = {}
@@ -76,7 +82,16 @@ class AcuteDetector:
             return None
 
         elapsed = (now - last_seen).total_seconds()
-        threshold = self._inactivity_multiplier * expected_gap
+        cv = routine.interval_cv(now.hour, now.weekday())
+        if cv is not None:
+            raw_scalar = 1.0 + cv
+            scalar: float | None = max(
+                self._min_multiplier, min(self._max_multiplier, raw_scalar)
+            )
+            threshold = self._inactivity_multiplier * scalar * expected_gap
+        else:
+            scalar = None
+            threshold = self._inactivity_multiplier * expected_gap
 
         # Condition not met — reset counter
         if elapsed < threshold:
@@ -114,6 +129,7 @@ class AcuteDetector:
                 "expected_gap_seconds": expected_gap,
                 "threshold_seconds": threshold,
                 "severity_ratio": severity_ratio,
+                "adaptive_scalar": scalar,
             },
         )
 

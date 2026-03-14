@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -24,11 +26,13 @@ def make_routine(
     expected_gap: float | None = 3600.0,
     confidence: float = 0.8,
     slot_is_sufficient: bool = True,
+    interval_cv: float | None = None,
 ) -> MagicMock:
     """Return a mock EntityRoutine with configurable properties."""
     routine = MagicMock()
     routine.expected_gap_seconds.return_value = expected_gap
     routine.confidence.return_value = confidence
+    routine.interval_cv.return_value = interval_cv
 
     # Build a mock slot whose is_sufficient matches the parameter
     slot = MagicMock()
@@ -457,3 +461,241 @@ class TestNoHAImports:
         )
         count = int(result.stdout.strip()) if result.stdout.strip() else 0
         assert count == 0, "acute_detector.py must have zero homeassistant imports"
+
+
+# ---------------------------------------------------------------------------
+# New constants: CONF_MIN/MAX_INACTIVITY_MULTIPLIER and defaults
+# ---------------------------------------------------------------------------
+
+
+class TestNewConstants:
+    """Verify new constants exist in const.py."""
+
+    def test_conf_min_inactivity_multiplier_exists(self) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_MIN_INACTIVITY_MULTIPLIER,
+        )
+        assert CONF_MIN_INACTIVITY_MULTIPLIER == "min_inactivity_multiplier"
+
+    def test_conf_max_inactivity_multiplier_exists(self) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_MAX_INACTIVITY_MULTIPLIER,
+        )
+        assert CONF_MAX_INACTIVITY_MULTIPLIER == "max_inactivity_multiplier"
+
+    def test_default_min_inactivity_multiplier(self) -> None:
+        from custom_components.behaviour_monitor.const import (
+            DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+        )
+        assert DEFAULT_MIN_INACTIVITY_MULTIPLIER == 1.5
+
+    def test_default_max_inactivity_multiplier(self) -> None:
+        from custom_components.behaviour_monitor.const import (
+            DEFAULT_MAX_INACTIVITY_MULTIPLIER,
+        )
+        assert DEFAULT_MAX_INACTIVITY_MULTIPLIER == 10.0
+
+
+# ---------------------------------------------------------------------------
+# AcuteDetector: adaptive threshold (check_inactivity with interval_cv)
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveThreshold:
+    """check_inactivity uses global_multiplier × clamp(1+cv, min, max) × gap when CV is available."""
+
+    def test_adaptive_threshold_fires_with_regular_entity(self) -> None:
+        """Regular entity (CV=0): scalar=clamp(1+0, 1.5, 10)=1.5; threshold=3×1.5×3600=16200s."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        # CV=0 → raw_scalar=1.0 → clamped to min=1.5 → threshold=3.0×1.5×3600=16200
+        # Elapsed must exceed threshold for alert; use 3 cycles
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=0.0)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=20000)  # > 16200
+
+        result = detector.check_inactivity("sensor.regular", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(3.0 * 1.5 * gap)
+
+    def test_adaptive_threshold_no_alert_below_adaptive_threshold(self) -> None:
+        """With CV=0 and min=1.5, threshold=3×1.5×3600=16200; elapsed=12000 < 16200 → None."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=0.0)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=12000)  # < 16200
+
+        result = detector.check_inactivity("sensor.regular", routine, now, last_seen)
+        assert result is None
+
+    def test_adaptive_threshold_scalar_for_erratic_entity(self) -> None:
+        """Erratic entity (CV=2.0): scalar=clamp(3.0, 1.5, 10)=3.0; threshold=3×3.0×3600=32400."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=2.0)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=40000)  # > 32400
+
+        result = detector.check_inactivity("sensor.erratic", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(3.0 * 3.0 * gap)
+
+
+class TestFallbackThreshold:
+    """check_inactivity falls back to global_multiplier × expected_gap when CV is None."""
+
+    def test_fallback_when_cv_is_none(self) -> None:
+        """CV=None → threshold = 3.0 × 3600 = 10800s (no adaptive scaling)."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=None)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=15000)  # > 10800
+
+        result = detector.check_inactivity("sensor.sparse", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(3.0 * gap)
+
+    def test_fallback_no_alert_below_simple_threshold(self) -> None:
+        """CV=None; elapsed=9000 < 10800 → None."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=None)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=9000)
+
+        result = detector.check_inactivity("sensor.sparse", routine, now, last_seen)
+        assert result is None
+
+
+class TestClampMinMultiplier:
+    """Scalar is clamped to min_multiplier (default 1.5) when 1+CV < 1.5."""
+
+    def test_clamp_min_at_zero_cv(self) -> None:
+        """CV=0 → 1+0=1.0 < 1.5 → scalar=1.5."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(
+            inactivity_multiplier=1.0, sustained_cycles=1,
+            min_multiplier=1.5, max_multiplier=10.0,
+        )
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=0.0)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=6000)  # > 1.0*1.5*3600=5400
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(1.0 * 1.5 * gap)
+        assert result.details["adaptive_scalar"] == pytest.approx(1.5)
+
+    def test_clamp_min_below_one_cv(self) -> None:
+        """CV=0.3 → 1+0.3=1.3 < 1.5 → scalar=1.5 (clamped to min)."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(
+            inactivity_multiplier=1.0, sustained_cycles=1,
+            min_multiplier=1.5, max_multiplier=10.0,
+        )
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=0.3)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=6000)  # > 5400
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["adaptive_scalar"] == pytest.approx(1.5)
+
+
+class TestClampMaxMultiplier:
+    """Scalar is clamped to max_multiplier (default 10.0) when 1+CV > 10.0."""
+
+    def test_clamp_max_for_extremely_erratic(self) -> None:
+        """CV=12.0 → 1+12=13.0 > 10.0 → scalar=10.0 (clamped to max)."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        detector = AcuteDetector(
+            inactivity_multiplier=1.0, sustained_cycles=1,
+            min_multiplier=1.5, max_multiplier=10.0,
+        )
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=12.0)
+        now = make_now()
+        last_seen = now - __import__("datetime").timedelta(seconds=40000)  # > 1×10×3600=36000
+
+        result = detector.check_inactivity("sensor.extreme", routine, now, last_seen)
+        assert result is not None
+        assert result.details["adaptive_scalar"] == pytest.approx(10.0)
+        assert result.details["threshold_seconds"] == pytest.approx(1.0 * 10.0 * gap)
+
+
+class TestCompareRegularVsErratic:
+    """Regular entities get tighter thresholds than erratic entities with same gap."""
+
+    def test_compare_thresholds_regular_vs_erratic(self) -> None:
+        """Regular (CV=0) threshold < erratic (CV=2) threshold for same gap and global_multiplier."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        now = make_now()
+
+        detector_regular = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine_regular = make_routine(expected_gap=gap, confidence=0.9, interval_cv=0.0)
+        # elapsed just enough to exceed regular threshold (3×1.5×3600=16200) but not erratic (3×3×3600=32400)
+        last_seen = now - __import__("datetime").timedelta(seconds=20000)
+
+        result_regular = detector_regular.check_inactivity(
+            "sensor.regular", routine_regular, now, last_seen
+        )
+
+        detector_erratic = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine_erratic = make_routine(expected_gap=gap, confidence=0.9, interval_cv=2.0)
+        result_erratic = detector_erratic.check_inactivity(
+            "sensor.erratic", routine_erratic, now, last_seen
+        )
+
+        # Regular entity: elapsed > adaptive threshold → alert fires
+        assert result_regular is not None
+        # Erratic entity: elapsed < adaptive threshold → no alert
+        assert result_erratic is None
+
+    def test_adaptive_scalar_in_details(self) -> None:
+        """Details dict includes adaptive_scalar when CV is available."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        now = make_now()
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=1.0)
+        # CV=1 → scalar=clamp(2.0, 1.5, 10.0)=2.0; threshold=3×2×3600=21600
+        last_seen = now - __import__("datetime").timedelta(seconds=25000)
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert "adaptive_scalar" in result.details
+        assert result.details["adaptive_scalar"] == pytest.approx(2.0)
+
+    def test_adaptive_scalar_none_in_details_when_cv_none(self) -> None:
+        """Details dict has adaptive_scalar=None when CV is not available."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+
+        gap = 3600.0
+        now = make_now()
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(expected_gap=gap, confidence=0.9, interval_cv=None)
+        last_seen = now - __import__("datetime").timedelta(seconds=15000)  # > 3×3600=10800
+
+        result = detector.check_inactivity("sensor.sparse", routine, now, last_seen)
+        assert result is not None
+        assert result.details["adaptive_scalar"] is None
