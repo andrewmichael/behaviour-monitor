@@ -69,11 +69,11 @@ Plans:
   2. Recent days contribute more to the drift baseline than older days via exponential decay weighting
   3. A weekend-only behavior change triggers a drift alert without being diluted by weekday data
   4. Existing drift detection behavior is preserved for entities with insufficient day-type-split data (graceful fallback)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: TBD
-- [ ] 10-02: TBD
+- [ ] 10-01-PLAN.md — Core implementation: _compute_baseline_rates_for_day_type + _compute_weighted_mean + wire into check() with fallback; TDD unit tests
+- [ ] 10-02-PLAN.md — End-to-end scenario tests: weekend isolation, recency weighting, fallback; full suite validation
 
 ### Phase 11: Adaptive Inactivity
 **Goal**: Each entity's inactivity threshold is derived from its own observed inter-event variance rather than applying a single global multiplier
@@ -104,5 +104,5 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 7. Config Flow Additions | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 9. Alert Suppression | 2/2 | Complete    | 2026-03-14 | - |
-| 10. Drift Accuracy | v3.0 | 0/? | Not started | - |
+| 10. Drift Accuracy | v3.0 | 0/2 | Not started | - |
 | 11. Adaptive Inactivity | v3.0 | 0/? | Not started | - |
