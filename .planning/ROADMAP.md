@@ -31,7 +31,7 @@
 
 - [x] **Phase 6: Dead Code Removal** - Strip deprecated ML sensor stubs and dead constants from const.py and sensor.py (completed 2026-03-14)
 - [x] **Phase 7: Config Flow Additions** - Expose learning period and attribute tracking as user-configurable options, with migration (completed 2026-03-14)
-- [ ] **Phase 8: Bootstrap Fix and Closeout** - Fix missing post-bootstrap save and record milestone versioning convention
+- [x] **Phase 8: Bootstrap Fix and Closeout** - Fix missing post-bootstrap save and record milestone versioning convention (completed 2026-03-14)
 
 ## Phase Details
 
@@ -89,4 +89,4 @@ Plans:
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
 | 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
 | 7. Config Flow Additions | 2/2 | Complete   | 2026-03-14 | - |
-| 8. Bootstrap Fix and Closeout | 1/2 | In Progress|  | - |
+| 8. Bootstrap Fix and Closeout | 2/2 | Complete   | 2026-03-14 | - |
