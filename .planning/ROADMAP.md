@@ -41,7 +41,7 @@
 
 - [x] **Phase 9: Alert Suppression** — Fire-once-then-throttle notifications with configurable repeat interval (completed 2026-03-14)
 - [x] **Phase 10: Drift Accuracy** — Weekday/weekend split and recency-weighted CUSUM baselines (completed 2026-03-14)
-- [ ] **Phase 11: Adaptive Inactivity** — Per-entity inactivity thresholds auto-learned from observed variance
+- [x] **Phase 11: Adaptive Inactivity** — Per-entity inactivity thresholds auto-learned from observed variance (completed 2026-03-14)
 
 ## Phase Details
 
@@ -106,4 +106,4 @@ Phases 9, 10, 11 are independent and can execute in any order.
 | 8. Bootstrap Fix and Closeout | v2.9 | 2/2 | Complete | 2026-03-14 |
 | 9. Alert Suppression | 2/2 | Complete    | 2026-03-14 | - |
 | 10. Drift Accuracy | 2/2 | Complete    | 2026-03-14 | - |
-| 11. Adaptive Inactivity | 1/2 | In Progress|  | - |
+| 11. Adaptive Inactivity | 2/2 | Complete   | 2026-03-14 | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Detection Accuracy
 status: planning
-stopped_at: Completed 11-adaptive-inactivity 11-01-PLAN.md
-last_updated: "2026-03-14T19:49:37.610Z"
+stopped_at: Completed 11-adaptive-inactivity 11-02-PLAN.md
+last_updated: "2026-03-14T19:57:03.297Z"
 last_activity: 2026-03-14 — Roadmap created for v3.0
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -49,6 +49,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 11-adaptive-inactivity]: CV computed at query time from event_times deque — no serialization overhead, always fresh
 - [Phase 11-adaptive-inactivity]: Adaptive threshold clamps scalar between min=1.5 and max=10.0; fallback to plain multiplier x gap when CV=None (sparse slot)
 - [Phase 11-adaptive-inactivity]: adaptive_scalar stored in AlertResult.details for diagnostics without altering alert API
+- [Phase 11-adaptive-inactivity]: VERSION and STORAGE_VERSION both bumped to 7 in same task — consistent with Phase 9 pattern of keeping storage and config entry versions aligned
 
 ### Blockers/Concerns
 
@@ -66,6 +67,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-03-14T19:49:37.607Z
-Stopped at: Completed 11-adaptive-inactivity 11-01-PLAN.md
+Last session: 2026-03-14T19:57:03.294Z
+Stopped at: Completed 11-adaptive-inactivity 11-02-PLAN.md
 Resume file: None
