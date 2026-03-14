@@ -59,7 +59,11 @@ Plans:
   2. The Options flow presents an "Attribute tracking" toggle, defaulting to enabled
   3. An existing install that upgrades without touching its config entry automatically receives both new options at their defaults (no broken config, no HA error log entries)
   4. A fresh install presents both new fields during initial setup
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Add constants, update config flow schema (both initial and options), add v4->v5 migration
+- [ ] 07-02-PLAN.md — Wire coordinator to read new config values and add test coverage
 
 ### Phase 8: Bootstrap Fix and Closeout
 **Goal**: The coordinator correctly persists routine model data after bootstrap, and the milestone versioning convention is established in MILESTONES.md
@@ -80,5 +84,5 @@ Plans:
 | 4. Detection Engines | v1.1 | 2/2 | Complete | 2026-03-13 |
 | 5. Integration | v1.1 | 3/3 | Complete | 2026-03-13 |
 | 6. Dead Code Removal | 2/2 | Complete   | 2026-03-14 | - |
-| 7. Config Flow Additions | v2.9 | 0/TBD | Not started | - |
+| 7. Config Flow Additions | v2.9 | 0/2 | Not started | - |
 | 8. Bootstrap Fix and Closeout | v2.9 | 0/TBD | Not started | - |
