@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Alert suppression — fire once then throttle at configurable repeat interval (30–1440 min)
 - Min/max inactivity multiplier bounds configurable in HA options UI
 
+## [2.9.1] - 2026-03-15
+
+### Changed
+- Documentation: add retroactive milestone audit to complete audit trail
+
 ## [2.9.0] - 2026-03-14
 
 ### Added

@@ -39,7 +39,9 @@ class BehaviourMonitorSensorDescription(SensorEntityDescription):
     """Describes a Behaviour Monitor sensor."""
 
     value_fn: Callable[[dict[str, Any]], Any] = None  # type: ignore[assignment]
-    extra_attrs_fn: Callable[[BehaviourMonitorCoordinator, dict[str, Any]], dict[str, Any]] | None = None
+    extra_attrs_fn: (
+        Callable[[BehaviourMonitorCoordinator, dict[str, Any]], dict[str, Any]] | None
+    ) = None
 
 
 SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
@@ -103,7 +105,9 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "reasons": data.get("welfare", {}).get("reasons", []),
             "summary": data.get("welfare", {}).get("summary", ""),
             "recommendation": data.get("welfare", {}).get("recommendation", ""),
-            "entity_count_by_status": data.get("welfare", {}).get("entity_count_by_status", {}),
+            "entity_count_by_status": data.get("welfare", {}).get(
+                "entity_count_by_status", {}
+            ),
         },
     ),
     BehaviourMonitorSensorDescription(
@@ -125,11 +129,19 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         key="time_since_activity",
         name="Time Since Activity",
         icon="mdi:clock-alert-outline",
-        value_fn=lambda data: data.get("activity_context", {}).get("time_since_formatted", "Unknown"),
+        value_fn=lambda data: data.get("activity_context", {}).get(
+            "time_since_formatted", "Unknown"
+        ),
         extra_attrs_fn=lambda coord, data: {
-            ATTR_TIME_SINCE_ACTIVITY: data.get("activity_context", {}).get("time_since_seconds"),
-            ATTR_TYPICAL_INTERVAL: data.get("activity_context", {}).get("typical_interval_seconds"),
-            "typical_interval_formatted": data.get("activity_context", {}).get("typical_interval_formatted", ""),
+            ATTR_TIME_SINCE_ACTIVITY: data.get("activity_context", {}).get(
+                "time_since_seconds"
+            ),
+            ATTR_TYPICAL_INTERVAL: data.get("activity_context", {}).get(
+                "typical_interval_seconds"
+            ),
+            "typical_interval_formatted": data.get("activity_context", {}).get(
+                "typical_interval_formatted", ""
+            ),
             "concern_level": data.get("activity_context", {}).get("concern_level", 0),
             "status": data.get("activity_context", {}).get("status", "unknown"),
             "context": data.get("activity_context", {}).get("context", ""),
