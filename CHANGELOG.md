@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-03-14
+
+### Added
+- add test coverage for new config fields and migration
+- wire coordinator to read CONF_LEARNING_PERIOD and CONF_TRACK_ATTRIBUTES
+- add v4->v5 migration block to async_migrate_entry
+- add learning_period and track_attributes fields to config flow; bump VERSION to 5
+- add CONF_LEARNING_PERIOD, CONF_TRACK_ATTRIBUTES constants; bump STORAGE_VERSION to 5
+
+### Changed
+- Documentation: complete phase execution
+- Documentation: complete v2.9 milestone closeout plan
+- Documentation: add v2.9 milestone entry to MILESTONES.md
+- Documentation: complete bootstrap fix and closeout plan
+- Documentation: plan phase 8 bootstrap fix and closeout
+- Documentation: create phase 8 plan — bootstrap fix and closeout
+- Documentation: complete phase execution
+- Documentation: complete coordinator wiring and test coverage plan
+- Documentation: complete config flow additions plan 01
+- Documentation: plan phase 7 config flow additions
+- Documentation: create phase 7 plan
+- Documentation: complete phase execution
+- Documentation: complete test alignment plan — ML stub test removal
+- remove stub key assertions from test_coordinator.py
+- remove ML stub test methods from test_sensor.py
+- Documentation: complete dead-code-removal plan 01 — sensor stubs and legacy constants
+- remove dead legacy constants and unused CONF_* from const.py
+- remove coordinator stub keys from coordinator.py
+- remove deprecated ML sensor descriptions from sensor.py
+- Documentation: plan phase 6 dead code removal
+- Documentation: create phase 6 plan
+- Documentation: create milestone v2.9 roadmap (3 phases)
+- Documentation: define milestone v2.9 requirements
+- Documentation: start milestone v2.9 Housekeeping & Config
+
+### Fixed
+- add post-bootstrap _save_data() call in async_setup
+
 ## [2.8.11] - 2026-03-13
 
 ### Fixed
