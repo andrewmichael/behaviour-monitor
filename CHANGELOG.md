@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-03-15
+
+### Added
+- Per-entity adaptive inactivity thresholds — auto-learned from observed timing variance (CV-based)
+- Weekday/weekend split drift baseline — separate Saturday/Sunday from weekday activity in CUSUM
+- Recency-weighted drift baseline — exponential decay (0.95/day) weights recent activity more heavily
+- Alert suppression — fire once then throttle at configurable repeat interval (30–1440 min)
+- Min/max inactivity multiplier bounds configurable in HA options UI
+
 ## [2.9.0] - 2026-03-14
 
 ### Added
