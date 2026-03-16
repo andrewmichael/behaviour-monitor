@@ -360,11 +360,6 @@ jobs:
           2. Extract to `custom_components/behaviour_monitor/` in your HA config directory
           3. Restart Home Assistant
 
-          ### ML Features (Optional)
-          To enable ML-based anomaly detection, SSH into your HA OS and run:
-          ```bash
-          docker exec -it homeassistant pip install river
-          ```
           ENDOFBODY
 
           echo "Generated release body:"
