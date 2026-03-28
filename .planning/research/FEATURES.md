@@ -1,251 +1,161 @@
-# Feature Research
+# Feature Landscape: v3.1 Activity-Rate Classification & Display Formatting
 
-**Domain:** Routine-based anomaly detection — home automation welfare monitoring
-**Researched:** 2026-03-13
-**Confidence:** MEDIUM (web research + code review; no proprietary benchmark data available)
-
----
-
-## Context: What Already Exists (Do Not Re-Build)
-
-The following features are already implemented and must be preserved by the v1.1 rebuild.
-They are NOT in scope for this research — they are listed only to clarify dependencies.
-
-| Existing Feature | Sensor / Component | Must Remain |
-|------------------|--------------------|-------------|
-| 14 sensor entity types (entity IDs stable) | `sensor.py` | YES — users have automations |
-| Config flow UI (entity selection, sensitivity, learning period) | `config_flow.py` | YES — extend, not replace |
-| Persistent storage (JSON, `.storage/`) | `__init__.py` + coordinator | YES — format may change |
-| Notification services + persistent_notification | `coordinator.py` | YES |
-| Holiday mode | `switch.py` + coordinator | YES |
-| Snooze (1h / 2h / 4h / 1d) | `select.py` + coordinator | YES |
-| Welfare status (ok / check_recommended / concern / alert) | coordinator + sensor | YES |
-| Welfare status debounce (3-cycle hysteresis) | coordinator | YES — replicate in new coordinator |
-| Per-entity notification cooldown | coordinator | YES |
-| Snooze and holiday suppression | coordinator | YES |
+**Domain:** Home Assistant behaviour monitoring -- activity-rate tiering and display fixes
+**Researched:** 2026-03-28
+**Milestone:** v3.1
+**Scope:** NEW features only. Existing features (CV-adaptive thresholds, sustained evidence gating, fire-once suppression, weekday/weekend drift, recency-weighted baseline, config UI) are already shipped and not re-documented here.
 
 ---
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes (Users Expect These)
+Features that must ship for the milestone to deliver its stated goal: "eliminate false-positive inactivity alerts on high-frequency entities."
 
-Features that any routine-based home monitoring system must have to be considered trustworthy and complete. Missing these makes the system feel broken or unusable.
+| Feature | Why Expected | Complexity | Dependencies on Existing | Notes |
+|---------|-------------|------------|--------------------------|-------|
+| **Auto-classify entities into frequency tiers** | Without classification, all entities share the same inactivity multiplier logic. A motion sensor firing 200x/day gets the same threshold math as a door sensor firing 5x/day -- this is the root cause of the false-positive problem on high-frequency entities. | Medium | `EntityRoutine.daily_activity_rate()` and `ActivitySlot.expected_gap_seconds()` already provide the raw data. No new storage schema needed -- classification is derived from existing slot data. | Three tiers (high/medium/low) based on median daily event count across observed days. Recomputed from persisted routine data on startup, at most once per day thereafter. |
+| **Tier-appropriate inactivity detection with absolute minimum floor** | Classification alone does nothing -- it must feed different detection parameters. High-frequency entities need an absolute minimum time floor so that a 30-second expected gap does not trigger an alert after 90 seconds (3x multiplier). | Medium | `AcuteDetector.check_inactivity()` currently applies uniform multiplier logic. Must branch on tier. `_min_multiplier` / `_max_multiplier` bounds already exist as scaffolding. | The absolute floor is the critical piece. Arithmetic: 30s gap x 3x multiplier = 90s threshold. No amount of multiplier tuning fixes this without a floor. A floor of ~300s (5 min) prevents this entire class of false positive. |
+| **Fix alert display formatting (minutes vs hours)** | Current `acute_detector.py` L122-123 always formats as hours (`{elapsed_hours:.1f}h`). For a high-frequency entity with typical interval 6 minutes, alert reads "typical interval: 0.1h" -- confusing and unprofessional. | Low | `AlertResult.explanation` string in `AcuteDetector.check_inactivity()`. Pure string formatting change. `coordinator.py` L283-288 already handles this correctly for sensor attributes (`ts_fmt`, `typ_fmt`). | Format as seconds when < 60s, minutes when < 1 hour, hours+minutes otherwise. |
+| **User override for tier assignment in config UI** | Auto-classification will sometimes misclassify (e.g., motion sensor in rarely-used room classifies as "low" but user knows it is high-frequency by nature). Users need an escape hatch. | Medium | `config_flow.py` options flow, `const.py` for new config keys, config migration v7->v8, `translations/en.json`. Follows established `setdefault` migration pattern. | Global default tier override or per-tier multiplier adjustment. NOT per-entity (explicitly out of scope per PROJECT.md). |
+| **Config migration v7->v8** | Any new config keys require a migration step so existing installs upgrade cleanly. | Low | Existing `setdefault` migration pattern (v4->v5, v6->v7) is well-established. Mechanical copy of the pattern. | Non-negotiable. Every prior milestone has included this. |
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| **Routine learning from history** | System must know what "normal" looks like before it can flag deviations. Users expect a defined learning window, not indefinite calibration. | MEDIUM | 4-week default (per PROJECT.md). Must handle binary sensors (motion, doors) and numeric sensors (power, climate) differently. Per-entity rolling history, not global buckets. |
-| **Acute inactivity alert** | Core use case: someone may have fallen or be unwell. The alert fires when a monitored person has been unusually inactive. Without this, the system has no safety value. | MEDIUM | Inactivity is measured against the person's own learned typical-interval, not a fixed threshold. Configurable inactivity multiplier (e.g. 2x typical quiet period triggers alert). |
-| **Configurable inactivity threshold** | Different households and care contexts need different sensitivity. A single hardcoded threshold produces either alert fatigue or missed events. | LOW | Expose as config option: number of standard deviations or a multiplier of typical inter-event interval. Default must be conservative (LOW false positive rate). |
-| **Learning period gate** | No alerts until baseline is established. Users expect to be told the system is still learning. Already exists — must be preserved with new model. | LOW | Existing 14-sensor `statistical_training_remaining` must remain meaningful with the new routine model's learning window. |
-| **Drift alert (gradual change)** | Users caring for elderly relatives need to know if behavior has been quietly deteriorating over days or weeks — not just acute crises. | HIGH | Distinct from acute alert. Different notification type, lower urgency, different cadence. Must not fire on a single unusual day — requires sustained evidence (e.g., N consecutive days below baseline). |
-| **Separate notification types for acute vs. drift** | Users need to know whether to act immediately (acute) or schedule a check-in (drift). If both use the same notification, users cannot calibrate their response. | LOW | Acute: high urgency, immediate. Drift: lower urgency, "noticed over last N days". Both use existing notify services. |
-| **Support for binary entities (motion, doors)** | These are the most common welfare sensor types. The routine model must handle event-count-per-window and inter-event-interval, not just state values. | MEDIUM | Binary entities: track events per time window, inter-event intervals. Numeric entities: track mean/variance of readings. |
-| **Support for numeric entities (climate, power)** | Power consumption patterns (kettle, TV) and climate (heating patterns) are strong welfare indicators. | MEDIUM | Numeric: rolling mean/std over same time window. Change point detection on rolling stats is the drift mechanism. |
-| **Routine model persistence** | If HA restarts, the learned routine must survive. Users will not wait another 4 weeks for re-learning after a restart. | MEDIUM | Serialize routine model to `.storage/`. Existing storage layer can be reused with new keys. |
-| **Baseline confidence indicator** | Users need to know whether the model has enough history to be trustworthy. The existing `baseline_confidence` sensor must remain meaningful. | LOW | Map learning window completion % and data density to confidence score. Existing sensor entity ID preserved. |
-| **Acute alert requires sustained evidence before firing** | The fundamental reason for replacing z-score: a single unusual reading must NOT fire an alert. Literature and the project's own v1.0 experience confirm this. | MEDIUM | Require N consecutive coordinator cycles (e.g., 3–5 × 60s = 3–5 minutes) of sustained anomaly before acute alert fires. Or: require the inactivity period to exceed threshold continuously, not just at one polling moment. |
+---
 
-### Differentiators (Competitive Advantage)
+## Differentiators
 
-Features that distinguish this system from a basic motion-sensor inactivity timer or a Home Assistant automation. Should align with the core value: "alerts are trustworthy."
+Features that go beyond the minimum. Not strictly required for the false-positive fix, but add meaningful value at low cost.
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| **Learned typical inter-event interval (per entity, per day-of-week)** | Generic inactivity timers use fixed thresholds (e.g., "alert after 8 hours of no motion"). A learned interval adapts to the person's own routine — meaning Monday mornings aren't confused with Sunday afternoons. | MEDIUM | Per-entity, per-day-of-week rolling inter-event interval stats. Requires ~4 weeks of history for reliable DOW estimates. HIGH confidence this is the correct approach — supported by literature on personalized smart home monitoring. |
-| **Drift detection using change point / CUSUM on rolling baseline** | Gradual decline is clinically significant but hard to notice. A sustained shift in the routine metric over 7–14 days is a meaningful signal. CUSUM is a standard industrial method for this — lightweight, no external dependencies. | HIGH | CUSUM (Cumulative Sum) accumulates deviations until evidence crosses a threshold. Can be implemented in pure Python (~20 lines). Avoids `ruptures` library dependency (which is out of scope per PROJECT.md constraint). |
-| **Per-entity drift tracking (not just global)** | A person might stop using the kettle (dietary change, illness) while motion patterns remain normal. Entity-level drift enables targeted alerts ("no kettle activity in 5 days, was daily before"). | MEDIUM | Each entity maintains its own drift accumulator. Drift alert includes which entity/entities diverged and by how much. |
-| **Context in notifications** | "No motion detected for 6 hours (typical: 2 hours)" is actionable. "Anomaly detected" is not. Existing sensor attributes already carry `time_since_activity` and `typical_interval` — these feed notification messages. | LOW | Reuse existing coordinator notification infrastructure. Template the message to include entity name, actual elapsed time, and learned typical interval. |
-| **Drift alert suppression during known absence** | Holiday mode (existing) should suppress drift alerts, not just acute ones. A 2-week holiday will look like a drift change. | LOW | Drift accumulator resets on holiday mode enable. This prevents a false drift alarm on return from holiday. |
-| **Gradual confidence ramp-up** | During the first N days of learning, the detection sensitivity is progressively relaxed — no alerts at all in week 1, conservative in week 2, full sensitivity from week 3+. Prevents alert flood during initial setup. | LOW | Multiply detection threshold by a confidence ramp factor that decreases as learning progresses. Simple linear or sqrt ramp over learning window. |
+| Feature | Value Proposition | Complexity | Dependencies on Existing | Notes |
+|---------|-------------------|------------|--------------------------|-------|
+| **Activity tier as sensor attribute** | Expose each entity's computed tier (high/medium/low) as an attribute on the entity status sensor so users can see the classification and debug issues. | Low | `_build_sensor_data()` in `coordinator.py` already builds `entity_status` list with per-entity dicts. Add a `tier` key. | Near-free to implement. Critical for user trust -- if users cannot see what tier an entity was assigned, they cannot understand why alert behavior changed. Strongly recommended. |
+| **Shared interval formatting utility** | Extract a single `format_interval(seconds)` function used by both `acute_detector.py` (alert explanations) and `coordinator.py` (sensor attributes). | Low | Currently formatting logic is duplicated: `coordinator.py` L283-288 does `"{h}h {m}m"` / `"{m}m"`, while `acute_detector.py` L113-114 hardcodes `{:.1f}h`. | Good engineering practice. Eliminates duplication and prevents future formatting drift. Could live in a small `formatting.py` util or in `const.py`. |
+| **Tier-specific sustained evidence cycles** | High-frequency entities could require more consecutive cycles (e.g., 5 instead of 3) before firing an alert, further reducing false positives for chatty sensors. | Low | `AcuteDetector._sustained_cycles` is already per-instance. Would need to become per-entity or per-tier lookup. | Belt-and-suspenders. The absolute floor alone likely solves 90%+ of false positives. Worth considering only if floor proves insufficient in testing. |
+| **Tier transition logging** | Log when an entity's auto-classified tier changes (e.g., motion sensor moves from "high" to "medium" because usage dropped). Helps users understand system behavior. | Low | Debug-level `_LOGGER.info()` call wherever classification runs. | Debug-level only, not a notification. Useful for troubleshooting but not user-facing. |
+| **Higher effective multiplier for high-frequency tier** | Apply a tier-specific multiplier boost (e.g., 1.5x the configured multiplier for high-frequency entities) in addition to the absolute floor. | Low | `AcuteDetector.check_inactivity()` -- multiply `self._inactivity_multiplier` by a tier factor before computing threshold. | Useful but secondary to the floor. The floor handles the catastrophic case (90s alerts); the multiplier boost handles the marginal case (5-minute alerts that are still too sensitive). |
 
-### Anti-Features (Commonly Requested, Often Problematic)
+---
 
-Features that seem appealing but create problems in this domain. Explicitly excluding them prevents scope creep.
+## Anti-Features
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **Fixed inactivity threshold (e.g., "alert after 8 hours")** | Simple to explain and configure | One size fits no one. A night-owl sleeps until noon; an early riser is up at 6am. A fixed threshold either constantly fires false alarms or misses genuine events. | Learned typical inter-event interval per entity per day-of-week — adapts to the individual. |
-| **Population-level normative baseline** | "What is normal for a 70-year-old?" research exists | This integration monitors one specific household. Population norms have no relevance to one individual's idiosyncratic routine. Complex to implement, wrong for the use case. | Per-entity, per-household learned baseline. |
-| **Deep learning / neural routine model** | High accuracy in research papers | Requires large datasets (weeks of labeled data minimum), significant compute on HA hardware (Raspberry Pi, NUC), and external ML dependencies — all ruled out by PROJECT.md constraint (no new dependencies, pure Python). | Statistical routine model: rolling mean/std + CUSUM. Good enough for this use case, proven in literature, zero dependencies. |
-| **Real-time activity recognition (what are they doing?)** | Interesting feature; useful in research | Requires labeling training data with activity types (eating, sleeping, walking). Impossible without a manual labeling step. Adds complexity with no practical welfare benefit over entity-level anomaly detection. | Monitor what is NOT happening (inactivity) rather than what IS happening. Privacy-preserving, simpler, proven approach. |
-| **Daily digest / summary notification** | Caregivers want a morning briefing | Out of scope per PROJECT.md. Adds scheduling logic, new UI, and notification format complexity. Core value is trustworthy alerts, not reporting. | Defer to future milestone. Existing `routine_progress` sensor exposes data for users to build their own dashboards. |
-| **Per-entity sensitivity UI in config flow** | Power users want fine control | N entities × 3 threshold parameters = complex UI. Users won't know correct values without empirical data. Risk of over-tuning and missing real events. | Global sensitivity setting (Low/Med/High) already exists. Advanced users can apply HA automations to filter sensor outputs. |
-| **Correlation-based cross-entity anomalies** | "Motion without lights" type detections — clever | Cross-sensor correlation requires many co-occurrence samples to be reliable. Was a source of false positives in v1.0 (threshold had to be raised to 30 co-occurrences). The v1.1 routine model is explicitly replacing this approach. | Each entity has its own routine model. Correlations are implicit (if person does routine A, entity X and Y will both show normal; if not, both will show anomalous). |
+Features to explicitly NOT build in this milestone.
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| **Per-entity tier override in config UI** | PROJECT.md explicitly lists "per-entity sensitivity tuning UI" as out of scope. A per-entity dropdown for 20+ entities creates UI complexity and maintenance burden. | Global tier parameters (multiplier overrides per tier or tier boundary thresholds) in the options flow. |
+| **ML-based classification** | Hard constraint: pure Python, no external dependencies. Any ML classifier violates this. A simple event-rate heuristic is sufficient and fully interpretable. | Median daily event count with fixed boundaries. Transparent, debuggable, no black box. |
+| **Dynamic tier reassignment every cycle** | Reclassifying entities every 60-second polling cycle creates instability -- an entity could oscillate between tiers during quiet hours vs active hours. | Classify on startup from stored routine data, reclassify at most once per day. Tier should be stable over hours/days, not minutes. |
+| **Separate notification channels per tier** | Over-engineering. Users already have notification cooldown, severity gating, and fire-once suppression. Tier-based notification routing adds complexity without demonstrated user demand. | Existing severity-based gating handles notification volume. Tier affects detection parameters, not notification routing. |
+| **Tier-specific drift detection parameters** | Drift detection (CUSUM) operates on daily activity rates, not inter-event intervals. The false-positive problem is specific to acute inactivity detection. Changing CUSUM parameters per tier adds complexity for no benefit. | Leave drift detection unchanged. The problem being solved is acute inactivity false positives on high-frequency entities only. |
+| **Configurable tier boundary thresholds** | Premature. Sensible defaults should work for most users. Adding 2 more config fields (high/low boundary) increases config complexity. | Ship with fixed defaults. Add configurability only if user feedback demonstrates the defaults are wrong for common setups. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-Routine model (per-entity rolling baseline)
-    └──required by──> Acute detection engine
-    └──required by──> Drift detection engine (CUSUM accumulator needs baseline)
+Auto-classify entities into tiers
+    --> Tier-appropriate inactivity detection (requires tier to branch logic)
+    --> Activity tier as sensor attribute (requires tier to expose)
+    --> User override for tier (requires tier concept to exist)
+    --> Config migration v7->v8 (required if new config keys added)
 
-Acute detection engine
-    └──requires──> Sustained evidence window (N cycles before firing)
-    └──requires──> Configurable inactivity threshold (multiplier of learned interval)
+Fix alert display formatting
+    (independent -- no dependency on tier work)
+    --> Shared formatting utility (optional extraction, improves code quality)
 
-Drift detection engine
-    └──requires──> Routine model (needs rolling baseline to compute deviation)
-    └──requires──> Minimum learning window (CUSUM needs stable baseline before accumulating)
-    └──enhanced by──> Holiday mode reset (existing) — drift accumulator resets on holiday enable
-
-Rebuilt coordinator
-    └──requires──> Routine model, acute engine, drift engine
-    └──must preserve──> Holiday mode, snooze, notification cooldown, welfare debounce
-
-Config flow extensions
-    └──requires──> Rebuilt coordinator (to surface new config keys)
-    └──must preserve──> All existing config keys (migration required)
-
-Persistent storage (new schema)
-    └──requires──> Routine model serialization format defined
-    └──must migrate──> Existing config entries gracefully
-
-Sensor layer (14 sensors, stable entity IDs)
-    └──requires──> Rebuilt coordinator to provide new data dict keys
-    └──must preserve──> All 14 entity IDs and their state semantics
+Config migration v7->v8
+    <-- User override for tier (new config keys need migration)
 ```
 
-### Dependency Notes
-
-- **Routine model is the foundation:** Both acute and drift engines consume per-entity baseline stats. Must be designed and tested before either engine is implemented.
-- **Acute engine requires sustained evidence, not single-cycle detection:** The key architectural constraint. Detection accumulates across polling cycles; a single anomalous reading does not fire.
-- **Coordinator rebuilds around the new engines:** The existing coordinator.py is being replaced. It must re-implement all existing suppression logic (holiday, snooze, cooldown, debounce) around the new engines.
-- **Sensor entity IDs are immutable:** Any data dict keys the sensors read from coordinator output must be preserved or aliased. Changing what `welfare_status` or `routine_progress` return will break existing user dashboards.
-- **Config migration is blocking:** Users cannot be asked to re-configure from scratch. The new options (history window, inactivity multiplier, drift sensitivity) must have safe defaults and must not break existing entries.
+**Critical path:** Auto-classify -> Tier-appropriate detection -> Testing. Display formatting is independent and can be done in parallel.
 
 ---
 
-## MVP Definition
+## Classification Design
 
-### Launch With (v1.1)
+### Tier Definitions
 
-Minimum set needed to replace z-score/ML analyzers with the routine model and deliver trustworthy acute + drift detection.
+| Tier | Typical Entities | Median Daily Events | Inactivity Behavior |
+|------|-----------------|--------------------|--------------------|
+| **High** | Motion sensors, power monitors, climate sensors, energy meters | >50/day | Expected gap is seconds to low minutes. Needs absolute minimum floor (e.g., 300s). Without floor, multiplier math produces thresholds of 1-2 minutes -- too short. |
+| **Medium** | Door/window sensors, light switches, appliance toggles | 5-50/day | Expected gap is minutes to low hours. Current detection logic works well here. This is the "default" tier -- no parameter changes needed. |
+| **Low** | Rarely-used doors, seasonal devices, guest room sensors | <5/day | Expected gap is hours to days. Existing CV-adaptive logic already inflates thresholds for high-variance slots. No special handling needed. |
 
-- [ ] **Routine model** — per-entity rolling baseline (binary: event intervals; numeric: mean/std). Configurable history window (default 4 weeks). Persistent. — *Core foundation; nothing else works without it.*
-- [ ] **Acute detection engine** — sustained inactivity exceeding learned typical interval by configurable multiplier. Requires N consecutive cycles (not single-point). — *Primary safety use case.*
-- [ ] **Drift detection engine** — CUSUM accumulation on per-entity daily activity metrics. Alert requires sustained deviation (N consecutive days), not a single unusual day. — *Secondary welfare use case.*
-- [ ] **Rebuilt coordinator** — manages both engines, re-implements holiday mode, snooze, cooldown, welfare debounce, notification dispatch. — *Integration glue; all existing suppression logic must be preserved.*
-- [ ] **Binary + numeric entity support** — event-count/interval model for binary; mean/std model for numeric. — *Required for the sensor types users already have configured.*
-- [ ] **Config flow extensions** — history window (weeks), inactivity threshold multiplier (float), drift sensitivity (Low/Med/High). Existing entries migrate gracefully. — *Required for configuration.*
-- [ ] **Sensor data dict compatibility** — rebuilt coordinator output must supply all keys the existing 14 sensors consume. Sensor layer is not changed. — *Required to preserve entity IDs and user automations.*
+### Classification Algorithm
 
-### Add After Validation (v1.x)
+1. For each entity, compute `daily_activity_rate()` across the last 7-14 observed days (use the day-of-week slots already stored in `EntityRoutine`).
+2. Take the **median** daily count (not mean -- robust to outlier days like a party or a sick day).
+3. Apply fixed boundaries: >50 = high, 5-50 = medium, <5 = low.
+4. Classify on startup from persisted routine data. Reclassify at most once per day (e.g., at midnight or on config reload).
+5. Store tier assignment in memory only (derived from existing data, no new persistence needed).
 
-Features to add once core routine model is proven in production.
+Median is consistent with existing `expected_gap_seconds()` which already uses median inter-event intervals.
 
-- [ ] **Day-of-week learned intervals** — week 1 of learning uses a single mean; after 4+ weeks, per-DOW intervals become available. Add as an enhancement once the simpler per-entity global interval is validated. — *Trigger: user reports that weekend vs weekday variation causes false positives.*
-- [ ] **Drift alert context detail** — "no kettle activity for 5 days (was daily)" notification. The infrastructure exists; this is message templating. — *Trigger: first user feedback requests that drift alerts are too vague.*
-- [ ] **Confidence ramp-up during learning** — suppress or weaken alerts during first half of learning window. — *Trigger: users report alert floods on fresh setup.*
+### High-Frequency Inactivity Detection Changes
 
-### Future Consideration (v2+)
+Two changes to `AcuteDetector.check_inactivity()` for high-frequency tier:
 
-Features to defer until the routine model is stable.
+1. **Absolute minimum floor**: Regardless of computed threshold, never alert unless gap exceeds a minimum duration (default 300s / 5 minutes). This is the primary fix -- it makes it mathematically impossible to get sub-minute inactivity alerts.
+2. **Optional multiplier boost**: Apply a tier-specific multiplier factor (e.g., 1.5x) on top of the user-configured multiplier for high-frequency entities. Secondary to the floor.
 
-- [ ] **Daily digest notification** — explicitly out of scope per PROJECT.md. — *Defer: requires scheduling and new notification format.*
-- [ ] **Per-entity sensitivity tuning** — useful for power users but adds config complexity. — *Defer: validate that global sensitivity is sufficient first.*
-- [ ] **Seasonal calendar awareness** — school terms, regional holidays, seasonal patterns. — *Defer: high complexity, uncertain value for the primary welfare monitoring use case.*
+### Display Formatting Logic
 
----
+```python
+def format_interval(seconds: float) -> str:
+    """Format a time interval for human display."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds / 60)}m"
+    h = int(seconds) // 3600
+    m = (int(seconds) % 3600) // 60
+    return f"{h}h {m}m" if m else f"{h}h"
+```
 
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Routine model (per-entity rolling baseline) | HIGH | MEDIUM | P1 |
-| Acute detection engine (inactivity) | HIGH | MEDIUM | P1 |
-| Rebuilt coordinator (holiday, snooze, cooldown) | HIGH | MEDIUM | P1 |
-| Binary entity support (motion, doors) | HIGH | MEDIUM | P1 |
-| Sensor layer compatibility (14 sensors unchanged) | HIGH | LOW | P1 |
-| Config flow extensions + migration | HIGH | LOW | P1 |
-| Drift detection engine (CUSUM) | HIGH | HIGH | P1 |
-| Numeric entity support (climate, power) | MEDIUM | MEDIUM | P1 |
-| Persistent routine model storage | HIGH | LOW | P1 |
-| Day-of-week learned intervals | MEDIUM | MEDIUM | P2 |
-| Drift alert context (entity-specific messages) | MEDIUM | LOW | P2 |
-| Confidence ramp-up during learning | MEDIUM | LOW | P2 |
-| Per-entity sensitivity tuning | LOW | HIGH | P3 |
-| Daily digest notification | LOW | HIGH | P3 |
-| Seasonal calendar awareness | LOW | HIGH | P3 |
-
-**Priority key:**
-- P1: Must have for launch (v1.1 milestone)
-- P2: Should have, add when P1 is validated
-- P3: Nice to have, future milestone
+This matches the pattern already used in `coordinator.py` L283-288. Extract as shared utility, apply to `AcuteDetector` alert explanations (replacing hardcoded `{:.1f}h` format).
 
 ---
 
-## Domain Patterns: How Routine-Based Detection Works in Practice
+## MVP Recommendation
 
-Research across the IoT welfare monitoring literature (2024–2025) converges on the following patterns. These inform implementation decisions.
+**Must ship (table stakes):**
+1. Auto-classify entities into frequency tiers -- foundation for everything else
+2. Tier-appropriate inactivity detection with absolute minimum floor -- the actual false-positive fix
+3. Fix alert display formatting -- low effort, high visibility improvement
+4. Config migration for any new keys
 
-### Acute Detection
+**Strongly recommended (low-cost, high-value):**
+5. Activity tier as sensor attribute -- near-free, critical for debuggability and user trust
+6. Shared interval formatting utility -- prevents code duplication
 
-**Standard approach:** Inactivity-based alerting is the dominant method in home welfare monitoring. Systems monitor motion and activity sensors; when the elapsed time since last activity exceeds a learned individual norm, an alert fires.
-
-**Evidence requirement:** Literature uniformly emphasizes that a single anomalous reading must not trigger an alert. Sustained evidence over minutes (for acute inactivity) or days (for drift) is required. This is the key distinction from z-score detection.
-
-**Inactivity threshold design:** Per-individual learned intervals outperform fixed thresholds. A person's typical quiet period (e.g., 4 hours at night, 2 hours in afternoon) must be learned, and the alert fires when actual inactivity exceeds that learned period by a configurable multiplier. Default multiplier in the literature is typically 2–3x the learned interval.
-
-**False positive controls:**
-- Require continuous inactivity (not just "was inactive at polling time")
-- Apply minimum threshold floors (e.g., never alert for inactivity under 60 minutes regardless of learned interval, to avoid nuisance alerts)
-- Respect suppression modes (holiday, snooze)
-
-### Drift Detection
-
-**Standard approach:** CUSUM (Cumulative Sum Control Chart) is the preferred lightweight method for gradual change detection in time-series welfare monitoring. It accumulates evidence of deviation without requiring external libraries and operates on rolling summary statistics.
-
-**Key design principle:** Drift alerts must distinguish a single unusual day (a visit from family, a late night) from a sustained change. Literature recommends requiring N ≥ 5–7 consecutive days of below-baseline activity before a drift alert fires.
-
-**Drift sensitivity levels:** Research recommends two thresholds — a "warning" (early drift signal, not yet actionable) and "alert" (sustained drift, warrants caregiver contact). This maps to the existing Low/Med/High sensitivity concept.
-
-**Reset behavior:** Drift accumulators should reset when:
-- Holiday mode is enabled (known absence)
-- Snooze is activated for ≥ 1 day
-- A significant acute event has already been flagged (avoid dual-alerting on the same situation)
-
-### User-Facing Behavior Expectations
-
-| Alert Type | Urgency | Expected Cadence | User Action |
-|------------|---------|------------------|-------------|
-| Acute (possible fall / sudden inactivity) | HIGH — check immediately | Rare (ideally < 1/month in normal monitoring) | Contact monitored person or emergency services |
-| Drift (gradual behavior change) | MEDIUM — schedule check-in | Uncommon (ideally < 1/week) | Plan welfare visit or medical appointment |
-| Learning in progress | INFO — no action | Once at setup | Wait for learning window to complete |
-| Holiday / snooze active | INFO — no action | On mode change | Reminder that monitoring is suppressed |
-
-**Alert fatigue is the primary failure mode.** If acute alerts fire too often, users disable notifications or the integration. Research confirms this is the dominant reason smart home welfare monitoring systems are abandoned. The core value statement — "when a notification fires, it should represent something genuinely unusual" — must take precedence over sensitivity.
+**Defer:**
+- Configurable tier thresholds: ship with sensible defaults, add configurability only if users request it
+- Tier-specific sustained evidence cycles: belt-and-suspenders; floor likely sufficient
+- Per-entity tier override: explicitly out of scope per PROJECT.md
+- Higher effective multiplier for high tier: secondary to floor; add only if floor alone proves insufficient
 
 ---
 
-## Competitor Feature Analysis
+## Confidence Assessment
 
-| Feature | Existing HA `alert` integration | `carePredict` / commercial systems | Our Approach |
-|---------|---------------------------------|-------------------------------------|--------------|
-| Inactivity detection | Fixed threshold template + binary sensor | AI-based, cloud, expensive | Learned per-entity interval, local |
-| Drift / gradual change | Not available | Commercial black box | CUSUM on rolling entity baseline |
-| Learning period | Not available | 2–4 weeks typical | 4 weeks default, configurable |
-| Binary entity support | Yes (native) | Proprietary sensors | Yes — HA native entity types |
-| Holiday / snooze | Not available | "Away mode" | Existing holiday + snooze preserved |
-| False positive controls | Minimal (template logic only) | Proprietary | Sustained-evidence requirement + existing suppression |
-| Privacy | Local | Cloud-dependent | Local — HA-native, no cloud |
+| Finding | Confidence | Basis |
+|---------|-----------|-------|
+| Tiered classification solves false positives | HIGH | Direct arithmetic analysis of existing `check_inactivity()`: uniform multiplier + tiny expected gaps = absurdly short thresholds |
+| Three tiers (high/medium/low) sufficient | MEDIUM | Common pattern in IoT monitoring literature; no evidence more tiers adds value here |
+| Absolute minimum floor is critical fix | HIGH | Arithmetic proof: 30s gap x 3x multiplier = 90s threshold. No multiplier tuning fixes this without a floor |
+| Median daily count as classification metric | HIGH | `daily_activity_rate()` already exists; median robust to outlier days; consistent with existing median-based gap |
+| Display formatting as minutes when < 1h | HIGH | Direct code inspection: `acute_detector.py` L122-123 hardcodes hours; `coordinator.py` already does the right thing |
+| Tier boundaries (50/5 events/day) | LOW | Reasonable defaults but no empirical validation yet. May need adjustment after real-world testing |
+| No drift detection changes needed | HIGH | CUSUM operates on daily rates, not inter-event intervals; the false-positive problem is acute-detection-specific |
 
 ---
 
 ## Sources
 
-- [Anomaly Detection Technologies for Dementia Care — Narrative Review, 2025 (Sage Journals)](https://journals.sagepub.com/doi/10.1177/07334648251357031) — MEDIUM confidence, peer-reviewed 2025
-- [IoT Edge Intelligence Framework for Elderly Monitoring, PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC11944996/) — MEDIUM confidence, peer-reviewed 2025
-- [Smart Home Anomaly Detection for Older Adults — deep learning, PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12106144/) — MEDIUM confidence, peer-reviewed 2025
-- [Algorithm to Detect Abnormally Long Inactivity in a Home (ResearchGate)](https://www.researchgate.net/publication/221234469_Algorithm_to_automatically_detect_abnormally_long_periods_of_inactivity_in_a_home) — HIGH confidence, foundational method
-- [Inactivity Patterns and Alarm Generation in Senior Citizens' Houses (ResearchGate)](https://www.researchgate.net/publication/281804588_Inactivity_patterns_and_alarm_generation_in_senior_citizens'_houses) — HIGH confidence, directly relevant
-- [Behavioral Drift Detection — Identity Management Institute](https://identitymanagementinstitute.org/behavioral-drift-detection/) — MEDIUM confidence, pattern description
-- [ruptures: Change Point Detection in Python (PyPI)](https://pypi.org/project/ruptures/) — HIGH confidence, library reference (considered and excluded per no-new-dependencies constraint)
-- [What Users Value Most in Smart Homes — NN/g](https://www.nngroup.com/articles/smart-homes-user-value/) — MEDIUM confidence, UX research
-- Code review: `custom_components/behaviour_monitor/sensor.py`, `const.py` (2026-03-13) — HIGH confidence, primary source
-
----
-*Feature research for: Routine-based anomaly detection — home automation welfare monitoring*
-*Researched: 2026-03-13*
+- Direct code analysis: `acute_detector.py`, `coordinator.py`, `routine_model.py`, `const.py` in existing codebase (HIGH confidence)
+- [HA Community: Debouncing binary sensors](https://community.home-assistant.io/t/debouncing-binary-sensory/111833) -- community patterns for high-frequency binary sensor handling
+- [HA Community: Filtering motion detection](https://community.home-assistant.io/t/filtering-motion-detected/590359) -- real-world false positive complaints
+- [Effective Anomaly Detection by Integrating Event Time Intervals](https://www.sciencedirect.com/science/article/pii/S1877050922015757) -- time-interval-based anomaly detection with frequency awareness
+- [IoT anomaly detection methods survey](https://www.sciencedirect.com/science/article/pii/S2542660522000622) -- adaptive threshold approaches for heterogeneous sensor types
+- [Activity and Anomaly Detection in Smart Home survey](https://link.springer.com/chapter/10.1007/978-3-319-21671-3_9) -- frequency-based activity classification patterns in smart homes
+- [Home Assistant Statistics integration](https://www.home-assistant.io/integrations/statistics/) -- HA's own approach to sensor data frequency handling

@@ -1,177 +1,186 @@
 # Project Research Summary
 
-**Project:** Behaviour Monitor v1.1 Detection Rebuild
-**Domain:** Home Assistant custom integration — routine-based anomaly detection for welfare monitoring
-**Researched:** 2026-03-13
-**Confidence:** HIGH (stack, architecture, pitfalls) / MEDIUM (feature thresholds, CUSUM parameter tuning)
+**Project:** Behaviour Monitor v3.1 — Activity-Rate Classification
+**Domain:** Home Assistant custom integration — anomaly detection for heterogeneous IoT sensors
+**Researched:** 2026-03-28
+**Confidence:** HIGH
 
 ## Executive Summary
 
-The v1.1 rebuild replaces the existing z-score bucket analyzer and River ML engine with a two-engine routine-based detection system: acute inactivity detection (real-time, event-driven) and drift detection (gradual change, periodic CUSUM). Research confirms this is the correct direction — the existing 672-bucket approach suffered from fundamental sparsity problems that produced unstable statistics and unreliable detections. The replacement approach is well-documented in the IoT welfare monitoring literature, implementable in pure Python stdlib with no new dependencies, and architecturally cleaner than the 1,066-line monolithic coordinator it replaces.
+Behaviour Monitor v3.1 solves a specific, well-understood false-positive problem: the existing `AcuteDetector.check_inactivity()` applies a uniform threshold multiplier to all entities regardless of their natural event frequency. A motion sensor firing every 2 minutes and a lock toggling twice a day both pass through the same multiplier arithmetic. The root cause is mathematical — a short median gap multiplied by even a large multiplier still produces a dangerously short alert threshold. The fix requires classifying entities into frequency tiers and applying tier-specific detection parameters, primarily an absolute minimum floor for high-frequency entities.
 
-The recommended approach builds a layered system with strict separation of concerns: a `RoutineModel` (pure Python, HA-free) learns per-entity baselines from historical data; `AcuteDetector` and `DriftDetector` (also HA-free) consume the baseline; a thin coordinator orchestrator wires these to HA's event bus and sensor layer. This layering is the critical architectural improvement over v1.0 — it makes every detection component unit-testable without mocking HA infrastructure. The entire detection stack runs on Python stdlib alone, eliminating HACS installation friction and the River dependency.
+The recommended approach is entirely internal: no new dependencies, no new sensor entities, no new storage files. Classification is computed from existing `ActivitySlot.event_times` deques already persisted per entity, making tier derivation a ~30-line addition to `routine_model.py`. The tier is then passed at call-time to `AcuteDetector.check_inactivity()`, keeping the detector stateless with respect to tiers. An optional config UI step allows user overrides, but auto-classification alone solves the primary problem and is sufficient for MVP.
 
-The primary risk is the transition itself, not the algorithm. Three migration hazards require explicit engineering: (1) cold start false negatives — the period after upgrade before any baseline is established when the system silently detects nothing; (2) storage migration failure — the v2 z-score storage format is incompatible with the new routine model and must be gracefully discarded, not deserialized; (3) sensor entity state contract changes — five ML-specific sensors must be deprecated in-place rather than removed, to preserve user automations. Each of these is a recoverable engineering task with a defined solution, not a research gap.
+The key risks are behavioral, not technical. Tier boundary oscillation (entities near the boundary flapping between tiers daily) and premature classification (too little data) can both produce worse behavior than the current untiered system. These are prevented by gating classification on the existing `learning_status` confidence flag and reclassifying at most once per day. The display formatting fix (minutes instead of hours for sub-hour intervals) carries a secondary risk of breaking user automations that parse the `explanation` string — mitigated by adding structured fields to `AlertResult.details` rather than changing the string format.
+
+---
 
 ## Key Findings
 
 ### Recommended Stack
 
-The entire detection rebuild uses Python stdlib only. `statistics.NormalDist` (Python 3.8+, present in all HA 2024.1.0+ environments) provides z-score computation for the routine model. `collections.deque(maxlen=N)` provides O(1) rolling windows without manual pruning. CUSUM drift detection is approximately 15 lines of pure arithmetic — no library required. The HA recorder integration (`homeassistant.components.recorder.history.get_significant_states`) is the stable interface for bootstrapping baseline history from existing HA state data on first startup.
+No new dependencies. All v3.1 features are implementable with Python stdlib (`statistics`, `collections.deque`, `enum`) on data already stored in `EntityRoutine.slots[*].event_times`. The existing HA selector framework (`SelectSelector`) handles the config UI widget, following the identical pattern used for `CONF_DRIFT_SENSITIVITY`. Config migration follows the established `setdefault` pattern (v7 to v8). Storage schema is unchanged for the classification result — tier is computed at runtime from existing persisted data, consistent with the v3.0 decision to compute CV at query time.
 
 **Core technologies:**
-- `statistics.NormalDist` (stdlib): z-score for acute detection — zero install cost, `NormalDist.zscore()` available directly, Python 3.8+
-- `collections.deque(maxlen=N)` (stdlib): rolling observation windows — O(1) append/eviction, ideal for 4-week history
-- CUSUM algorithm (~15 lines, no imports): drift detection — streaming, O(1) per observation, no ruptures/numpy needed
-- `homeassistant.components.recorder.history`: bootstrap from existing state history — stable HA internal API, eliminates cold-start learning period for existing installations
-- `homeassistant.helpers.storage.Store`: persist learned routine models — already used in v1.0, same pattern carries forward
-- `async_track_state_change_event` (HA internal): entity-scoped event subscription — replaces deprecated `EVENT_STATE_CHANGED` bus listener, required for HA 2025.5+ compatibility
+- `Python stdlib statistics.median`: classification metric — median daily event rate, robust to outlier days
+- `Python stdlib collections.deque`: source data — `event_times` deques in `ActivitySlot` (168 slots, up to 56 timestamps each)
+- `homeassistant.helpers.selector.SelectSelector`: config UI dropdown for tier override — identical to existing drift_sensitivity selector
+- `voluptuous`: config flow schema for new tier override field — already used throughout
 
-**What NOT to use:** `ruptures` (requires numpy/scipy, batch-oriented not streaming), `numpy`/`scipy` (HA install conflicts, 60-200MB overhead), `river` (explicitly removed per project constraint), direct SQLAlchemy queries on HA DB (fragile across schema versions).
+**New internal components (zero external dependencies):**
+- `ActivityTier` enum (`HIGH`/`MEDIUM`/`LOW`) in `const.py`
+- `EntityRoutine.classify_tier()` method in `routine_model.py`
+- `_format_duration()` shared utility in `routine_model.py`
+- Tier-aware threshold branch in `AcuteDetector.check_inactivity()`
+- Config migration v7 to v8 in `__init__.py`
 
 ### Expected Features
 
-Research confirms the feature set is well-scoped and backed by welfare monitoring literature. Alert fatigue is identified as the primary failure mode for smart home welfare monitoring systems — users disable integrations when acute alerts fire too often. The core design principle must be: every alert represents something genuinely unusual.
+**Must have (table stakes):**
+- Auto-classify entities into HIGH/MEDIUM/LOW frequency tiers — foundational; without this, all other tier work is blocked
+- Tier-appropriate inactivity detection with absolute minimum floor — the actual false-positive fix; a minimum floor prevents sub-minute alert thresholds on chatty sensors
+- Fix alert display formatting (minutes instead of hours for sub-hour intervals) — low effort, high visibility; current `"0.0h"` output is unprofessional
+- Config migration v7 to v8 — non-negotiable; required for every prior milestone
 
-**Must have (v1.1 table stakes):**
-- Routine model — per-entity rolling baseline (binary: event intervals; numeric: mean/std) — foundation for both detection engines
-- Acute detection engine — sustained inactivity vs. learned typical interval; requires N consecutive coordinator cycles before firing, not single-point detection
-- Drift detection engine — CUSUM on per-entity daily activity rates; minimum 5–7 day evidence window before alerting
-- Rebuilt coordinator — re-implements all existing suppression logic (holiday, snooze, cooldown, welfare debounce)
-- Binary + numeric entity support — event-count/interval model for binary; mean/std model for numeric
-- Config flow extensions with migration — history window, inactivity multiplier, drift sensitivity; existing entries migrate gracefully
-- Sensor data dict compatibility — all 14 entity IDs preserved; ML-specific sensors deprecated in-place, not removed
-- Persistent routine model storage — survives HA restarts; users cannot wait 4 weeks to re-learn after a restart
-
-**Should have (v1.x differentiators):**
-- Day-of-week learned intervals — per-DOW variation prevents weekend/weekday false positives
-- Drift alert context detail — "no kettle activity for 5 days (was daily)" rather than generic notification
-- Confidence ramp-up during learning — suppress/weaken alerts during first half of learning window to prevent alert floods on fresh setup
-- Routine Reset service call — lets users acknowledge drift alerts and update the baseline to current behavior
+**Should have (differentiators):**
+- Activity tier exposed as sensor attribute on `entity_status_summary` — near-free, critical for user trust and debugging; users cannot understand changed alert behavior without visibility into tier assignment
+- Shared `format_duration()` utility replacing duplicated inline formatters — prevents future drift between `acute_detector.py` and `coordinator.py` formatting
+- User tier override in config UI — escape hatch for misclassified entities; auto-classify solves 90%+ of cases but some edge cases need manual correction
 
 **Defer (v2+):**
-- Daily digest notification — adds scheduling complexity, out of scope per PROJECT.md
-- Per-entity sensitivity tuning UI — validate global sensitivity is sufficient first
-- Seasonal/calendar awareness — high complexity, uncertain value for primary use case
+- Per-entity tier override (as opposed to global override) — explicitly out of scope per PROJECT.md; complex UI for uncertain benefit
+- Configurable tier boundary thresholds — premature; ship fixed defaults, add only if user feedback indicates defaults are wrong
+- Tier-specific sustained evidence cycles — belt-and-suspenders; absolute floor likely sufficient alone
+- ML-based classification — violates hard no-external-dependencies constraint; threshold-based is fully sufficient and interpretable
 
 ### Architecture Approach
 
-The new architecture decomposes the existing 1,066-line monolithic coordinator into five separate files with strict boundaries. Three files (`routine_model.py`, `acute_detector.py`, `drift_detector.py`) contain zero HA imports and are independently testable. A new `notification.py` extracts the ~400 lines of notification logic currently embedded in the coordinator. The rewritten `coordinator.py` becomes a thin orchestrator targeting under 350 lines. Detection operates on two timescales: acute checks happen inline with state change callbacks (O(1), synchronous); drift checks happen in the 60-second `_async_update_data` poll (O(history_days), async). This split prevents blocking HA's event loop.
+The architecture follows a single design principle: classify at the data layer (`EntityRoutine`), consume everywhere. Tier is a property of an entity's learned routine, not a property of the detector. The `classify_tier()` method lives on `EntityRoutine` in `routine_model.py`, keeping all HA-free pure Python logic together and fully unit-testable without HA mocking. The coordinator calls `reclassify_tier()` at most once per day and applies user overrides from config entry data. `AcuteDetector.check_inactivity()` receives tier at call time (not stored on the detector), keeping the detector stateless. No new files are needed — all changes touch existing modules.
 
-**Major components:**
-1. `RoutineModel` (`routine_model.py`) — learns per-entity baselines; provides `expected_gap_seconds()` and `daily_rate()` to detectors; pure Python; serializes to/from dict for persistence
-2. `AcuteDetector` (`acute_detector.py`) — real-time inactivity gap check against routine baseline; fires per state change event; pure Python
-3. `DriftDetector` (`drift_detector.py`) — per-entity CUSUM on daily activity rates; runs on 60s coordinator poll; pure Python
-4. `NotificationManager` (`notification.py`) — cooldown, deduplication, severity gate, welfare debounce, message construction; extracted from coordinator
-5. `BehaviourMonitorCoordinator` (`coordinator.py`) — HA lifecycle, event subscription, orchestration, persistence, sensor data dict assembly; delegates all domain logic above
+**Major components and changes:**
+1. `const.py` — `ActivityTier` enum, tier boundary constants, floor/boost lookup dicts, new config key (~25 lines)
+2. `routine_model.py` — `classify_tier()`, `activity_tier` property, `reclassify_tier()`, `_format_duration()` utility, `to_dict`/`from_dict` update (~58 lines)
+3. `acute_detector.py` — tier-aware threshold (boost + floor), display formatting fix (~14 lines)
+4. `coordinator.py` — tier override injection, daily reclassification, tier in sensor data, formatting fix (~34 lines)
+5. `config_flow.py` + `__init__.py` — tier override UI step, config migration v7 to v8 (~50 lines)
 
-**Build order enforced by dependencies:** `const.py` → `routine_model.py` → `acute_detector.py` + `drift_detector.py` (parallel) → `notification.py` → `coordinator.py` → `sensor.py` + `config_flow.py` (parallel).
+**Total estimated: ~195 lines of new/modified code** across 6 files with no new files.
 
 ### Critical Pitfalls
 
-1. **Cold start silent false negatives** — after upgrade, the routine model has no baseline; acute detection fires nothing; users assume the system is working when it is not. Avoid by: surfacing an explicit "detection inactive" sensor state; sending a one-time startup notification; considering a fallback fixed-threshold mode during cold start. Silence must never be invisible.
+1. **Tier boundary oscillation** — An entity near a boundary flips between tiers as the sliding observation window shifts day by day. Each reclassification potentially resets the `_inactivity_cycles` sustained-evidence counter, producing transient false positives. Mitigation: reclassify at most once per day using full `history_window_days` median (not a recent snapshot); consider hysteresis bands in future iterations if oscillation is observed.
 
-2. **Config entry migration failure crashes startup** — the v2 storage format (`analyzer` key, 672-bucket z-score data) cannot deserialize into the new routine model. Avoid by: incrementing `STORAGE_VERSION` to 3; wrapping `Store.async_load()` in try/except; detecting old format by presence of `analyzer` key, logging a clear message, and starting fresh. Implement `async_migrate_entry` in `__init__.py` to clean up dead config keys (`CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`, etc.).
+2. **Premature classification on insufficient data** — Classification with only hours of data (new entity, fresh install) produces wrong tier assignments that persist. Mitigation: gate classification on `learning_status == "ready"` (equivalent to `routine.confidence() >= 0.5`). Return `None` and use conservative defaults below this threshold. The existing `MIN_EVIDENCE_DAYS` used by `DriftDetector` is the right model.
 
-3. **Sensor entity state contract break** — five ML-specific sensors (`ml_status`, `ml_training_remaining`, `cross_sensor_patterns`, and affected sensors) must not be removed; they must return defined stub states in v1.1 and only be removed in v1.2 with advance notice. `coordinator.data` must never be `None` on first refresh — all 14 sensors must return safe defaults.
+3. **Config migration drops user-tuned multiplier as baseline** — Unlike previous `setdefault`-only migrations, v7 to v8 introduces parameters whose meaning depends on the user's existing `inactivity_multiplier`. Injecting default tier factors without referencing the user's current value effectively resets carefully tuned sensitivity. Mitigation: migration must read existing `inactivity_multiplier` and use it as the base for tier floor/boost calculations, not raw defaults.
 
-4. **Drift fires on legitimate routine changes** — CUSUM cannot distinguish voluntary schedule changes from gradual decline. Avoid by: requiring minimum 5–7 day sustained evidence window; implementing a `reset_drift_baseline` service call; resetting drift accumulator when holiday mode is disabled (not just suppressing during it).
+4. **Display formatting breaks automations parsing explanation string** — Changing `"0.0h"` to `"45m"` in `AlertResult.explanation` silently breaks any user automations with regex on that string. Mitigation: add `elapsed_formatted` and `typical_formatted` to `AlertResult.details` dict rather than changing the `explanation` string format. The `details` dict already contains `elapsed_seconds` and `expected_gap_seconds` as structured data.
 
-5. **Acute threshold not routine-relative** — using a fixed hour threshold instead of a multiplier of the learned typical quiet period produces false positives at night and false negatives during day windows. Avoid by: building the routine model before the acute detector; expressing the config option as a multiplier of the learned interval, not raw hours; testing with synthetic overnight quiet periods.
+5. **Absolute floor set as a global constant ignores entity rate** — A single floor value that prevents false positives for a 30-second-interval sensor will mask genuine inactivity for a 2-minute-interval sensor. Mitigation: floor should be `max(ABSOLUTE_MINIMUM, observed_median_interval * floor_factor)` rather than a pure constant. The `expected_gap_seconds()` method already computes the per-slot median interval.
+
+---
 
 ## Implications for Roadmap
 
-Based on the dependency graph in FEATURES.md and the build order in ARCHITECTURE.md, research supports a five-phase structure ordered by strict dependency and risk.
+Based on research, the dependency graph is clear: classification must exist before tier-aware detection can branch on it, and detection changes are the primary deliverable. Display formatting is fully independent.
 
-### Phase 1: Foundation — Constants, Data Models, Storage Migration
-**Rationale:** Everything depends on `const.py` being updated first. Storage migration must be designed before any code that loads storage is written — otherwise migration is an afterthought that gets patched in incorrectly. This phase produces no user-visible behavior change but makes all subsequent phases safe to build.
-**Delivers:** Updated `const.py` with new config keys and ML constants removed; `async_migrate_entry` in `__init__.py` handling v2→v3 migration; storage fixture tests confirming old z-score format loads without crashing; orphaned ML storage cleanup.
-**Addresses:** Config flow migration, storage compatibility.
-**Avoids:** Pitfall 2 (config migration failure), Pitfall 6 (River dependency removal loose ends).
+### Phase 1: Constants and Utilities
 
-### Phase 2: Routine Model
-**Rationale:** Both detection engines consume the routine model's output. This must be fully built and tested before either detector is implemented. Building it first forces the detection API (`expected_gap_seconds`, `daily_rate`) to be defined as an interface, not discovered during detector implementation.
-**Delivers:** `routine_model.py` with `EntityRoutine` and `RoutineModel`; `to_dict`/`from_dict` persistence; history bootstrap from HA recorder; explicit cold start handling with "detection inactive" status; full unit tests with no HA mocks required.
-**Uses:** `statistics.NormalDist`, `collections.deque`, `homeassistant.components.recorder.history`.
-**Avoids:** Pitfall 1 (cold start false negatives), Pitfall 5 (fixed vs routine-relative threshold — forces the API to be routine-relative from the start).
+**Rationale:** Foundation layer with zero dependencies. Everything else imports from here. Independently testable with import verification only.
+**Delivers:** `ActivityTier` enum, tier boundary constants, floor/boost lookup dicts, `CONF_ACTIVITY_TIER_OVERRIDES` key, `_format_duration()` utility in `routine_model.py`
+**Addresses:** Display formatting precondition; all tier constants required by downstream phases
+**Avoids:** Pitfall 9 (time formatting edge cases) — single utility defined once with explicit rules
 
-### Phase 3: Detection Engines (Acute + Drift)
-**Rationale:** Both engines depend on RoutineModel and can be built in parallel. Acute detection is the primary safety use case; drift is secondary but architecturally parallel. Both must be HA-free so they can be unit-tested independently before coordinator wiring.
-**Delivers:** `acute_detector.py` (sustained inactivity gap check, N-cycle evidence requirement, no overnight false positives); `drift_detector.py` (CUSUM with 5–7 day minimum evidence window, drift reset mechanism, holiday mode integration); full unit tests including overnight quiet period scenarios.
-**Uses:** CUSUM (~15 lines pure Python), routine model API, `statistics.NormalDist`.
-**Avoids:** Pitfall 4 (drift on legitimate routine changes), Pitfall 5 (fixed threshold), performance trap (CUSUM gated to periodic poll, not per-event callback).
+### Phase 2: Tier Classification on EntityRoutine
 
-### Phase 4: Coordinator Rebuild + Notification Manager
-**Rationale:** The coordinator is the HA integration layer that wires everything together. It cannot be built until the components it orchestrates exist. Notification extraction happens in the same phase because the coordinator and notification manager are coupled through `AcuteResult`/`DriftResult` types.
-**Delivers:** Rewritten `coordinator.py` (under 350 lines; `async_track_state_change_event` subscription; `async_set_updated_data` for event-driven sensor push; holiday mode, snooze, welfare debounce preserved); `notification.py` with cooldown, deduplication, severity gate, and message construction extracted; STORAGE_VERSION 3 migration logic integrated.
-**Avoids:** Anti-patterns from ARCHITECTURE.md (everything in coordinator, CUSUM in @callback, `async_request_refresh` on every event, deprecated `EVENT_STATE_CHANGED` subscription).
+**Rationale:** Classification is the data-layer foundation. `AcuteDetector` and coordinator both depend on `routine.activity_tier`. Must ship before detection changes.
+**Delivers:** `classify_tier()`, `activity_tier` property, `reclassify_tier()`, `to_dict`/`from_dict` update on `EntityRoutine`
+**Addresses:** Table-stakes auto-classification; produces the tier data that sensor attribute exposure requires
+**Avoids:** Pitfall 1 (oscillation) — classify once per day, use full-window median; Pitfall 2 (premature classification) — gate on `learning_status`; Pitfall 12 (wrong rate computation) — aggregate across full deque, divide by distinct days observed
 
-### Phase 5: Sensor Compatibility + Config Flow Extension
-**Rationale:** Sensor layer and config flow both depend on the coordinator's data dict being stable. They cannot be updated until Phase 4 defines the exact output contract. These can be built in parallel with each other but must follow Phase 4.
-**Delivers:** Updated `sensor.py` `value_fn` lambdas for new data dict keys; ML-specific sensors (`ml_status`, `ml_training_remaining`, `cross_sensor_patterns`) returning defined stub states rather than going unavailable; `config_flow.py` extended with history window, inactivity multiplier, and drift sensitivity options; `coordinator.data` never-None guarantee verified with tests.
-**Addresses:** Sensor layer compatibility, config flow extensions.
-**Avoids:** Pitfall 3 (sensor entity state contract break).
+### Phase 3: Tier-Aware Detection and Display Formatting
+
+**Rationale:** Primary deliverable of the milestone. Depends on Phase 2 for tier data. Display formatting fix is independent but logically belongs here since both touch `acute_detector.py`.
+**Delivers:** Tier-aware threshold (multiplier boost + absolute floor) in `check_inactivity()`; human-readable duration formatting in alert explanations; structured `elapsed_formatted` / `typical_formatted` in `AlertResult.details`
+**Addresses:** Table-stakes tier-appropriate detection; display formatting fix
+**Avoids:** Pitfall 4 (automation breakage) — add structured fields, keep explanation string format; Pitfall 5 (config explosion) — internal factors only, not per-tier UI fields; Pitfall 6 (wrong floor) — derive floor from observed median gap
+
+### Phase 4: Coordinator Integration
+
+**Rationale:** Wires classification and detection together. Depends on Phases 2 and 3. The coordinator is the integration point where overrides are applied and reclassification is scheduled.
+**Delivers:** Tier override injection from config, daily reclassification call, tier in `entity_status` sensor data, display formatting fix in `_build_sensor_data`
+**Addresses:** Activity tier as sensor attribute (data surfaced here); user override persistence
+**Avoids:** Pitfall 7 (override not persisted) — store in `entry.data`, check before auto-classification; Pitfall 8 (reload path) — pass tier to `check_inactivity()` at call time, not stored on detector
+
+### Phase 5: Config UI and Migration
+
+**Rationale:** Migration is required for any new config keys. Config UI is the phase most safely deferred — auto-classification alone (Phases 1-4) solves the primary false-positive problem.
+**Delivers:** Config migration v7 to v8; optional tier override step in options flow; translations
+**Addresses:** Table-stakes config migration; user override escape hatch
+**Avoids:** Pitfall 3 (migration drops user values) — read existing `inactivity_multiplier` as baseline; Pitfall 10 (storage version missed) — bump `STORAGE_VERSION` and `ConfigFlow.VERSION` together; Pitfall 11 (stale overrides) — prune overrides for removed entities on save
 
 ### Phase Ordering Rationale
 
-- **Const and migration first** because every file imports const and migration is dangerous to add late — it becomes an afterthought bolted onto already-wired coordinator code.
-- **Routine model before detection engines** because the model defines the API both engines consume; reversing this order means the API is discovered during implementation, not designed upfront.
-- **Detection engines before coordinator** because HA-free components built first can be fully tested without mocking HA; the coordinator test then verifies orchestration rather than algorithm correctness.
-- **Sensor and config flow last** because they depend on the coordinator data contract being frozen; changing the data dict after writing sensor lambdas requires double work.
-- This order matches the bottom-up dependency graph in ARCHITECTURE.md exactly and enforces the "pure models before HA wiring" principle.
+- Phases 1 and 2 are strict prerequisites for Phase 3 — the detector cannot branch on tier without the enum and classification existing.
+- Phase 4 depends on Phases 2 and 3 but is otherwise independent of Phase 5 — coordinator integration does not require the config UI to exist (overrides default to auto-detect when the key is absent).
+- Phase 5 (config UI) is the only deferrable phase. If MVP scope is tight, ship Phases 1-4 and add the override UI as a follow-up. The migration should only be included if new config keys are actually added.
+- Display formatting fix (part of Phase 3) could be extracted to ship independently before Phase 2 if a quick win is desired, since it touches only string formatting with no data dependencies.
 
 ### Research Flags
 
-Phases likely needing `/gsd:research-phase` during planning:
-- **Phase 2 (Routine Model):** Recorder bootstrap API — `get_significant_states` is used by built-in integrations but the async job pattern (`async_add_executor_job`) may have changed in recent HA versions. Phase research should verify the current call signature against HA 2025.x.
-- **Phase 3 (Drift Detection):** CUSUM parameter validation — k=0.5 and h=4.0 are documented at MEDIUM confidence (blog source + Wikipedia ARL tables). Phase research should validate these against simulated residential sensor data before implementation to confirm the ARL maps to ~168 days as expected. The minimum evidence window (5–7 days) also needs cross-referencing against typical event rates for the sensor types users have configured.
+Phases with well-documented patterns (skip deeper research):
+- **Phase 1 (Constants):** Pure constants and a string utility. No research needed.
+- **Phase 3 (Detection):** Threshold arithmetic is well-understood from existing code. Branch logic is a straightforward conditional addition.
+- **Phase 5 (Migration):** Established `setdefault` migration pattern used five times previously. No research needed for the migration itself.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1 (Constants + Migration):** `async_migrate_entry` is a standard HA hook with clear official documentation. Storage version bumping follows the established pattern in the existing codebase.
-- **Phase 4 (Coordinator):** `DataUpdateCoordinator`, `async_track_state_change_event`, `async_set_updated_data`, and `_async_setup` are all documented in official HA developer docs at HIGH confidence and have confirmed stable APIs.
-- **Phase 5 (Sensor + Config Flow):** Both follow established HA patterns already present in the codebase. No novel patterns required.
+Phases that may benefit from validation during planning:
+- **Phase 2 (Classification):** Tier boundaries are inconsistent across the three research files (see Gaps below) and need reconciliation before implementation. The minimum data requirement (3 days vs 7 days) should be validated against the existing `MIN_EVIDENCE_DAYS` constant used by `DriftDetector`.
+- **Phase 4 (Coordinator):** The daily reclassification hook location needs confirmation against actual coordinator update cycle behavior — specifically whether the existing `_today_date` check is the right place to inject reclassification.
+- **Phase 5 (Config UI):** The `async_show_menu` multi-step options flow pattern should be confirmed against current HA version before implementing the per-step approach. The simpler global `SelectSelector` override is safe and sufficient for v3.1.
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Core decisions (stdlib-only, CUSUM formula, recorder bootstrap) verified against official Python docs, HA developer docs, and the existing codebase. Only gap: CUSUM parameter tuning (k, h values) is MEDIUM confidence. |
-| Features | MEDIUM | Must-have features and anti-features supported by peer-reviewed IoT welfare monitoring literature (2024–2025). Specific numerical thresholds (multipliers, evidence windows) are literature estimates, not validated against this codebase's sensor population. |
-| Architecture | HIGH | Full codebase read confirms current pain points and validates decomposition approach. HA API patterns verified against official developer docs. Build order derived from actual code dependencies with no speculation. |
-| Pitfalls | HIGH | Critical pitfalls identified from direct codebase inspection (cold start gap, migration failure path, sensor contract). Prevention strategies from HA community patterns and developer docs. CUSUM tuning pitfall is less certain. |
+| Stack | HIGH | No new dependencies; all patterns verified against existing codebase. Full codebase read across all 9 source files. |
+| Features | HIGH | Table stakes derived from direct arithmetic proof of the detection failure; must-have status is unambiguous |
+| Architecture | HIGH | Full read of all 9 source files; integration points identified at line level; no speculation |
+| Pitfalls | HIGH | All pitfalls derived from actual code structure — migration chain, detection loop, alert string format, coordinator reload path |
 
-**Overall confidence:** HIGH for architecture and technology decisions; MEDIUM for numerical thresholds (CUSUM parameters, minimum evidence windows, inactivity multipliers). The "what to build" question is answered with high confidence; the "how to tune it" question requires validation during Phase 3 planning.
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **CUSUM parameter validation (k=0.5, h=4.0):** Literature values confirmed at MEDIUM confidence only. Phase 3 planning should include simulation against representative residential sensor data to validate ARL before implementation. If ARL differs materially from ~168 days, the default h value needs adjustment.
-- **Minimum evidence window for drift (5–7 days):** Derived from IoT welfare monitoring literature but not validated against actual event rates from the existing integration's sensor population. Phase 3 planning should cross-reference with typical daily event counts from the `daily_count` sensor data that existing users have.
-- **Cold start fallback threshold:** Research recommends a "bootstrap mode" fixed threshold during cold start but does not specify a value. This should be a configurable constant (e.g., 8 hours for no motion) with a documented rationale, not a magic number. Phase 2 planning should decide whether to include this or surface a clear "detection inactive" warning instead.
-- **Sensor deprecation message text:** Research recommends deprecated ML sensors return a fixed state like `"Removed in v1.1"` but the exact value may affect users with automations that check sensor state. Phase 5 planning should decide on the exact stub state and document it in the release notes.
-- **Recorder bootstrap API currency:** `get_significant_states` is used by built-in integrations as a stable interface, but the exact async call pattern should be verified against the current HA version (2025.x) before Phase 2 implementation.
+- **Tier boundary values are inconsistent between research files:** STACK.md uses events/hour (>6 = HIGH, <0.5 = LOW) while FEATURES.md uses events/day (>50 = HIGH, <5 = LOW) and ARCHITECTURE.md uses events/day (>24 = HIGH, <4 = LOW). These are the same concept expressed as three different threshold sets. Reconcile before Phase 2 implementation by choosing one unit (events/day is more intuitive for users) and one set of boundary values. Validate against a representative sample of real HA entity logs before committing.
+
+- **Absolute floor value needs reconciliation:** STACK.md proposes 300 seconds (5 minutes) as the HIGH-tier floor; ARCHITECTURE.md proposes 3600 seconds (1 hour). These differ by 12x. The 1-hour floor is more conservative and safer for initial deployment; the 5-minute floor is more aggressive. Resolve during Phase 3 planning — recommend starting with the 1-hour floor and tuning down based on user feedback.
+
+- **Minimum data requirement not established:** Research proposes 3 days (ARCHITECTURE.md) as the minimum for classification. Confirm alignment with the existing `MIN_EVIDENCE_DAYS` constant used by `DriftDetector` before Phase 2 implementation to ensure consistent learning-period semantics across the system.
+
+- **Per-entity vs global override scope conflict:** STACK.md recommends a global override (single dropdown for all entities in the entry), while ARCHITECTURE.md designs a per-entity override (dict mapping entity_id to tier). Per PROJECT.md constraints, per-entity tuning is out of scope for v3.1. Resolve by implementing global override only; per-entity is a future milestone.
+
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Existing codebase (`coordinator.py`, `analyzer.py`, `ml_analyzer.py`, `sensor.py`, `const.py`, `__init__.py`) — direct inspection; build order, data contracts, migration requirements, and anti-patterns all derived from reading actual code
-- [Python docs: statistics.NormalDist](https://docs.python.org/3/library/statistics.html) — zscore() method confirmed, Python 3.8+
-- [HA Developer Docs: Integration manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/) — requirements array, no-duplicate-core-requirements constraint
-- [HA 2024.8 _async_setup announcement](https://developers.home-assistant.io/blog/2024/08/05/coordinator_async_setup/) — lifecycle method confirmed, called automatically by async_config_entry_first_refresh
-- [async_track_state_change_event migration](https://developers.home-assistant.io/blog/2024/04/13/deprecate_async_track_state_change/) — deprecation and removal (HA 2025.5) confirmed
-- [CUSUM — Wikipedia](https://en.wikipedia.org/wiki/CUSUM) — algorithm definition and ARL tables
-- [GitHub: deepcharles/ruptures](https://github.com/deepcharles/ruptures) — scipy>=0.19.1 dependency confirmed (rules out use in HA custom integration)
-- [Algorithm to Detect Abnormally Long Inactivity in a Home (ResearchGate)](https://www.researchgate.net/publication/221234469_Algorithm_to_automatically_detect_abnormally_long_periods_of_inactivity_in_a_home) — foundational inactivity detection method, HIGH confidence
+- Direct codebase analysis — `routine_model.py` (458 lines), `acute_detector.py` (215 lines), `coordinator.py` (377 lines), `config_flow.py` (406 lines), `sensor.py` (252 lines), `const.py` (156 lines), `alert_result.py` (66 lines), `drift_detector.py` (389 lines), `__init__.py` (267 lines)
+- PROJECT.md — milestone constraints (no new dependencies, per-entity sensitivity tuning out of scope)
+- Existing migration chain v2-v7 in `__init__.py` — established `setdefault` pattern
 
 ### Secondary (MEDIUM confidence)
-- [Anomaly Detection Technologies for Dementia Care — Sage Journals, 2025](https://journals.sagepub.com/doi/10.1177/07334648251357031) — sustained evidence requirement, alert fatigue as primary failure mode
-- [IoT Edge Intelligence Framework for Elderly Monitoring — PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC11944996/) — per-individual learned intervals outperform fixed thresholds
-- [Smart Home Anomaly Detection for Older Adults — PMC 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12106144/) — drift detection patterns for welfare monitoring
-- [The CUSUM Algorithm — Stackademic](https://blog.stackademic.com/the-cusum-algorithm-all-the-essential-information-you-need-with-python-examples-f6a5651bf2e5) — CUSUM formula and parameters (k=0.5, h=4.0) with Python examples
-- [Behavior drift detection in home automation — MDPI](https://www.mdpi.com/2227-7080/6/1/16) — p-value thresholds for fragile populations, concept drift model confidence failure mode
-- [Config entry minor versions blog post](https://developers.home-assistant.io/blog/2023/12/18/config-entry-minor-version/) — major vs minor version semantics for HA config entries
-- [Inactivity Patterns and Alarm Generation in Senior Citizens' Houses (ResearchGate)](https://www.researchgate.net/publication/281804588_Inactivity_patterns_and_alarm_generation_in_senior_citizens'_houses) — alarm cadence expectations and evidence window guidance
-- [HA community — unavailable states breaking automations](https://community.home-assistant.io/t/wth-is-unavailable-breaking-everything/474217) — state transition side effects on automation triggers
+- [HA Community: Debouncing binary sensors](https://community.home-assistant.io/t/debouncing-binary-sensory/111833) — community patterns for high-frequency sensor handling
+- [HA Community: Filtering motion detection](https://community.home-assistant.io/t/filtering-motion-detected/590359) — real-world false positive patterns
+- [Home Assistant Statistics integration](https://www.home-assistant.io/integrations/statistics/) — HA's approach to sensor data frequency handling
+
+### Tertiary (LOW confidence)
+- [Effective Anomaly Detection by Integrating Event Time Intervals](https://www.sciencedirect.com/science/article/pii/S1877050922015757) — time-interval-based anomaly detection with frequency awareness; confirms tiered approach is established practice
+- [IoT anomaly detection methods survey](https://www.sciencedirect.com/science/article/pii/S2542660522000622) — adaptive threshold approaches for heterogeneous sensor types
+- [Activity and Anomaly Detection in Smart Home survey](https://link.springer.com/chapter/10.1007/978-3-319-21671-3_9) — frequency-based activity classification patterns
 
 ---
-*Research completed: 2026-03-13*
+
+*Research completed: 2026-03-28*
 *Ready for roadmap: yes*

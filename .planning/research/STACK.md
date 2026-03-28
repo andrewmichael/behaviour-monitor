@@ -1,209 +1,262 @@
-# Technology Stack — v1.1 Detection Rebuild
+# Technology Stack — v3.1 Activity-Rate Classification
 
-**Domain:** Routine-based anomaly detection in a Home Assistant custom integration
-**Researched:** 2026-03-13
-**Confidence:** HIGH (core decisions), MEDIUM (CUSUM parameter tuning)
-**Scope:** Stack changes needed for v1.1 — routine model, acute detection, drift detection. The existing HA integration shell, sensors, config flow, storage, and Python async approach are validated and out of scope.
+**Project:** Behaviour Monitor v3.1
+**Researched:** 2026-03-28
+**Confidence:** HIGH
+**Scope:** Stack additions/changes needed for activity-rate classification, tier-based detection logic, config UI tier override, and alert display formatting. Existing stack (RoutineModel, AcuteDetector, DriftDetector, coordinator, config flow v7, storage v7) is validated and not re-evaluated.
 
 ---
 
 ## Summary Decision
 
-**No new pip dependencies.** The entire routine model, acute detection engine, and drift detection engine can be built from Python stdlib alone. CUSUM drift detection and rolling statistics are well-understood algorithms with compact pure-Python implementations. Adding any library (numpy, scipy, ruptures) would introduce installation friction for HACS users and conflict with the project constraint in `PROJECT.md`.
+**No new dependencies.** All v3.1 features are implementable with Python stdlib arithmetic and string formatting on data already stored in `EntityRoutine.slots[*].event_times` deques. The existing Home Assistant selector framework (`SelectSelector`) provides the config UI widget. Config migration follows the established `setdefault` pattern (v8). No new storage files are needed -- tier classification is computed at runtime from existing persisted data, consistent with the v3.0 decision to "compute CV at query time, no new storage."
 
 ---
 
 ## Recommended Stack
 
-### Core Technologies
+### Core Technologies (Unchanged)
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Python stdlib `statistics` | 3.11+ (HA 2024.1.0 ships Python 3.11) | Rolling mean, stdev, NormalDist for routine modeling and z-score for acute detection | Zero install cost, `NormalDist` class provides zscore() and overlap() directly, sufficient precision for behavioral modeling |
-| Python stdlib `collections.deque` | stdlib | Fixed-size sliding window for per-entity event history and routine profile | O(1) append/pop, `maxlen` auto-eviction keeps last N observations without manual pruning — ideal for the 4-week rolling window |
-| Python stdlib `datetime` / `timedelta` | stdlib | Temporal bucketing (hour-of-day, day-of-week) for routine profiles | Already used throughout codebase; no new import |
-| Python stdlib `dataclasses` | stdlib | EntityRoutine, AcuteEvent, DriftEvent data models | Already used in analyzer.py and ml_analyzer.py; consistent pattern |
-| `homeassistant.components.recorder` | HA internal | Bootstrap: load 4 weeks of historical state data at startup | The `recorder` dependency is already declared in `manifest.json`; `get_instance()` + `async_add_executor_job()` gives access to history queries |
+| Technology | Version | Purpose | v3.1 Role |
+|------------|---------|---------|-----------|
+| Python stdlib `statistics` | 3.11+ (HA-bundled) | `median`, `mean`, `stdev` | Reused for event rate computation across slots |
+| Python stdlib `collections.deque` | stdlib | Bounded event storage per slot | Source data for rate classification (already holds up to 56 timestamps per slot) |
+| Python stdlib `datetime` | stdlib | Timestamp parsing and interval math | Already used in `ActivitySlot.expected_gap_seconds()` |
+| Python stdlib `enum` | stdlib | Enum types | New `ActivityTier` enum (HIGH/MEDIUM/LOW) |
+| `homeassistant.helpers.selector.SelectSelector` | HA-bundled | Config UI dropdown | Tier override selector, identical pattern to existing `CONF_DRIFT_SENSITIVITY` |
+| `homeassistant.helpers.storage.Store` | HA-bundled | JSON persistence | No changes -- tier is computed, not stored separately |
+| `voluptuous` | HA-bundled | Schema validation | Config flow schema for new tier override field |
 
-### Supporting Libraries
+### New Internal Components (Zero External Dependencies)
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `homeassistant.helpers.storage.Store` | HA internal | Persist learned routine profiles to `.storage/` JSON | Already used for statistical and ML persistence; same pattern applies to routine profiles |
-| `homeassistant.helpers.update_coordinator.DataUpdateCoordinator` | HA internal | Coordinator base class for periodic refresh and sensor push | Already used; rebuilt coordinator inherits from same base |
-| `homeassistant.util.dt` | HA internal | Timezone-aware now(), UTC conversion | Already imported in coordinator.py; needed for temporal bucketing |
-
-### Development Tools
-
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `pytest-homeassistant-custom-component` | Unit test harness with HA mocks | Already used; all detection logic requires tests per PROJECT.md |
-| `unittest.mock` / `freezegun` | Time freezing for deterministic detection tests | Needed for testing temporal-sensitive CUSUM and routine profile logic |
+| Component | Location | What It Does | Data Source |
+|-----------|----------|-------------|-------------|
+| `ActivityTier` enum | `const.py` | `HIGH`, `MEDIUM`, `LOW` tier values | -- |
+| `EntityRoutine.compute_activity_tier()` | `routine_model.py` | Count total events across all populated slots, divide by time span to get events/hour, classify against thresholds | Existing `event_times` deques in `ActivitySlot` |
+| Tier-aware threshold in `check_inactivity` | `acute_detector.py` | Apply `max(threshold, absolute_floor)` for high-frequency entities | `compute_activity_tier()` result passed in or computed |
+| `_format_duration()` helper | `coordinator.py` or new `formatting.py` | `"Xm"` when < 1h, `"Xh Ym"` otherwise | Replaces inline formatting in `_build_sensor_data` and `check_inactivity` explanation |
+| Config tier override field | `config_flow.py` | `SelectSelector` with auto/high/medium/low | User input stored in config entry data |
+| v7-to-v8 migration | `__init__.py` | `setdefault(CONF_ACTIVITY_TIER_OVERRIDE, "auto")` | Existing migration chain pattern |
 
 ---
 
-## Algorithm Decisions
+## Integration Points
 
-### Routine Model: Per-Entity Activity Profiles
+### 1. Constants (`const.py`)
 
-**What to build:** A profile per entity that tracks expected activity for each hour-of-day × day-of-week slot (168 slots = 7 days × 24 hours). Each slot stores a rolling mean and standard deviation of activity counts using `statistics.mean()` and `statistics.stdev()` over the configured history window.
+New constants needed:
 
-**Why 168 slots instead of 672:** The existing 672-slot (15-minute) approach was the root cause of sparsity problems. With real human behavior, 15-minute slots accumulate fewer than 3 observations per month, making std_dev unstable. Hour-of-day slots accumulate 4× more data, producing stable distributions within 2 weeks. The PROJECT.md explicitly names this as why buckets are being replaced.
-
-**Data structure:**
 ```python
-from collections import deque
-from dataclasses import dataclass, field
+# Activity tier classification
+CONF_ACTIVITY_TIER_OVERRIDE: Final = "activity_tier_override"
+ACTIVITY_TIER_AUTO: Final = "auto"
+ACTIVITY_TIER_HIGH: Final = "high"
+ACTIVITY_TIER_MEDIUM: Final = "medium"
+ACTIVITY_TIER_LOW: Final = "low"
+DEFAULT_ACTIVITY_TIER: Final = ACTIVITY_TIER_AUTO
 
-@dataclass
-class ActivitySlot:
-    """Rolling observations for one hour-of-day × day-of-week slot."""
-    observations: deque = field(default_factory=lambda: deque(maxlen=56))
-    # maxlen=56: 4 weeks × ~14 observations/week per slot (activity count per hour)
+# Tier classification thresholds (events per hour, entity-wide average)
+TIER_HIGH_THRESHOLD: Final = 6.0    # >6 events/hour = high-frequency
+TIER_LOW_THRESHOLD: Final = 0.5     # <0.5 events/hour = low-frequency
+# Between 0.5 and 6.0 = medium-frequency
+
+# High-frequency entity detection overrides
+HIGH_FREQ_MULTIPLIER_BOOST: Final = 2.0    # extra multiplier on top of base
+HIGH_FREQ_MIN_FLOOR_SECONDS: Final = 300   # 5-minute absolute minimum inactivity threshold
 ```
 
-**Bootstrapping from history:** On coordinator startup, use `recorder.get_instance(hass)` then `instance.async_add_executor_job(get_significant_states, ...)` to load up to `history_window_days` (default 28) of past state history. Replay state changes into the routine model before live monitoring begins. This avoids the cold-start period of the old bucket approach.
+**Confidence:** HIGH -- internal constants, no dependency implications.
 
-### Acute Detection: Z-Score on Rolling Profile
+**Threshold rationale:** A motion sensor in a busy hallway fires 10-20+ times/hour (high). A front door opens 2-5 times/hour (medium). A lock changes 0.1-0.3 times/hour (low). The 6.0 and 0.5 boundaries separate these clusters. These are starting values that can be tuned with real data.
 
-**What to build:** When a new state change arrives, compare it against the current hour-of-day × day-of-week profile for that entity. If the observed activity count falls more than `sensitivity_sigma` standard deviations from the rolling mean, and the profile has at least `MIN_SLOT_OBSERVATIONS` data points, raise an acute event.
+### 2. Rate Classification (`routine_model.py`)
 
-**Why z-score here is appropriate:** Unlike the old 672-bucket approach, each slot now has sufficient data (4+ weeks) for stable statistics. The z-score is applied to a well-populated distribution, not sparse buckets. The old code's `float("inf")` z-score from empty buckets cannot happen here because the `MIN_SLOT_OBSERVATIONS` guard is enforced before any comparison.
+New method on `EntityRoutine`:
 
-**Use `statistics.NormalDist`:**
 ```python
-from statistics import NormalDist, mean, stdev
-
-dist = NormalDist(mu=slot_mean, sigma=slot_stdev)
-z = dist.zscore(observed_count)
+def compute_activity_tier(self) -> str:
+    """Classify entity into high/medium/low activity tier based on observed event rate."""
+    total_events = 0
+    populated_slots = 0
+    for slot in self.slots:
+        n = len(slot.event_times)
+        if n > 0:
+            total_events += n
+            populated_slots += 1
+    if populated_slots == 0:
+        return ACTIVITY_TIER_MEDIUM  # default when no data
+    # Each slot represents 1 hour; events_per_hour = total / populated_slots
+    events_per_hour = total_events / populated_slots
+    if events_per_hour > TIER_HIGH_THRESHOLD:
+        return ACTIVITY_TIER_HIGH
+    if events_per_hour < TIER_LOW_THRESHOLD:
+        return ACTIVITY_TIER_LOW
+    return ACTIVITY_TIER_MEDIUM
 ```
 
-`NormalDist` is available in Python 3.8+, confirmed present in all HA 2024.1.0+ environments. No numpy required.
+**Why this approach works:** Each of the 168 `ActivitySlot` instances maps to one hour-of-day x day-of-week. The `event_times` deque holds up to 56 timestamps per slot. Counting total events across populated slots and dividing by the number of populated slots gives events-per-active-hour, which is the correct metric for classification (it ignores hours when the entity is never active, avoiding dilution from overnight slots).
 
-### Drift Detection: CUSUM on Daily Activity Totals
+**Confidence:** HIGH -- simple arithmetic on existing data structures. No parsing needed beyond `len()`.
 
-**What to build:** A per-entity CUSUM (Cumulative Sum) control chart that accumulates evidence of sustained shift in daily activity levels. CUSUM is the standard algorithm for this class of problem — it is sensitive to gradual, persistent changes (drift) while being insensitive to one-off spikes (acute events). The two engines are complementary by design.
+### 3. Tier-Aware Detection (`acute_detector.py`)
 
-**Why CUSUM over other approaches:**
-- **vs. rolling mean comparison:** A rolling mean comparison detects the same shift but has a detection lag proportional to window size. CUSUM detects shifts in O(1) per new observation.
-- **vs. ruptures (PELT):** ruptures requires numpy + scipy as hard dependencies. For a HA custom integration targeting HACS users, pulling in numpy is a significant install burden. The ruptures algorithm is also batch-oriented (processes the whole series), not streaming. CUSUM is a streaming algorithm — one observation per day, detect immediately.
-- **vs. River library:** River is being explicitly removed per PROJECT.md. CUSUM needs ~15 lines of pure Python.
+The `check_inactivity` method gains tier awareness. Two changes:
 
-**CUSUM implementation shape:**
+1. **Accept tier parameter** (or compute it from the routine):
+   ```python
+   def check_inactivity(self, entity_id, routine, now, last_seen, tier="medium"):
+   ```
+
+2. **Apply absolute floor for high-frequency tier:**
+   ```python
+   # After computing threshold from multiplier * scalar * expected_gap:
+   if tier == ACTIVITY_TIER_HIGH:
+       threshold = max(threshold, HIGH_FREQ_MIN_FLOOR_SECONDS)
+       threshold *= HIGH_FREQ_MULTIPLIER_BOOST
+   ```
+
+**Why the floor matters:** A motion sensor with a 30-second median gap and 3x multiplier produces a 90-second threshold. This fires after just 1.5 minutes of inactivity -- too aggressive. The 5-minute floor prevents this class of false positive entirely. The additional multiplier boost (2x) further widens the threshold for high-frequency entities because their short gaps make the base multiplier insufficient.
+
+**Why not change low-frequency behavior:** Low-frequency entities (doors, locks) already have large expected gaps (hours), so their thresholds are naturally conservative. No adjustment needed.
+
+**Confidence:** HIGH -- single conditional branch addition to existing threshold computation.
+
+### 4. Display Formatting
+
+Two locations need changes. Both are string formatting, no external libraries.
+
+**`acute_detector.py` explanation strings (line 116-125):**
+Currently: `f"{elapsed_hours:.1f}h"` always, even when elapsed is 3 minutes.
+Change to: minutes when < 1 hour, hours otherwise.
+
+**`coordinator.py` `_build_sensor_data` (lines 283-288):**
+Currently: `f"{h}h {m}m ago"` with fallback to `f"{m}m ago"` only when h==0.
+This already works correctly for the `time_since` display (the `if h else` branch handles it). But the `typical_interval_formatted` on line 288 uses the same pattern and should be consistent.
+
+**Recommended approach:** Extract a shared `_format_duration(seconds: float) -> str` helper to avoid duplicating the < 1h logic in multiple locations. Place it in a small utility or at module level in coordinator.py.
+
 ```python
-@dataclass
-class CUSUMDetector:
-    """One-sided CUSUM for drift detection on daily activity totals."""
-    k: float = 0.5          # allowance / reference value (half the expected shift size in sigma units)
-    h: float = 4.0          # decision threshold (in sigma units; ~4.0 for ~ARL of 168 one-sided)
-    _pos_sum: float = 0.0   # cumulative sum for upward drift
-    _neg_sum: float = 0.0   # cumulative sum for downward drift
-
-    def update(self, z_score: float) -> tuple[bool, str]:
-        """Update with today's z-score. Returns (drift_detected, direction)."""
-        self._pos_sum = max(0, self._pos_sum + z_score - self.k)
-        self._neg_sum = max(0, self._neg_sum - z_score - self.k)
-        if self._pos_sum > self.h:
-            return True, "increase"
-        if self._neg_sum > self.h:
-            return True, "decrease"
-        return False, ""
+def _format_duration(seconds: float) -> str:
+    """Format seconds as 'Xm' (< 1h) or 'Xh Ym' (>= 1h)."""
+    if seconds < 3600:
+        return f"{int(seconds) // 60}m"
+    h, m = int(seconds) // 3600, (int(seconds) % 3600) // 60
+    return f"{h}h {m}m"
 ```
 
-**Parameter rationale:**
-- `k=0.5`: Standard choice for detecting a 1-sigma shift in the mean. Balances sensitivity with false alarm rate.
-- `h=4.0`: At h=4 with daily observations, average run length (ARL) before false alarm is ~168 days — acceptable for a drift detector that should only fire after sustained behavioral change.
-- Both parameters are configurable constants in `const.py`; users should not need to tune them, but they can be exposed as advanced options if needed.
+**Confidence:** HIGH -- pure string formatting.
 
-**Confidence:** MEDIUM — the CUSUM formula is verified (Wikipedia, Stackademic article cited below), parameter values k=0.5 and h=4.0 are the textbook defaults for detecting a 1-sigma shift with ARL~168. The mapping of h=4.0 to "days before false alarm" is training knowledge (ARL tables for normal distributions). Phase-level research should validate ARL empirically with simulated home sensor data.
+### 5. Config Flow (`config_flow.py`)
+
+Add `CONF_ACTIVITY_TIER_OVERRIDE` to `_build_data_schema`, using the exact same `SelectSelector` + `SelectSelectorConfig` pattern as `CONF_DRIFT_SENSITIVITY`:
+
+```python
+vol.Required(
+    CONF_ACTIVITY_TIER_OVERRIDE, default=activity_tier_default
+): SelectSelector(
+    SelectSelectorConfig(
+        options=[
+            {"value": "auto", "label": "Auto-detect (recommended)"},
+            {"value": "high", "label": "High frequency (motion, power monitors)"},
+            {"value": "medium", "label": "Medium frequency"},
+            {"value": "low", "label": "Low frequency (doors, locks)"},
+        ],
+        mode=SelectSelectorMode.DROPDOWN,
+    )
+)
+```
+
+**Important:** This is a global override, not per-entity. Per-entity sensitivity tuning is explicitly out of scope per PROJECT.md. The "auto" default means the classifier runs; user override replaces auto-detection for ALL entities in the config entry.
+
+**Confidence:** HIGH -- identical to existing drift_sensitivity selector.
+
+### 6. Config Migration (`__init__.py`)
+
+v7 to v8 migration, following the established `setdefault` pattern:
+
+```python
+if config_entry.version < 8:
+    new_data = dict(config_entry.data)
+    new_data.setdefault(CONF_ACTIVITY_TIER_OVERRIDE, ACTIVITY_TIER_AUTO)
+    hass.config_entries.async_update_entry(config_entry, data=new_data, version=8)
+```
+
+Also update `STORAGE_VERSION` in `const.py` to 8 and `ConfigFlow.VERSION` to 8.
+
+**Confidence:** HIGH -- identical to five previous migrations.
+
+### 7. Coordinator Wiring (`coordinator.py`)
+
+The coordinator needs to:
+1. Read `CONF_ACTIVITY_TIER_OVERRIDE` from config entry data in `__init__`
+2. In `_run_detection`, determine each entity's effective tier (override or auto-computed)
+3. Pass tier to `AcuteDetector.check_inactivity`
+
+**No new coordinator fields needed for persistence** -- tier is either config (already persisted in config entry) or computed (from persisted slot data).
+
+**Confidence:** HIGH -- follows existing pattern of reading config in `__init__` and passing to detectors.
+
+### 8. Sensor Attributes (Optional Enhancement)
+
+Expose each entity's detected tier as an attribute on the `entity_status_summary` sensor. No new sensor entity needed.
+
+```python
+# In entity_status extra_attrs_fn, add:
+"activity_tier": tier_value  # "high", "medium", or "low"
+```
+
+**Confidence:** HIGH -- attribute addition to existing sensor.
+
+---
+
+## What NOT to Add
+
+| Temptation | Why Not | Do Instead |
+|------------|---------|------------|
+| numpy/scipy for rate statistics | Violates pure-Python constraint; `len(deque)` and division are sufficient | Count `event_times` entries with stdlib |
+| Per-entity config storage for tier | Out of scope per PROJECT.md ("Per-entity sensitivity tuning UI -- future milestone") | Global tier override with auto-detect default |
+| New sensor entity for tier | Increases sensor count; tier is a detection parameter not a measurement | Expose as attribute on existing `entity_status_summary` sensor |
+| Machine learning for tier classification | Violates no-ML constraint; k-means is overkill for 3 tiers | Threshold-based: events/hour > 6 = high, < 0.5 = low |
+| Separate `.storage` file for tier data | Adds schema complexity; tier is cheap to recompute from existing slot data | Compute on load from `event_times` deques (< 1ms) |
+| Per-entity tier override in config | Config flow would need dynamic entity selector + per-entity dropdown; complex UI for uncertain benefit | Global override; per-entity is a future milestone |
 
 ---
 
 ## Installation
 
-```bash
-# No new pip dependencies required.
-# All algorithms use Python stdlib only.
+No changes. No new packages.
 
-# manifest.json: no changes needed.
-# "requirements": []  remains empty.
-# "dependencies": ["recorder"]  already present.
+```bash
+# manifest.json: "requirements": [] remains empty
+# No pip install changes
+make dev-setup
+source venv/bin/activate
+make test
 ```
 
 ---
 
-## Alternatives Considered
+## Confidence Assessment
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| Pure Python CUSUM (stdlib only) | `ruptures` library (PELT algorithm) | Use ruptures if you need offline batch analysis across the full history series with multiple change points. Not appropriate here — streaming, one observation per update cycle. Also requires numpy + scipy. |
-| `statistics.NormalDist` zscore | Manual z-score formula `(x - mu) / sigma` | Equivalent — use NormalDist when you also need `overlap()` or `cdf()` for additional profile comparisons. Either is fine. |
-| Hour-of-day × day-of-week slots (168) | 15-minute slots (672 buckets, existing approach) | Use 672 if your sensor population is large enough that each 15-minute slot gets 5+ observations per week. For typical residential monitoring, 672 is too sparse. |
-| Bootstrap from HA recorder history | Cold-start (learn from scratch) | Cold-start is simpler to implement but creates a learning dead zone of 4 weeks where acute detection cannot fire. Recorder bootstrap eliminates this entirely for existing installations. |
-| Single coordinator for both engines | Separate coordinators per engine | Separate coordinators add complexity with no benefit — both engines process the same state change events and share entity configuration. A single coordinator with two internal detectors is the correct HA pattern. |
-
----
-
-## What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `ruptures` | Requires numpy + scipy. Batch-oriented, not streaming. Overkill for per-entity daily drift detection. Adds HACS install friction. | Pure Python CUSUM (15 lines, zero deps) |
-| `numpy` / `scipy` | Not in HA core requirements.txt. Installing from a custom integration causes conflicts with HA's own scipy if HA ever bundles it, and creates 60-200MB of install overhead. Home Assistant's custom integration guidance explicitly says not to duplicate core requirements. | `statistics` module for all numerical operations |
-| `river` (River ML) | Being explicitly removed per PROJECT.md. Routine-based detection makes it redundant. | CUSUM for drift, z-score on rolling profile for acute events |
-| `scikit-learn` (IsolationForest, etc.) | Batch-oriented. Would require full history reload for each retrain. Cannot produce streaming detections on state change events. | CUSUM + rolling profile — both are truly streaming |
-| Raw SQLAlchemy queries on HA DB | Direct DB access is fragile across HA schema changes (recorder schema has changed multiple times). HA's internal recorder API (`get_significant_states`) is the stable interface. | `homeassistant.components.recorder.history` internal API |
-| Global numpy-style arrays for history | Would require numpy. Python `list` or `collections.deque` with `maxlen` is sufficient for the rolling window sizes needed (≤56 observations per slot). | `collections.deque(maxlen=N)` |
-
----
-
-## Stack Patterns by Variant
-
-**If the monitored entity is binary (motion sensor, door contact, switch):**
-- Track activity count per slot: number of ON→OFF transitions in the hour window
-- Acute detection: compare transition count to profile distribution (z-score)
-- Drift detection: CUSUM on daily transition count z-score
-
-**If the monitored entity is numeric (climate setpoint, power meter):**
-- Track value distribution per slot: mean of numeric values during the hour window
-- Acute detection: compare current mean to profile distribution (z-score)
-- Drift detection: CUSUM on daily mean value z-score
-
-**If the history window has fewer than `MIN_SLOT_OBSERVATIONS` for a slot:**
-- Skip detection for that slot entirely — do not emit an acute event
-- Recommended `MIN_SLOT_OBSERVATIONS = 4` (4 weeks minimum before that slot is reliable)
-- CUSUM resets automatically when the profile is insufficient (no input → no drift signal)
-
-**If the HA recorder history is unavailable at startup (recorder not running):**
-- Fall back to cold-start: begin accumulating from live events only
-- Log a warning; detection will be suppressed until `MIN_SLOT_OBSERVATIONS` is met
-- Do not block integration setup
-
----
-
-## Version Compatibility
-
-| Component | Requires | Notes |
-|-----------|----------|-------|
-| `statistics.NormalDist` | Python 3.8+ | Available in all HA 2024.1.0+ environments (ships Python 3.11) |
-| `collections.deque(maxlen=N)` | Python 2.6+ | No concern |
-| `homeassistant.components.recorder.history` | HA 2024.1.0+ | API has been stable since HA 2023.x; `get_significant_states` is used by the built-in history_stats integration, confirming it is a supported internal interface |
-| `homeassistant.helpers.storage.Store` | HA 2021.x+ | Unchanged; already used in v1.0 |
+| Area | Confidence | Reason |
+|------|------------|--------|
+| No new dependencies | HIGH | All features are arithmetic/string ops on existing data structures |
+| Config flow pattern | HIGH | Identical to 5 previous config additions in this codebase |
+| Rate classification approach | HIGH | `len(event_times)` across slots is trivial stdlib |
+| Display formatting | HIGH | String formatting only |
+| Tier thresholds (6.0 / 0.5) | MEDIUM | Reasonable starting points; may need tuning with real sensor data |
+| High-freq floor (300s) | MEDIUM | 5 minutes is conservative; may need adjustment per entity type |
+| Storage approach (compute, don't persist) | HIGH | Consistent with v3.0 CV decision; event_times already persisted |
 
 ---
 
 ## Sources
 
-- [Python docs: statistics.NormalDist](https://docs.python.org/3/library/statistics.html) — confirmed zscore() method, Python 3.8+, HIGH confidence
-- [PyPI: ruptures](https://pypi.org/project/ruptures/) — confirmed numpy + scipy required, rules out use in HA custom integration, HIGH confidence
-- [The CUSUM Algorithm — Stackademic](https://blog.stackademic.com/the-cusum-algorithm-all-the-essential-information-you-need-with-python-examples-f6a5651bf2e5) — CUSUM formula and parameters verified, MEDIUM confidence (blog source)
-- [CUSUM — Wikipedia](https://en.wikipedia.org/wiki/CUSUM) — algorithm definition and ARL tables, HIGH confidence
-- [GitHub: deepcharles/ruptures](https://github.com/deepcharles/ruptures) — confirmed scipy>=0.19.1 required dependency, HIGH confidence
-- [HA Developer Docs: Integration manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/) — confirmed requirements array installs via pip; custom integrations must not duplicate core requirements, HIGH confidence
-- [HA Recorder component](https://www.home-assistant.io/integrations/recorder/) — confirmed `recorder` is already a declared dependency; internal history API is used by built-in integrations, HIGH confidence
-- Existing codebase (`coordinator.py`, `analyzer.py`, `ml_analyzer.py`) — confirmed current stdlib-only pattern and HA API usage, HIGH confidence
+- Codebase analysis: `const.py`, `routine_model.py` (EntityRoutine, ActivitySlot), `acute_detector.py` (check_inactivity threshold logic), `coordinator.py` (_build_sensor_data formatting), `config_flow.py` (SelectSelector pattern for drift_sensitivity), `__init__.py` (migration chain v2-v7), `sensor.py` (entity_status_summary sensor), `alert_result.py`
+- PROJECT.md constraints: "No new dependencies: Pure Python", "Per-entity sensitivity tuning UI -- future milestone"
+- Established patterns: config migration chain v2-v7 using `setdefault`, SelectSelector usage for drift_sensitivity, CV compute-at-query-time decision from v3.0 Key Decisions table
 
 ---
 
-*Stack research for: Behaviour Monitor v1.1 Detection Rebuild*
-*Researched: 2026-03-13*
+*Stack research for: Behaviour Monitor v3.1 Activity-Rate Classification*
+*Researched: 2026-03-28*

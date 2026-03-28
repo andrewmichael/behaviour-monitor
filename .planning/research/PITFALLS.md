@@ -1,282 +1,161 @@
-# Pitfalls Research: Detection Rebuild (v1.1)
+# Domain Pitfalls
 
-**Domain:** Home Assistant custom integration — replacing statistical/ML anomaly detection with routine-based detection (acute + drift)
-**Researched:** 2026-03-13
-**Confidence:** HIGH (codebase analysis) / MEDIUM (HA migration patterns, IoT detection research)
-
----
+**Domain:** Activity-rate classification for anomaly detection (adding to existing behaviour-monitor)
+**Researched:** 2026-03-28
 
 ## Critical Pitfalls
 
-Mistakes that cause rewrites, break user trust, create welfare safety regressions, or silently break existing automations.
+Mistakes that cause rewrites, broken upgrades, or detection regressions.
 
----
+### Pitfall 1: Tier boundary oscillation (entity flaps between tiers)
 
-### Pitfall 1: Cold Start Produces Immediate False Negatives on Live Users
+**What goes wrong:** An entity whose event rate sits near a tier boundary (e.g., 50 events/day when the high/medium cutoff is 48) gets reclassified every time the sliding window shifts by a single day. Each reclassification changes its detection parameters, which can cause alerts to fire then clear then fire again on a per-day cadence.
 
-**What goes wrong:**
-The routine model replaces the z-score analyzer. On first boot after the upgrade, the routine model has no learned history. During the history window build-up period (default 4 weeks), the acute detection engine has no baseline to compare against — so it cannot fire alerts even when a genuine welfare event occurs. This is the inverse of the false positive problem: **silence when an alert should fire**.
+**Why it happens:** Naive threshold-based classification with no hysteresis. The event rate is a noisy signal -- weekday vs weekend, holidays, seasonal variation all shift the rate. A hard cutoff at a single number guarantees oscillation for entities near the boundary.
 
-For a welfare monitoring integration, a silent false negative during cold start is a safety regression. The old z-score analyzer fired (sometimes too often). The new engine fires nothing. The user and their family assume the system is working when it is not.
+**Consequences:** Users see spurious alerts disappearing and reappearing. If tier changes trigger detection parameter changes mid-cycle, the system may also lose accumulated evidence counters in `_inactivity_cycles` and `_unusual_time_cycles`, resetting the sustained-evidence gate and producing transient false positives.
 
-**Why it happens:**
-Routine-based detection is inherently baseline-dependent. There is no baseline until history accumulates. Developers focus on eliminating the learning period UI noise and forget that "no detections" is also a user-visible regression.
+**Prevention:**
+- Implement hysteresis bands around tier boundaries (e.g., classify UP at 48 events/day but only classify DOWN at 36). Once an entity enters a tier, it stays until it clearly belongs elsewhere.
+- Alternatively, compute the classification from a longer window (e.g., full `history_window_days` median) rather than a recent-day snapshot.
+- Never reset sustained-evidence counters when tier changes -- the counters belong to the detection engine, not the classification layer.
 
-**How to avoid:**
-- Expose a `learning_status` sensor state that clearly says "No baseline yet — detection inactive" (not just a progress percentage).
-- Send a one-time notification when the integration starts in cold-start mode, and another when acute detection activates.
-- Consider a "bootstrap mode": during cold start, fall back to a simple inactivity threshold (e.g., no activity in X hours fires an alert unconditionally, without requiring a routine baseline). This is worse than routine detection but better than silence.
-- Document the cold start window explicitly in the config flow description.
+**Detection:** Log tier transitions with timestamps. If any entity transitions more than once per week, the hysteresis band is too narrow.
 
-**Warning signs:**
-- `baseline_confidence` sensor shows 0% but no notification is surfaced to the user.
-- Users report no alerts for days after installation without realising the integration is in learning mode.
-- Tests pass (because they mock a pre-loaded baseline) but live installations silently suppress all alerts for weeks.
+### Pitfall 2: Auto-classification runs before enough data exists
 
-**Phase to address:** Routine model phase — define cold start behaviour as an explicit design decision before implementing the detection engine, not as an afterthought.
+**What goes wrong:** On first load or after adding new entities, the system attempts to classify entities into tiers with only hours or days of data. A motion sensor that fired 200 times on install day (testing, setup activity) gets classified as "high frequency" permanently, or a sensor that happened to be quiet on day one gets classified as "low frequency" and receives overly aggressive inactivity thresholds.
 
----
+**Why it happens:** The classification runs unconditionally in the coordinator update loop. There is no guard equivalent to the existing `learning_status` / `confidence` gate that prevents detection from firing before the routine model is ready.
 
-### Pitfall 2: Config Entry Migration Fails Silently — Users Lose All Stored Patterns
+**Consequences:** Wrong tier assignment persists because the user does not know to override it. Detection parameters are wrong from the start, producing either false positives (low-freq entity with tight thresholds) or missed alerts (high-freq entity with loose thresholds).
 
-**What goes wrong:**
-The existing integration stores patterns in `.storage/behaviour_monitor.{entry_id}.json` at `STORAGE_VERSION = 2`. The new coordinator replaces `analyzer.py` entirely. If the new code attempts to deserialize old storage data using the new routine model's `from_dict()`, it will either crash (raising `KeyError`/`TypeError` on missing fields) or silently produce an invalid model (partially populated).
+**Prevention:**
+- Gate auto-classification on `routine.confidence(now) >= 0.5` (at minimum). Below that threshold, use a "default" tier with conservative parameters.
+- The existing `RoutineModel.learning_status()` already returns "inactive" / "learning" / "ready". Classification should only produce a confident tier when learning_status is "ready".
+- Store the classification timestamp and mark it as "provisional" vs "confirmed" so the user (and logs) know whether the tier is data-driven or a guess.
 
-A crash in `async_setup()` means the integration fails to load. The config entry is left in a broken state. HA logs show the error but users often do not check logs — they just see "Integration unavailable."
+**Detection:** If an entity's auto-classified tier differs from what a manual inspection of its `daily_activity_rate()` history would suggest, the classification ran too early or on insufficient data.
 
-Separately: the config entry itself (`entry.data`) contains keys for `CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`, `CONF_ML_LEARNING_PERIOD`, `CONF_CROSS_SENSOR_WINDOW` that no longer apply. These must be cleaned up or ignored — but if any new code calls `entry.data.get(CONF_ENABLE_ML)` on an entry that has been migrated away from those keys, the fallback default must be correct.
+### Pitfall 3: Config migration v7 to v8 silently drops user overrides
 
-**Why it happens:**
-- `STORAGE_VERSION` is tracked but `async_migrate_entry` does not exist in the current `__init__.py`. The migration hook must be added.
-- Storage migration is separate from config entry migration. Both need handling.
-- Developers test fresh installs and forget to test upgrade paths.
+**What goes wrong:** The v7->v8 migration adds the new `activity_tier_override` config key with `setdefault()`, which is fine. But the migration also needs to handle the case where detection parameters that were previously global (single `inactivity_multiplier`) now need to coexist with tier-specific parameters. If the migration simply adds tier defaults without preserving the user's existing `inactivity_multiplier` as the baseline for their entities' actual tiers, the user's carefully tuned sensitivity resets to defaults on upgrade.
 
-**How to avoid:**
-- Increment `STORAGE_VERSION` to 3 for v1.1. In `async_setup()`, handle version 2 data gracefully: detect it by checking for the `analyzer` key, log a clear message, and discard it (start fresh) rather than crashing.
-- Implement `async_migrate_entry` in `__init__.py` to remove or rename old config entry keys (`CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`, etc.) and add new keys (`CONF_HISTORY_WINDOW`, `CONF_ACUTE_THRESHOLD`, etc.) with safe defaults.
-- Use minor version bump for additive config changes (new optional keys), major bump for breaking removals.
-- Write an integration test that loads a v2 storage fixture and confirms the integration sets up successfully with an empty routine model rather than crashing.
-- Per HA docs: if `async_migrate_entry` returns `False`, the entry is disabled. Prefer returning `True` with a fresh state over returning `False` and disabling the integration.
+**Why it happens:** Previous migrations (v4->v5, v5->v6, v6->v7) only added new keys with `setdefault()` and never needed to reinterpret existing keys. The v7->v8 migration is structurally different because the new tier system changes the *meaning* of existing parameters.
 
-**Warning signs:**
-- `async_setup_entry` raises `KeyError` or `TypeError` on first boot after upgrade.
-- Integration appears in HA as "Failed to set up" after update.
-- Storage fixture in tests uses fresh data format but no test covers loading old format data.
+**Consequences:** Users who tuned `inactivity_multiplier` to 5.0 for their specific entity mix suddenly get the default 3.0 for some tiers. This manifests as a wave of false positive alerts immediately after upgrading, which destroys trust.
 
-**Phase to address:** Coordinator rebuild phase — migration must be designed before the new coordinator is wired in, not added as a cleanup step at the end.
+**Prevention:**
+- The migration must read the existing `inactivity_multiplier` value and use it as the base for all tiers, not just inject new tier-specific defaults.
+- Specifically: if a user had `inactivity_multiplier: 5.0`, the high-frequency tier should get `5.0 * high_tier_multiplier_factor` (not `DEFAULT_INACTIVITY_MULTIPLIER * high_tier_multiplier_factor`).
+- Test the migration with a config entry that has non-default values for every parameter.
+- The `setdefault` pattern from previous migrations is safe for *new* keys but dangerous when new keys interact with old keys.
 
----
+**Detection:** Migration test that creates a v7 config with non-default `inactivity_multiplier`, migrates to v8, and asserts the user's value is preserved as the effective baseline.
 
-### Pitfall 3: Sensor Entity State Contract Breaks Existing Automations
+### Pitfall 4: Display formatting breaks existing automations
 
-**What goes wrong:**
-The 14 sensor entities must keep the same entity IDs. This is explicitly required (`entity_id` stability is maintained via `unique_id` in the entity registry). However, the *state values and attributes* of several sensors will change meaning:
+**What goes wrong:** The alert `explanation` string in `AlertResult` currently formats all intervals as hours (e.g., `"no activity for 0.3h (typical interval: 0.2h)"`). Changing this to minutes for sub-hour intervals (e.g., `"no activity for 18m (typical interval: 12m)"`) breaks any user automations that parse the explanation string with regex patterns expecting the `Xh` format.
 
-- `sensor.behaviour_monitor_anomaly_detected`: currently `"on"/"off"` reflecting z-score or ML anomalies. After rebuild, this must reflect routine-based acute detections. If the value is momentarily `None` or `"unknown"` during coordinator rebuild, any automation with `trigger: state` on this entity will fire unexpectedly.
-- `sensor.behaviour_monitor_baseline_confidence`: currently reflects z-score learning progress (days_elapsed / learning_period_days). After rebuild, this reflects routine model training progress. The scale and meaning differ.
-- `sensor.behaviour_monitor_ml_status`: currently `"Ready"/"Learning"/"Disabled"`. After rebuild, ML is removed. This sensor should either be removed or repurposed — but **removing a sensor entity breaks any automation referencing it** and leaves a dead entity in the entity registry.
-- `sensor.behaviour_monitor_ml_training_remaining`: same problem — removing it is a breaking change for users who have automations or dashboards referencing it.
-- `sensor.behaviour_monitor_cross_sensor_patterns`: depends on ML cross-sensor patterns which are being removed.
+**Why it happens:** The `explanation` field is a human-readable string exposed as a sensor attribute via `anomalies` in the coordinator data dict. Users build automations that trigger on specific text patterns. HA template sensors parsing `{:.1f}h` will break when the format changes to `{:d}m`.
 
-**Why it happens:**
-The project spec says "keep sensor entity IDs" but the old sensors that exposed ML-specific data (`ml_status`, `ml_training_remaining`, `cross_sensor_patterns`) cannot sensibly map to the new engine. The temptation is to quietly remove them.
+**Consequences:** Silent automation breakage. The user's regex stops matching because the format changed. Since HA automations fail silently (they just don't trigger), the user may not notice until a real alert goes undelivered.
 
-**How to avoid:**
-- Audit every sensor entity against the new coordinator's data output before writing any sensor code.
-- For sensors that no longer have meaningful data: keep the entity but surface a fixed state that makes the deprecation visible (e.g., `ml_status` → always `"Removed in v1.1"`, `ml_training_remaining` → `"N/A"`).
-- Never remove a sensor entity in the same release that changes the detection engine. Deprecate in v1.1, remove in v1.2 with advance notice.
-- During coordinator data rebuild, ensure `coordinator.data` is never `None` after first refresh — `CoordinatorEntity` availability propagates from `coordinator.last_update_success`, and if first refresh fails, all 14 sensors go `unavailable` simultaneously, triggering any automations that watch for state changes.
+**Prevention:**
+- Add the formatted values as *separate structured fields* in `AlertResult.details` (e.g., `elapsed_formatted`, `typical_formatted`) rather than changing the `explanation` string format.
+- Keep the `explanation` field format stable -- always use hours -- and add a new `explanation_display` field with the user-friendly format.
+- Or: change the format but also add `elapsed_seconds` and `typical_interval_seconds` to the details dict (already present at lines 128-133 of `acute_detector.py`) and document that automations should use the structured fields, not the explanation string.
+- The `details` dict already contains `elapsed_seconds` and `expected_gap_seconds`, so the raw data is available. The formatting change is purely cosmetic and should be additive, not a replacement.
 
-**Warning signs:**
-- `sensor.behaviour_monitor_anomaly_detected` transitions through `"unknown"` during HA restart after the upgrade.
-- Automated tests mock the coordinator but never assert the exact state values that automations would depend on.
-- Entity registry contains orphaned unique IDs from old sensor keys that no longer exist.
+**Detection:** Search for any documentation, examples, or community templates that reference the explanation string format. Add a deprecation note if changing the format.
 
-**Phase to address:** Sensor compatibility review must happen before coordinator implementation — define the exact output contract of `coordinator.data` first, then implement both sensor and coordinator to that contract.
+## Moderate Pitfalls
 
----
+### Pitfall 5: Tier-specific parameters create a combinatorial config explosion
 
-### Pitfall 4: Drift Detection Triggers During Legitimate Routine Changes
+**What goes wrong:** If each tier (high/medium/low) gets its own `inactivity_multiplier`, `min_inactivity_multiplier`, and `max_inactivity_multiplier`, the config UI balloons from the current 12 fields to 18+ fields. Users are already confused by the distinction between `inactivity_multiplier`, `min_inactivity_multiplier`, and `max_inactivity_multiplier`. Adding per-tier variants makes the UI unusable.
 
-**What goes wrong:**
-The drift detection engine is designed to detect when behavior persistently shifts over days/weeks (e.g., someone sleeping later, moving less). But legitimate voluntary routine changes (a new job schedule, a visitor staying for a week, recovery from illness) look identical to pathological drift. If drift detection fires aggressively, it produces high false positive rates for exactly the users who are most likely to have changing routines.
+**Prevention:**
+- Do NOT expose per-tier multipliers in the config UI. Instead, define tier behavior as internal multiplier *factors* applied on top of the user's single global `inactivity_multiplier`.
+- Example: high-frequency tier internally uses `global_multiplier * 2.0` and a minimum absolute floor of 300 seconds. The user only sees and tunes the single global multiplier.
+- The tier factors and absolute floors should be constants in `const.py`, not user-configurable (at least in v3.1). Per-entity sensitivity tuning is explicitly out of scope per PROJECT.md.
 
-This is the fundamental tension: the system cannot distinguish "gradual decline" from "gradual deliberate change" without external context.
+### Pitfall 6: Minimum absolute floor without considering entity's actual rate
 
-**Why it happens:**
-Change-point detection algorithms (CUSUM, PELT, Bayesian change points) detect statistical shifts in distributions. They have no concept of "voluntary." The research literature confirms this: for fragile populations, the threshold p-value is often set to 0.85–0.925 precisely because the cost of a false negative is higher than a false positive, but this increases noise.
+**What goes wrong:** A "minimum absolute floor" for high-frequency inactivity (e.g., "never alert if silent less than 5 minutes") sounds reasonable, but if the floor is too low, it generates noise for entities that fire every 30 seconds (PIR sensors). If too high, it masks genuine inactivity for entities that fire every 2 minutes.
 
-**How to avoid:**
-- Drift alerts must require sustained evidence over a minimum window (e.g., 5–7 days of consistent deviation) before firing, not a single detected change point.
-- Provide a "Routine Reset" mechanism: a service call or config option that tells the drift engine "this is the new normal." Without this, a user who changes their schedule has no way to stop recurring drift alerts.
-- Holiday mode already exists and suppresses monitoring — ensure it also resets the drift baseline when disabled, not just resumes from the old baseline.
-- Drift alerts should be informational, not urgent — separate notification severity from acute event alerts.
+**Prevention:**
+- The floor should be derived from the entity's *observed* median interval, not a global constant. E.g., floor = `max(ABSOLUTE_MINIMUM, median_interval * floor_factor)`.
+- The current `expected_gap_seconds()` on `EntityRoutine` already computes the median interval per-slot. The floor should be a function of this value, not independent of it.
+- Start with a generous floor (e.g., 3x the median interval or 5 minutes, whichever is greater) and tune down based on testing.
 
-**Warning signs:**
-- Drift alert fires within 2–3 days of a known schedule change (holiday return, new arrangement).
-- Users disable drift detection entirely rather than tolerate false positives.
-- No mechanism exists to acknowledge or dismiss a drift alert and update the baseline.
+### Pitfall 7: User tier override not persisted correctly
 
-**Phase to address:** Drift detection engine phase — define the minimum evidence window and the routine reset mechanism as requirements before implementing the algorithm.
+**What goes wrong:** The user overrides an entity's auto-classified tier via the config UI, but the override is stored only in the config entry data (not consulted by the coordinator). On reload, the auto-classifier runs again and overwrites the user's choice because the coordinator reads auto-classified tiers from the routine model, not from config.
 
----
+**Prevention:**
+- User overrides must be stored in the config entry data (via config flow) and take precedence over auto-classification. The coordinator must check for overrides *before* running auto-classification.
+- The existing pattern stores all user config in `entry.data`. Tier overrides should follow this pattern: `entry.data["activity_tier_overrides"] = {"sensor.motion_kitchen": "high"}`.
+- Auto-classification should only apply to entities without an override.
 
-### Pitfall 5: Acute Detection Inactivity Threshold Is Fixed, Not Routine-Relative
+### Pitfall 8: Coordinator reload path does not re-apply tier parameters
 
-**What goes wrong:**
-Acute detection flags "out of character" events in real time. The most common implementation mistake is using a fixed configurable inactivity threshold (e.g., "alert if no activity for 4 hours") rather than a routine-relative threshold (e.g., "alert if no activity during a time window when activity normally occurs").
+**What goes wrong:** When the user changes config options (triggering `async_reload_entry` at line 264 of `__init__.py`), the coordinator is reconstructed from scratch. If the tier classification is computed during `async_setup()` but the `AcuteDetector` is constructed in `__init__()` with only global parameters (lines 79-83 of `coordinator.py`), the detector does not receive tier-specific parameters until classification completes.
 
-A fixed threshold produces false positives at night (no activity for 8 hours is normal) and false negatives during day windows where activity is expected but delayed only 30 minutes.
+**Prevention:**
+- The `AcuteDetector` must accept tier-aware parameters per-entity, not just global parameters in its constructor. This means either:
+  - Passing tier info to `check_inactivity()` at call time (preferred -- keeps detector stateless re: tiers), or
+  - Reconstructing the detector when tiers change.
+- The current `_run_detection` loop (line 191 of `coordinator.py`) already passes per-entity `routine` objects. Adding a per-entity tier parameter to `check_inactivity()` is the natural extension.
 
-**Why it happens:**
-Fixed thresholds are simpler to implement and configure. Routine-relative thresholds require the routine model to be functional first. During early implementation, a fixed threshold is used as a placeholder and never replaced.
+## Minor Pitfalls
 
-**How to avoid:**
-- The acute detection threshold must be parameterized relative to the learned routine model, not as a flat time value. The config option should be "how many times the typical quiet period before alerting" not "how many hours before alerting."
-- Implement the routine model before the acute detection engine — do not build detection that cannot use the model yet.
-- Test acute detection with synthetic routine data that includes overnight quiet periods to confirm it does not alert during expected inactivity.
+### Pitfall 9: Time formatting edge cases
 
-**Warning signs:**
-- Acute alerts fire every morning before the monitored person wakes up.
-- The `CONF_ACUTE_THRESHOLD` is a raw hour value rather than a multiplier on the learned interval.
-- Tests only exercise the detection engine with uniform round-the-clock activity distributions.
+**What goes wrong:** The "show minutes instead of hours" formatting logic has edge cases: exactly 60 minutes (show as "1h 0m" or "60m"?), exactly 0 minutes (show as "0m" or "just now"?), very large values (show as "72h" or "3d"?). Inconsistent formatting across the codebase -- the coordinator's `_build_sensor_data` (lines 282-288) has one inline formatter, the `AcuteDetector.check_inactivity` explanation (lines 113-114) has another.
 
-**Phase to address:** Routine model phase (define the output API the detection engine will consume), then acute detection engine phase.
+**Prevention:**
+- Create a single `format_duration(seconds: float) -> str` utility function and use it everywhere. Define the rules once: <60s = "<1m", 1-59m = "Xm", 60m-1439m = "Xh Ym", >=24h = "Xd Yh".
+- Replace the inline formatting in both `coordinator.py` and `acute_detector.py` with calls to this function.
 
----
+### Pitfall 10: Storage version bump missed for new tier data
 
-### Pitfall 6: River Dependency Removal Breaks Existing Installations That Rely on It
+**What goes wrong:** If tier classification results are persisted in the `.storage` file (e.g., cached tier assignments), the `STORAGE_VERSION` must be bumped from 7 to 8. If forgotten, loading old storage data into new code that expects tier fields causes KeyError or incorrect defaults.
 
-**What goes wrong:**
-The River ML library is being removed as a dependency. Existing users who have River installed and `CONF_ENABLE_ML = True` in their config entries will see the integration start normally but with ML disabled. This is handled gracefully in the existing code (`ML_AVAILABLE` check). However, if the new coordinator code removes the `ml_analyzer` property and the `ML_AVAILABLE` import entirely, any external code or custom templates referencing `coordinator.ml_analyzer` will break.
+**Prevention:**
+- If tier data is stored in `.storage`, bump `STORAGE_VERSION` and handle the old-format gracefully in `async_setup()` (the `from_dict` pattern already handles missing fields with defaults).
+- If tier data is computed at runtime and not persisted, no storage version bump is needed -- but document this decision explicitly.
+- Note: config entry VERSION (currently 7 in `config_flow.py` line 249) and STORAGE_VERSION (currently 7 in `const.py` line 52) are separate. Both may need bumping but for different reasons.
 
-More critically: the ML storage file (`.storage/behaviour_monitor_ml.{entry_id}.json`) will be orphaned — it won't be loaded or cleaned up. This is harmless but wastes disk space and may confuse users inspecting their storage.
+### Pitfall 11: Entity tier override UI becomes stale
 
-**Why it happens:**
-Removing a dependency is treated as internal cleanup. The external surface area (coordinator properties, storage files) is overlooked.
+**What goes wrong:** The config UI shows a list of entities with tier override dropdowns. If the user removes an entity from monitoring, the override for that entity remains in config data as dead weight. If the user later re-adds the entity, the stale override may apply an inappropriate tier.
 
-**How to avoid:**
-- Clean up the ML storage file on first startup after the upgrade. In `async_setup()`, detect and delete the orphaned ML store: `await self._ml_store.async_remove()` if it exists.
-- Remove `CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`, `CONF_ML_LEARNING_PERIOD`, `CONF_CROSS_SENSOR_WINDOW` from config entry data via migration, so they do not appear as dead options in the integration's config panel.
-- Log clearly at startup: "ML features have been removed in v1.1. Routine-based detection is now active."
-- Do not retain any public coordinator properties (`ml_analyzer`, `ml_enabled`, `recent_ml_anomalies`) in the new coordinator — they become dead references that confuse future maintainers.
+**Prevention:**
+- On config save (options flow), prune any tier overrides for entities not in the current `monitored_entities` list.
+- This is the same pattern as how `notify_services` is handled in the current options flow (lines 333-336 of `config_flow.py`).
 
-**Warning signs:**
-- `.storage/behaviour_monitor_ml.*.json` files exist on disk but are never loaded or cleaned.
-- `CONF_ENABLE_ML` appears in the options flow UI with no effect.
-- `coordinator.ml_enabled` returns `False` for all users but the property still exists.
+### Pitfall 12: Classification uses wrong time window for rate calculation
 
-**Phase to address:** Coordinator rebuild phase — dependency cleanup and storage migration are part of the coordinator replacement, not a separate cleanup step.
+**What goes wrong:** `daily_activity_rate()` on `EntityRoutine` (line 284 of `routine_model.py`) counts events for a *specific calendar date* by filtering `event_times` in the 24 hour-slots for that day-of-week. But the deque has `maxlen=56` and events are ISO timestamps -- if the entity has been running for weeks, older events age out of the deque. The "rate" computed from a single recent day is volatile. Computing rate from multiple days requires calling `daily_activity_rate()` for each day and averaging, which iterates the same deques repeatedly.
 
----
+**Prevention:**
+- Add a dedicated rate-computation method that aggregates across the full deque contents (all timestamps in all slots) and divides by the number of distinct days observed. This is O(n) over events, not O(days * slots * events).
+- Alternatively, maintain a running event counter per entity (increment on every `record()` call, store first/last observation timestamps) and compute rate as `total_events / days_elapsed`. This is O(1) at query time.
 
-## Technical Debt Patterns
+## Phase-Specific Warnings
 
-Shortcuts that seem reasonable but create long-term problems.
-
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Use fixed inactivity threshold instead of routine-relative | Simpler to implement | False positives at night; false negatives during day | Never — the whole value of the routine model is eliminated |
-| Keep ML sensor entities as stubs returning hardcoded values | No breaking change for automations | Dead code, confusing state, misleading sensor names | Acceptable for one release cycle as deprecation bridge |
-| Skip storage migration, start fresh | No migration code needed | Users lose all learned patterns and must wait for re-learning | Never for welfare monitoring — silent false negative risk during cold start |
-| Implement drift detection with a 24-hour window | Quick to ship | Too noisy; fires on weekday/weekend variation | Never — minimum viable window is 5–7 days |
-| Suppress all alerts during cold start with no user notification | No false positives | User believes system is working; genuine events missed silently | Never — silence must be surfaced explicitly |
-| Reuse existing `UPDATE_INTERVAL = 60s` for drift checks | No architectural change | Drift runs on every tick unnecessarily; drift is inherently a long-horizon check | Acceptable if drift evaluation is gated behind a "last checked N hours ago" guard |
-
----
-
-## Integration Gotchas
-
-Common mistakes specific to the Home Assistant integration layer.
-
-| Integration Point | Common Mistake | Correct Approach |
-|-------------------|----------------|------------------|
-| `async_migrate_entry` | Not implementing it; letting old config entries fail silently | Always implement; return `True` with migrated data or fresh defaults — never `False` unless the entry is genuinely unrecoverable |
-| `Store.async_load()` | Crashing on stale format; `KeyError` on missing keys | Wrap deserialization in try/except; log warning and continue with empty model if format is unrecognised |
-| `DataUpdateCoordinator.data` | Returning `None` on first refresh failure | Ensure `_async_update_data` returns a valid empty-state dict rather than raising; sensors should return safe defaults, not go unavailable |
-| Sensor entity removal | Deleting a `SensorEntityDescription` entry | Leaving stale unique IDs in entity registry that HA never cleans up; users see ghost entities. Prefer keeping deprecated sensors with a stub state |
-| Config entry options cleanup | Leaving old keys (`CONF_ENABLE_ML`) in `entry.data` | They appear in storage forever; options flow may surface them with no effect. Clean up via migration |
-| Holiday mode + drift baseline | Resuming drift tracking from pre-holiday baseline after holiday ends | Drift engine will immediately fire because post-holiday behavior differs from pre-holiday. Reset drift baseline when holiday mode is disabled |
-| `EVENT_STATE_CHANGED` subscription | Subscribing before coordinator is ready | State changes arrive before `async_setup` completes; handler references uninitialized model. Subscribe only after model is initialized |
-
----
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Scanning full history window on every state change | CPU spike on every entity event; HA becomes sluggish | Maintain rolling statistics (mean, variance) as events arrive; never re-scan history on each event | At 5+ monitored entities with frequent changes |
-| Running drift detection on every 60-second coordinator tick | Unnecessary computation; drift is a days-scale phenomenon | Gate drift evaluation to run at most once per hour or once per day | Always — drift evaluation at 60s intervals is always wasteful |
-| Storing raw event history for drift in memory | Memory grows unbounded over 4-week window | Use fixed-size circular buffer or pre-aggregated daily summaries, not raw event lists | At ~4 weeks of data for high-frequency sensors |
-| Loading entire history from HA recorder API on every restart | Slow startup; blocks coordinator initialization | Pre-aggregate and persist summaries; only fetch from recorder on first install or after data loss | Immediately on any system with >2 weeks of data |
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| No user-visible indication of cold start mode | User believes system is monitoring when it is not; misses genuine welfare events | Surface cold start status prominently: sensor state, persistent notification, or startup log at WARNING level |
-| Drift alert with no dismiss/acknowledge mechanism | User cannot stop repeated drift alerts after a voluntary routine change | Add "Update baseline" service call that resets the drift reference point to current behavior |
-| Acute threshold as raw hours in config flow | Users set it too low (constant alerts) or too high (misses genuine events) | Express threshold as a multiplier of the learned typical quiet period; show learned value in config flow description |
-| Single "Anomaly Detected" binary sensor for both acute and drift | Automation cannot distinguish urgent (acute) from informational (drift) | Expose separate `acute_alert` and `drift_alert` sensors, or use sensor attributes to distinguish |
-| Re-running learning period after any config change | Users lose months of baseline data when reconfiguring | Only reset the model when monitored entities change; preserve the routine model when thresholds or notification settings change |
-
----
-
-## "Looks Done But Isn't" Checklist
-
-- [ ] **Cold start handling:** Integration surfaces "detection inactive" status — verify a new install with no history shows a clear user-visible warning, not just a 0% confidence value.
-- [ ] **Storage migration:** Load a v2 storage fixture (z-score format) in tests — confirm integration starts, does not crash, and logs a clear message about starting fresh.
-- [ ] **Config entry migration:** Confirm old keys (`CONF_ENABLE_ML`, `CONF_RETRAIN_PERIOD`) are absent from `entry.data` after migration — check with a migration integration test.
-- [ ] **ML sensor deprecation:** Verify `sensor.behaviour_monitor_ml_status` and `ml_training_remaining` return defined (not `unavailable`) states rather than disappearing from the entity registry.
-- [ ] **Holiday mode + drift:** Confirm drift baseline resets when holiday mode is disabled — not just resumes from the pre-holiday baseline.
-- [ ] **Routine reset service:** A service call or config option exists to acknowledge a drift alert and update the baseline to current behavior.
-- [ ] **Acute detection overnight:** Confirm no alerts fire during an overnight quiet period when testing with a routine model that includes expected overnight inactivity.
-- [ ] **`coordinator.data` never None:** First coordinator refresh returns a valid empty-state dict even with no stored history — all 14 sensors return safe defaults instead of going unavailable.
-- [ ] **Orphaned ML storage file:** Confirm `.storage/behaviour_monitor_ml.{entry_id}.json` is cleaned up (or not created) after the upgrade.
-- [ ] **Automation smoke test:** Manually verify `sensor.behaviour_monitor_anomaly_detected` state transitions on an actual HA instance after the upgrade, not just in unit tests.
-
----
-
-## Recovery Strategies
-
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Cold start produces false negatives for weeks | HIGH | Ship bootstrap mode (simple fixed threshold during cold start) as a fast-follow patch; add prominent UI warning immediately |
-| Config migration crashes on startup | HIGH | Release hotfix that wraps storage load in try/except and clears on failure; users lose learned patterns but integration recovers |
-| Sensor entity removal breaks user automations | MEDIUM | Re-add removed sensor entities as stubs in a patch release; deprecation warning in state attributes |
-| Drift fires constantly after legitimate routine change | MEDIUM | Add `reset_drift_baseline` service call; document in release notes as the workaround |
-| Acute detection ignores overnight quiet periods | MEDIUM | Patch the threshold logic to use routine-relative comparison; release as bugfix |
-| ML storage files orphaned | LOW | Add cleanup step in next release's `async_setup`; inform users via CHANGELOG |
-
----
-
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Cold start false negatives (Pitfall 1) | Routine model phase — define cold start behavior as a first-class requirement | Test: new install with no history never silently suppresses; user-visible status confirmed |
-| Config entry migration failure (Pitfall 2) | Coordinator rebuild phase — migration implemented before new coordinator wired in | Test: load v2 storage fixture; confirm clean startup and logged warning |
-| Sensor entity state contract break (Pitfall 3) | Pre-implementation — audit sensor output contract before writing coordinator | Test: all 14 sensors return defined values after coordinator rebuild; no `unavailable` on first refresh |
-| Drift on legitimate routine changes (Pitfall 4) | Drift detection engine phase — minimum evidence window and reset mechanism defined upfront | Test: drift engine does not fire within 3 days of a simulated schedule change |
-| Fixed vs routine-relative acute threshold (Pitfall 5) | Routine model phase — define detection API before building detection engine | Test: no acute alert during synthetic overnight quiet period with learned routine model |
-| River dependency removal loose ends (Pitfall 6) | Coordinator rebuild phase — include storage cleanup and config migration in same PR | Test: orphaned ML storage file absent after upgrade; `CONF_ENABLE_ML` absent from migrated entry |
-
----
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| Auto-classification logic | Pitfall 1 (oscillation), Pitfall 2 (premature classification) | Implement hysteresis + confidence gate before wiring into detector |
+| Tier-specific detection parameters | Pitfall 5 (config explosion), Pitfall 6 (wrong floor) | Use internal factors, not per-tier UI fields; derive floor from observed rate |
+| User override in config UI | Pitfall 7 (override not persisted), Pitfall 11 (stale overrides) | Store in entry.data, prune on save |
+| Display formatting (minutes vs hours) | Pitfall 4 (automation breakage), Pitfall 9 (edge cases) | Add structured fields, single format utility, keep explanation stable |
+| Config migration v7 to v8 | Pitfall 3 (user values lost), Pitfall 10 (storage version) | Read existing multiplier as baseline; test with non-default values |
+| Coordinator integration | Pitfall 8 (reload path), Pitfall 12 (rate computation) | Pass tier to check_inactivity() at call time; add efficient rate method |
 
 ## Sources
 
-- `custom_components/behaviour_monitor/coordinator.py` — existing storage migration pattern, sensor data output, ML dependency wiring (HIGH confidence, direct inspection)
-- `custom_components/behaviour_monitor/sensor.py` — 14 sensor entity definitions, entity ID stability, `unique_id` pattern (HIGH confidence, direct inspection)
-- `custom_components/behaviour_monitor/const.py` — `STORAGE_VERSION = 2`, all `CONF_*` keys being deprecated, `UPDATE_INTERVAL` (HIGH confidence, direct inspection)
-- `.planning/PROJECT.md` — explicit constraints: entity IDs must not change, config migration must be graceful, River dependency being removed (HIGH confidence)
-- Home Assistant Developer Docs — `async_migrate_entry` requirements, major vs minor version semantics, config entry mutation rules (MEDIUM confidence, verified via WebFetch)
-- [Config entry minor versions blog post](https://developers.home-assistant.io/blog/2023/12/18/config-entry-minor-version/) — minor bump is backwards compatible; major bump fails setup on downgrade (MEDIUM confidence)
-- [IoT anomaly detection survey — ScienceDirect](https://www.sciencedirect.com/science/article/pii/S2542660522000622) — false negative risk in unbalanced datasets, cold start baseline establishment patterns (MEDIUM confidence)
-- [Behavior drift detection in home automation — MDPI](https://www.mdpi.com/2227-7080/6/1/16) — p-value thresholds for fragile populations, concept drift model confidence failure mode (MEDIUM confidence)
-- [Home Assistant community — unavailable states breaking automations](https://community.home-assistant.io/t/wth-is-unavailable-breaking-everything/474217) — state transition side effects on automation triggers (MEDIUM confidence)
-
----
-*Pitfalls research for: Home Assistant behaviour monitoring — v1.1 Detection Rebuild*
-*Researched: 2026-03-13*
+- Direct codebase analysis of `acute_detector.py`, `coordinator.py`, `routine_model.py`, `config_flow.py`, `__init__.py`, `const.py`, `sensor.py` (HIGH confidence -- all pitfalls derived from actual code structure and line-level inspection)
+- Existing migration chain pattern (v2->v3->v4->v5->v6->v7) in `__init__.py` (HIGH confidence)
+- PROJECT.md constraints: sensor stability, config migration, no new dependencies, per-entity sensitivity tuning out of scope (HIGH confidence)
