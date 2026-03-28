@@ -41,7 +41,14 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Active
 
-(None — planning next milestone)
+**Current Milestone: v3.1 Activity-Rate Classification**
+
+**Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into activity tiers with tier-appropriate detection logic.
+
+**Target features:**
+- Auto-classify entities into frequency tiers (high/medium/low) based on observed event rates, with user override in config UI
+- Separate inactivity detection for high-frequency entities: higher multiplier AND minimum absolute floor
+- Fix alert display formatting — show minutes instead of hours when typical interval < 1h
 
 ### Out of Scope
 
@@ -101,5 +108,22 @@ Known tech debt: Phase 10 fallback path derives baseline data twice (information
 | Compute CV at query time, no new storage (v3.0) | Avoids storage schema complexity; existing `event_times` deques hold enough data | ✓ Good — zero new persistence, all data already captured |
 | setdefault for v6→v7 migration (v3.0) | Consistent with v2.9 pattern; preserves any pre-existing custom values | ✓ Good — identical to v5 migration pattern |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-03-14 after v3.0 milestone*
+*Last updated: 2026-03-28 after v3.1 milestone started*

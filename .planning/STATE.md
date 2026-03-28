@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: Detection Accuracy
+milestone: v3.1
+milestone_name: Activity-Rate Classification
 status: planning
-stopped_at: Completed 11-adaptive-inactivity 11-02-PLAN.md
-last_updated: "2026-03-14T20:22:31.972Z"
-last_activity: 2026-03-14 — Roadmap created for v3.0
+stopped_at: ""
+last_updated: "2026-03-28T13:00:00.000Z"
+last_activity: 2026-03-28 — Milestone v3.1 started
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** v3.0 Detection Accuracy — ready to plan Phase 9
+**Current focus:** v3.1 Activity-Rate Classification
 
 ## Current Position
 
-Phase: 9 of 11 (Alert Suppression)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Ready to plan
-Last activity: 2026-03-14 — Roadmap created for v3.0
+Status: Defining requirements
+Last activity: 2026-03-28 — Milestone v3.1 started
 
 Progress: [░░░░░░░░░░] 0%
 
