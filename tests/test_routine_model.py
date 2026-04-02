@@ -734,3 +734,182 @@ class TestFormatDuration:
         from custom_components.behaviour_monitor.routine_model import format_duration
         assert format_duration(45.7) == "0m"
         assert format_duration(3661.9) == "1h 1m"
+
+
+# ---------------------------------------------------------------------------
+# Tier Classification
+# ---------------------------------------------------------------------------
+
+from custom_components.behaviour_monitor.const import (
+    ActivityTier,
+    TIER_BOUNDARY_HIGH,
+    TIER_BOUNDARY_LOW,
+)
+
+
+def _build_routine_with_rate(
+    events_per_day: int, num_days: int = 7
+) -> tuple[EntityRoutine, datetime]:
+    """Build an EntityRoutine with a known daily event rate.
+
+    Creates a binary EntityRoutine with first_observation 35 days ago
+    (ensures confidence=1.0 with default 28-day window).
+    Distributes events_per_day * num_days timestamps across num_days
+    distinct calendar dates.
+
+    Returns (routine, now_datetime).
+    """
+    now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+    first_obs = now - timedelta(days=35)
+
+    er = EntityRoutine(entity_id="sensor.test_tier", is_binary=True)
+    er.first_observation = first_obs.isoformat()
+
+    # Distribute events across num_days calendar dates ending yesterday
+    for day_offset in range(num_days):
+        day_dt = now - timedelta(days=num_days - day_offset)
+        for event_idx in range(events_per_day):
+            # Spread events across hours to hit different slots
+            hour = event_idx % 24
+            minute = (event_idx // 24) % 60
+            ts = day_dt.replace(hour=hour, minute=minute, second=0)
+            idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+            er.slots[idx].record_binary(ts.isoformat())
+
+    return er, now
+
+
+class TestTierClassification:
+    """Tests for EntityRoutine.classify_tier() and activity_tier property."""
+
+    def test_high_tier(self) -> None:
+        """Entity with 30 events/day median, confidence >= 0.8 -> HIGH."""
+        er, now = _build_routine_with_rate(30)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.HIGH
+
+    def test_medium_tier(self) -> None:
+        """Entity with 10 events/day median -> MEDIUM."""
+        er, now = _build_routine_with_rate(10)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.MEDIUM
+
+    def test_low_tier(self) -> None:
+        """Entity with 2 events/day median -> LOW."""
+        er, now = _build_routine_with_rate(2)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.LOW
+
+    def test_boundary_high_exact(self) -> None:
+        """Exactly 24 events/day -> HIGH (>= boundary)."""
+        er, now = _build_routine_with_rate(TIER_BOUNDARY_HIGH)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.HIGH
+
+    def test_boundary_low_exact(self) -> None:
+        """Exactly 4 events/day -> LOW (<= boundary)."""
+        er, now = _build_routine_with_rate(TIER_BOUNDARY_LOW)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.LOW
+
+    def test_gating_low_confidence(self) -> None:
+        """Confidence < 0.8 -> activity_tier returns None."""
+        er = EntityRoutine(entity_id="sensor.low_conf", is_binary=True)
+        # Set first_observation to only 10 days ago (confidence ~0.36 with 28-day window)
+        now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        er.first_observation = (now - timedelta(days=10)).isoformat()
+        # Add some events so median rate would be non-zero
+        for day_offset in range(5):
+            day_dt = now - timedelta(days=day_offset + 1)
+            for i in range(10):
+                ts = day_dt.replace(hour=i, minute=0, second=0)
+                idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+                er.slots[idx].record_binary(ts.isoformat())
+        er.classify_tier(now)
+        assert er.activity_tier is None
+
+    def test_no_data_fresh_entity(self) -> None:
+        """Fresh entity with no data -> activity_tier returns None."""
+        er = EntityRoutine(entity_id="sensor.fresh", is_binary=True)
+        now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        er.classify_tier(now)
+        assert er.activity_tier is None
+
+    def test_once_per_day_guard(self) -> None:
+        """classify_tier() called twice same day -> second call is no-op."""
+        er, now = _build_routine_with_rate(30)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.HIGH
+
+        # Manually set tier to something else to verify second call is a no-op
+        er._activity_tier = ActivityTier.LOW
+        er.classify_tier(now)  # Same day — should NOT recompute
+        assert er.activity_tier == ActivityTier.LOW  # Unchanged
+
+    def test_reclassification_on_new_day(self) -> None:
+        """classify_tier() on day N sets tier, classify_tier() on day N+1 recomputes."""
+        er, now = _build_routine_with_rate(30)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.HIGH
+
+        # Manually set tier to something else, then call on next day
+        er._activity_tier = ActivityTier.LOW
+        next_day = now + timedelta(days=1)
+        er.classify_tier(next_day)
+        # Should recompute — actual median rate is 30, so should be HIGH again
+        assert er.activity_tier == ActivityTier.HIGH
+
+    def test_tier_change_logging(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When tier changes from MEDIUM to HIGH, DEBUG log emitted."""
+        import logging
+
+        er, now = _build_routine_with_rate(10)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.MEDIUM
+
+        # Now add more events to push into HIGH tier on next day
+        next_day = now + timedelta(days=1)
+        for i in range(30):
+            hour = i % 24
+            ts = next_day.replace(hour=hour, minute=0, second=0)
+            idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+            er.slots[idx].record_binary(ts.isoformat())
+
+        with caplog.at_level(
+            logging.DEBUG,
+            logger="custom_components.behaviour_monitor.routine_model",
+        ):
+            er.classify_tier(next_day)
+
+        assert er.activity_tier == ActivityTier.HIGH
+        assert any("Tier reclassified" in msg for msg in caplog.messages)
+        assert any("medium" in msg and "high" in msg for msg in caplog.messages)
+
+    def test_no_log_on_same_tier(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When tier stays the same after reclassification, no log emitted."""
+        import logging
+
+        er, now = _build_routine_with_rate(30)
+        er.classify_tier(now)
+        assert er.activity_tier == ActivityTier.HIGH
+
+        next_day = now + timedelta(days=1)
+        with caplog.at_level(
+            logging.DEBUG,
+            logger="custom_components.behaviour_monitor.routine_model",
+        ):
+            er.classify_tier(next_day)
+
+        assert not any("Tier reclassified" in msg for msg in caplog.messages)
+
+    def test_numeric_entity_no_event_times(self) -> None:
+        """Non-binary entity with no event_times -> activity_tier returns None."""
+        er = EntityRoutine(entity_id="sensor.temp", is_binary=False)
+        now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        er.first_observation = (now - timedelta(days=35)).isoformat()
+        # Record numeric data (no event_times populated)
+        for i in range(10):
+            ts = now - timedelta(days=i + 1)
+            er.record(ts, "21.5")
+        er.classify_tier(now)
+        assert er.activity_tier is None
