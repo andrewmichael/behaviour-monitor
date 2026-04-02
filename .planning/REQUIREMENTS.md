@@ -55,21 +55,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CLASS-01 | — | Pending |
-| CLASS-02 | — | Pending |
-| CLASS-03 | — | Pending |
-| CLASS-04 | — | Pending |
-| CLASS-05 | — | Pending |
-| DET-01 | — | Pending |
-| DET-02 | — | Pending |
-| DET-03 | — | Pending |
-| CFG-01 | — | Pending |
-| CFG-02 | — | Pending |
+| CLASS-01 | 13 | Pending |
+| CLASS-02 | 13 | Pending |
+| CLASS-03 | 13 | Pending |
+| CLASS-04 | 15 | Pending |
+| CLASS-05 | 13 | Pending |
+| DET-01 | 14 | Pending |
+| DET-02 | 14 | Pending |
+| DET-03 | 12 | Pending |
+| CFG-01 | 16 | Pending |
+| CFG-02 | 16 | Pending |
 
 **Coverage:**
 - v3.1 requirements: 10 total
-- Mapped to phases: 0
-- Unmapped: 10 ⚠️
+- Mapped to phases: 10
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-28*

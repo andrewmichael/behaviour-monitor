@@ -6,6 +6,7 @@
 - ✅ **v1.1 Detection Rebuild** — Phases 3-5 (shipped 2026-03-13)
 - ✅ **v2.9 Housekeeping & Config** — Phases 6-8 (shipped 2026-03-14)
 - ✅ **v3.0 Detection Accuracy** — Phases 9-11 (shipped 2026-03-14)
+- **v3.1 Activity-Rate Classification** — Phases 12-16
 
 ## Phases
 
@@ -44,6 +45,40 @@
 
 </details>
 
+### v3.1 Activity-Rate Classification (Phases 12-16)
+
+**Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into frequency tiers and applying tier-appropriate detection parameters.
+
+- [ ] Phase 12: Constants and Utilities
+  - **Goal:** Define ActivityTier enum, tier boundary constants, floor/boost lookup dicts, and shared format_duration() utility
+  - **Files:** `const.py`, `routine_model.py`
+  - **Requirements:** DET-03
+  - **Depends on:** None
+
+- [ ] Phase 13: Tier Classification
+  - **Goal:** Auto-classify entities into HIGH/MEDIUM/LOW frequency tiers from observed routine data, gated on learning confidence, reclassified at most once per day
+  - **Files:** `routine_model.py`
+  - **Requirements:** CLASS-01, CLASS-02, CLASS-03, CLASS-05
+  - **Depends on:** Phase 12
+
+- [ ] Phase 14: Tier-Aware Detection
+  - **Goal:** Apply tier-specific multiplier boost and absolute minimum floor in check_inactivity(), fix sub-hour display formatting
+  - **Files:** `acute_detector.py`
+  - **Requirements:** DET-01, DET-02
+  - **Depends on:** Phase 12, Phase 13
+
+- [ ] Phase 15: Coordinator Integration
+  - **Goal:** Wire daily reclassification, tier override injection, tier as sensor attribute, and formatted durations into coordinator
+  - **Files:** `coordinator.py`, `sensor.py`
+  - **Requirements:** CLASS-04
+  - **Depends on:** Phase 13, Phase 14
+
+- [ ] Phase 16: Config UI and Migration
+  - **Goal:** Add global tier override setting in config UI, migrate config v7 to v8 preserving user-tuned multiplier values
+  - **Files:** `config_flow.py`, `__init__.py`, `const.py`
+  - **Requirements:** CFG-01, CFG-02
+  - **Depends on:** Phase 15
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -59,3 +94,8 @@
 | 9. Alert Suppression | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 10. Drift Accuracy | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
+| 12. Constants and Utilities | v3.1 | 0/0 | Pending | — |
+| 13. Tier Classification | v3.1 | 0/0 | Pending | — |
+| 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
+| 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
+| 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |

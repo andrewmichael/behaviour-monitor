@@ -4,10 +4,10 @@ milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: planning
 stopped_at: ""
-last_updated: "2026-03-28T13:00:00.000Z"
-last_activity: 2026-03-28 — Milestone v3.1 started
+last_updated: "2026-04-02T17:30:00.000Z"
+last_activity: 2026-04-02 — v3.1 roadmap created (5 phases)
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 12 (Constants and Utilities) — next to plan
 Plan: —
-Status: Defining requirements
-Last activity: 2026-03-28 — Milestone v3.1 started
+Status: Roadmap created, ready for planning
+Last activity: 2026-04-02 — v3.1 roadmap created (5 phases)
 
 Progress: [░░░░░░░░░░] 0%
 
