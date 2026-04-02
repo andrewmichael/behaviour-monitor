@@ -62,6 +62,10 @@
 **Files:** `const.py`, `routine_model.py`
 **Requirements:** DET-03
 **Depends on:** None
+**Plans:** 1 plan
+
+Plans:
+- [ ] 12-01-PLAN.md — ActivityTier enum, tier constants, format_duration utility, and tests
 
 ### Phase 13: Tier Classification
 
@@ -110,7 +114,7 @@
 | 9. Alert Suppression | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 10. Drift Accuracy | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
-| 12. Constants and Utilities | v3.1 | 0/0 | Pending | — |
+| 12. Constants and Utilities | v3.1 | 0/1 | Planning | — |
 | 13. Tier Classification | v3.1 | 0/0 | Pending | — |
 | 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
 | 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
