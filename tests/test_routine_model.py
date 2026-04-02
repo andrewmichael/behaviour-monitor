@@ -690,3 +690,47 @@ class TestEntityRoutineIntervalCv:
         assert er.interval_cv(11, 0) is None
         # slot (10, 0) has data → 0.0
         assert er.interval_cv(10, 0) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# format_duration — shared utility
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDuration:
+    """Tests for the format_duration() utility."""
+
+    def test_zero_seconds(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(0) == "0m"
+
+    def test_sub_minute(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(59) == "0m"
+
+    def test_one_minute(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(60) == "1m"
+
+    def test_sub_hour_minutes(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(120) == "2m"
+        assert format_duration(3599) == "59m"
+
+    def test_exactly_one_hour(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(3600) == "1h 0m"
+
+    def test_hours_and_minutes(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(5400) == "1h 30m"
+
+    def test_large_values_no_day_rollover(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(86400) == "24h 0m"
+        assert format_duration(90061) == "25h 1m"
+
+    def test_float_input(self):
+        from custom_components.behaviour_monitor.routine_model import format_duration
+        assert format_duration(45.7) == "0m"
+        assert format_duration(3661.9) == "1h 1m"
