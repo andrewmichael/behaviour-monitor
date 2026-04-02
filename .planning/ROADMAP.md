@@ -49,7 +49,7 @@
 
 **Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into frequency tiers and applying tier-appropriate detection parameters.
 
-- [ ] **Phase 12: Constants and Utilities** — DET-03
+- [x] **Phase 12: Constants and Utilities** — DET-03 (completed 2026-04-02)
 - [ ] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05
 - [ ] **Phase 14: Tier-Aware Detection** — DET-01, DET-02
 - [ ] **Phase 15: Coordinator Integration** — CLASS-04
@@ -62,10 +62,10 @@
 **Files:** `const.py`, `routine_model.py`
 **Requirements:** DET-03
 **Depends on:** None
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 12-01-PLAN.md — ActivityTier enum, tier constants, format_duration utility, and tests
+- [x] 12-01-PLAN.md — ActivityTier enum, tier constants, format_duration utility, and tests
 
 ### Phase 13: Tier Classification
 
@@ -114,7 +114,7 @@ Plans:
 | 9. Alert Suppression | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 10. Drift Accuracy | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
-| 12. Constants and Utilities | v3.1 | 0/1 | Planning | — |
+| 12. Constants and Utilities | v3.1 | 1/1 | Complete   | 2026-04-02 |
 | 13. Tier Classification | v3.1 | 0/0 | Pending | — |
 | 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
 | 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |

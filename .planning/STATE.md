@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Activity-Rate Classification
-status: planning
-stopped_at: ""
-last_updated: "2026-04-02T17:30:00.000Z"
-last_activity: 2026-04-02 — v3.1 roadmap created (5 phases)
+status: verifying
+stopped_at: Completed 12-constants-and-utilities 12-01-PLAN.md
+last_updated: "2026-04-02T17:45:32.887Z"
+last_activity: 2026-04-02
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** v3.1 Activity-Rate Classification
+**Current focus:** Phase 12 — Constants and Utilities
 
 ## Current Position
 
-Phase: 12 (Constants and Utilities) — next to plan
-Plan: —
-Status: Roadmap created, ready for planning
-Last activity: 2026-04-02 — v3.1 roadmap created (5 phases)
+Phase: 12 (Constants and Utilities) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-04-02
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -37,6 +37,7 @@ Progress: [░░░░░░░░░░] 0%
 ### Decisions
 
 See PROJECT.md Key Decisions table for full log.
+
 - [Phase 09-alert-suppression]: Keep _notification_cooldowns intact for backward compatibility; _alert_suppression is the new active suppression gate
 - [Phase 09-alert-suppression]: DEFAULT_ALERT_REPEAT_INTERVAL = 240 min (4 hours); clear-on-resolve prunes suppression entries when conditions disappear
 - [Phase 09-alert-suppression]: STORAGE_VERSION and ConfigFlow.VERSION both bumped to 6 simultaneously to keep storage and config entry versions aligned
@@ -50,6 +51,8 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 11-adaptive-inactivity]: Adaptive threshold clamps scalar between min=1.5 and max=10.0; fallback to plain multiplier x gap when CV=None (sparse slot)
 - [Phase 11-adaptive-inactivity]: adaptive_scalar stored in AlertResult.details for diagnostics without altering alert API
 - [Phase 11-adaptive-inactivity]: VERSION and STORAGE_VERSION both bumped to 7 in same task — consistent with Phase 9 pattern of keeping storage and config entry versions aligned
+- [Phase 12]: TIER_BOUNDARY_HIGH=24 events/day, TIER_BOUNDARY_LOW=4 events/day per research ARCHITECTURE.md
+- [Phase 12]: format_duration() placed in routine_model.py (logic, not constants) for shared use by acute_detector and coordinator
 
 ### Blockers/Concerns
 
@@ -67,6 +70,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-03-14T19:57:03.294Z
-Stopped at: Completed 11-adaptive-inactivity 11-02-PLAN.md
+Last session: 2026-04-02T17:45:32.881Z
+Stopped at: Completed 12-constants-and-utilities 12-01-PLAN.md
 Resume file: None

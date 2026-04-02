@@ -19,7 +19,7 @@ Requirements for Activity-Rate Classification milestone. Each maps to roadmap ph
 
 - [ ] **DET-01**: High-frequency entities use a higher effective multiplier AND an absolute minimum inactivity floor before alerting
 - [ ] **DET-02**: Alert explanations display minutes (not hours) when typical interval is under 1 hour
-- [ ] **DET-03**: A shared `format_duration()` utility replaces duplicated formatting logic in acute_detector and coordinator
+- [x] **DET-03**: A shared `format_duration()` utility replaces duplicated formatting logic in acute_detector and coordinator
 
 ### Config
 
@@ -62,7 +62,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLASS-05 | 13 | Pending |
 | DET-01 | 14 | Pending |
 | DET-02 | 14 | Pending |
-| DET-03 | 12 | Pending |
+| DET-03 | 12 | Complete |
 | CFG-01 | 16 | Pending |
 | CFG-02 | 16 | Pending |
 
