@@ -86,6 +86,10 @@ Plans:
 **Files:** `acute_detector.py`
 **Requirements:** DET-01, DET-02
 **Depends on:** Phase 12, Phase 13
+**Plans:** 1 plan
+
+Plans:
+- [ ] 14-01-PLAN.md — Tier-aware threshold (boost + floor) and formatted duration display
 
 ### Phase 15: Coordinator Integration
 
