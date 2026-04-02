@@ -1,5 +1,6 @@
 """Constants for the Behaviour Monitor integration."""
 
+from enum import Enum
 from typing import Final
 
 DOMAIN: Final = "behaviour_monitor"
@@ -152,4 +153,39 @@ CUSUM_PARAMS: Final = {
     "high": (0.25, 2.0),
     "medium": (0.5, 4.0),
     "low": (1.0, 6.0),
+}
+
+# ---------------------------------------------------------------------------
+# Activity-rate tier classification (v3.1)
+# ---------------------------------------------------------------------------
+
+
+class ActivityTier(Enum):
+    """Frequency tier for entity activity classification."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+# Tier boundary thresholds (events per day)
+# >= TIER_BOUNDARY_HIGH -> HIGH tier
+# <= TIER_BOUNDARY_LOW  -> LOW tier
+# between -> MEDIUM tier
+TIER_BOUNDARY_HIGH: Final = 24
+TIER_BOUNDARY_LOW: Final = 4
+
+# Absolute minimum inactivity floor per tier (seconds)
+# Prevents sub-minute alert thresholds on high-frequency entities
+TIER_FLOOR_SECONDS: Final = {
+    ActivityTier.HIGH: 3600,  # 1 hour — conservative floor for chatty sensors
+    ActivityTier.MEDIUM: 1800,  # 30 minutes
+    ActivityTier.LOW: 0,  # no floor — use multiplier arithmetic as-is
+}
+
+# Multiplier boost factor per tier (applied on top of user's inactivity_multiplier)
+TIER_BOOST_FACTOR: Final = {
+    ActivityTier.HIGH: 2.0,  # double the effective multiplier for chatty sensors
+    ActivityTier.MEDIUM: 1.0,  # no boost
+    ActivityTier.LOW: 1.0,  # no boost
 }

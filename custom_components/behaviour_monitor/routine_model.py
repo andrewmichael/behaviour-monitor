@@ -48,6 +48,22 @@ def is_binary_state(state_value: str) -> bool:
     return state_value.lower() in BINARY_STATES
 
 
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string.
+
+    Returns minutes only for sub-hour durations (e.g. "45m"),
+    hours and minutes for longer durations (e.g. "2h 15m").
+    No day rollover — 25 hours is "25h 0m", not "1d 1h 0m".
+    """
+    total_seconds = int(seconds)
+    total_minutes = total_seconds // 60
+    if total_minutes < 60:
+        return f"{total_minutes}m"
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours}h {minutes}m"
+
+
 # ---------------------------------------------------------------------------
 # ActivitySlot
 # ---------------------------------------------------------------------------
