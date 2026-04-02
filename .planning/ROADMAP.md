@@ -49,35 +49,51 @@
 
 **Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into frequency tiers and applying tier-appropriate detection parameters.
 
-- [ ] Phase 12: Constants and Utilities
-  - **Goal:** Define ActivityTier enum, tier boundary constants, floor/boost lookup dicts, and shared format_duration() utility
-  - **Files:** `const.py`, `routine_model.py`
-  - **Requirements:** DET-03
-  - **Depends on:** None
+- [ ] **Phase 12: Constants and Utilities** — DET-03
+- [ ] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05
+- [ ] **Phase 14: Tier-Aware Detection** — DET-01, DET-02
+- [ ] **Phase 15: Coordinator Integration** — CLASS-04
+- [ ] **Phase 16: Config UI and Migration** — CFG-01, CFG-02
 
-- [ ] Phase 13: Tier Classification
-  - **Goal:** Auto-classify entities into HIGH/MEDIUM/LOW frequency tiers from observed routine data, gated on learning confidence, reclassified at most once per day
-  - **Files:** `routine_model.py`
-  - **Requirements:** CLASS-01, CLASS-02, CLASS-03, CLASS-05
-  - **Depends on:** Phase 12
+### Phase 12: Constants and Utilities
 
-- [ ] Phase 14: Tier-Aware Detection
-  - **Goal:** Apply tier-specific multiplier boost and absolute minimum floor in check_inactivity(), fix sub-hour display formatting
-  - **Files:** `acute_detector.py`
-  - **Requirements:** DET-01, DET-02
-  - **Depends on:** Phase 12, Phase 13
+**Goal:** Define ActivityTier enum, tier boundary constants, floor/boost lookup dicts, and shared format_duration() utility.
 
-- [ ] Phase 15: Coordinator Integration
-  - **Goal:** Wire daily reclassification, tier override injection, tier as sensor attribute, and formatted durations into coordinator
-  - **Files:** `coordinator.py`, `sensor.py`
-  - **Requirements:** CLASS-04
-  - **Depends on:** Phase 13, Phase 14
+**Files:** `const.py`, `routine_model.py`
+**Requirements:** DET-03
+**Depends on:** None
 
-- [ ] Phase 16: Config UI and Migration
-  - **Goal:** Add global tier override setting in config UI, migrate config v7 to v8 preserving user-tuned multiplier values
-  - **Files:** `config_flow.py`, `__init__.py`, `const.py`
-  - **Requirements:** CFG-01, CFG-02
-  - **Depends on:** Phase 15
+### Phase 13: Tier Classification
+
+**Goal:** Auto-classify entities into HIGH/MEDIUM/LOW frequency tiers from observed routine data, gated on learning confidence, reclassified at most once per day.
+
+**Files:** `routine_model.py`
+**Requirements:** CLASS-01, CLASS-02, CLASS-03, CLASS-05
+**Depends on:** Phase 12
+
+### Phase 14: Tier-Aware Detection
+
+**Goal:** Apply tier-specific multiplier boost and absolute minimum floor in check_inactivity(), fix sub-hour display formatting.
+
+**Files:** `acute_detector.py`
+**Requirements:** DET-01, DET-02
+**Depends on:** Phase 12, Phase 13
+
+### Phase 15: Coordinator Integration
+
+**Goal:** Wire daily reclassification, tier override injection, tier as sensor attribute, and formatted durations into coordinator.
+
+**Files:** `coordinator.py`, `sensor.py`
+**Requirements:** CLASS-04
+**Depends on:** Phase 13, Phase 14
+
+### Phase 16: Config UI and Migration
+
+**Goal:** Add global tier override setting in config UI, migrate config v7 to v8 preserving user-tuned multiplier values.
+
+**Files:** `config_flow.py`, `__init__.py`, `const.py`
+**Requirements:** CFG-01, CFG-02
+**Depends on:** Phase 15
 
 ## Progress
 
