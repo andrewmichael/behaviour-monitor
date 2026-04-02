@@ -50,7 +50,7 @@
 **Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into frequency tiers and applying tier-appropriate detection parameters.
 
 - [x] **Phase 12: Constants and Utilities** — DET-03 (completed 2026-04-02)
-- [ ] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05
+- [x] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05 (completed 2026-04-02)
 - [ ] **Phase 14: Tier-Aware Detection** — DET-01, DET-02
 - [ ] **Phase 15: Coordinator Integration** — CLASS-04
 - [ ] **Phase 16: Config UI and Migration** — CFG-01, CFG-02
@@ -74,10 +74,10 @@ Plans:
 **Files:** `routine_model.py`
 **Requirements:** CLASS-01, CLASS-02, CLASS-03, CLASS-05
 **Depends on:** Phase 12
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 13-01-PLAN.md — classify_tier method, activity_tier property, and classification tests
+- [x] 13-01-PLAN.md — classify_tier method, activity_tier property, and classification tests
 
 ### Phase 14: Tier-Aware Detection
 
@@ -119,7 +119,7 @@ Plans:
 | 10. Drift Accuracy | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 12. Constants and Utilities | v3.1 | 1/1 | Complete    | 2026-04-02 |
-| 13. Tier Classification | v3.1 | 0/1 | Planned | — |
+| 13. Tier Classification | v3.1 | 1/1 | Complete   | 2026-04-02 |
 | 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
 | 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
 | 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |

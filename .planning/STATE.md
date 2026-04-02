@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: verifying
-stopped_at: Phase 13 context gathered
-last_updated: "2026-04-02T17:58:02.990Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-04-02T18:37:08.329Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 12 — Constants and Utilities
+**Current focus:** Phase 13 — Tier Classification
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
+Phase: 13 (Tier Classification) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-02
 
@@ -53,6 +53,8 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 11-adaptive-inactivity]: VERSION and STORAGE_VERSION both bumped to 7 in same task — consistent with Phase 9 pattern of keeping storage and config entry versions aligned
 - [Phase 12]: TIER_BOUNDARY_HIGH=24 events/day, TIER_BOUNDARY_LOW=4 events/day per research ARCHITECTURE.md
 - [Phase 12]: format_duration() placed in routine_model.py (logic, not constants) for shared use by acute_detector and coordinator
+- [Phase 13]: Tier classification state not serialized -- recomputed on startup via classify_tier() call
+- [Phase 13]: Median daily rate computed from all slots event_times deques grouped by calendar date
 
 ### Blockers/Concerns
 
@@ -70,6 +72,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-04-02T17:58:02.985Z
-Stopped at: Phase 13 context gathered
-Resume file: .planning/phases/13-tier-classification/13-CONTEXT.md
+Last session: 2026-04-02T18:37:08.325Z
+Stopped at: Completed 13-01-PLAN.md
+Resume file: None
