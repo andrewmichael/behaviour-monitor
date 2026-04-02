@@ -114,7 +114,7 @@ Plans:
 | 9. Alert Suppression | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 10. Drift Accuracy | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
-| 12. Constants and Utilities | v3.1 | 1/1 | Complete   | 2026-04-02 |
+| 12. Constants and Utilities | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 13. Tier Classification | v3.1 | 0/0 | Pending | — |
 | 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
 | 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
