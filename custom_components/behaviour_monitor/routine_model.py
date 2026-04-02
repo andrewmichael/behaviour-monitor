@@ -6,12 +6,17 @@ All datetime objects are passed as parameters; no HA utilities used here.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from math import sqrt
 from statistics import median
 from typing import Any
+
+from .const import ActivityTier, TIER_BOUNDARY_HIGH, TIER_BOUNDARY_LOW
+
+_LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -236,6 +241,14 @@ class EntityRoutine:
     history_window_days: int = DEFAULT_HISTORY_WINDOW_DAYS
     first_observation: str | None = None
 
+    # Tier classification state (not serialized — recomputed on startup)
+    _activity_tier: ActivityTier | None = field(
+        default=None, init=False, repr=False
+    )
+    _tier_classified_date: date | None = field(
+        default=None, init=False, repr=False
+    )
+
     # ------------------------------------------------------------------
     # Indexing
     # ------------------------------------------------------------------
@@ -335,6 +348,79 @@ class EntityRoutine:
 
         days_elapsed = (now - first_dt).total_seconds() / 86400.0
         return min(1.0, days_elapsed / self.history_window_days)
+
+    # ------------------------------------------------------------------
+    # Tier classification
+    # ------------------------------------------------------------------
+
+    @property
+    def activity_tier(self) -> ActivityTier | None:
+        """Return the current activity tier, or None if unclassified."""
+        return self._activity_tier
+
+    def _compute_median_daily_rate(self) -> float | None:
+        """Compute the median daily event rate across all slots.
+
+        Scans all slots' event_times deques, groups by calendar date,
+        and returns the median of the per-date event counts.
+        Returns None if no dates are found.
+        """
+        date_counts: dict[date, int] = {}
+        for slot in self.slots:
+            for ts_str in slot.event_times:
+                try:
+                    dt = datetime.fromisoformat(ts_str)
+                    d = dt.date()
+                    date_counts[d] = date_counts.get(d, 0) + 1
+                except (ValueError, TypeError):
+                    pass
+        if not date_counts:
+            return None
+        return float(median(list(date_counts.values())))
+
+    def classify_tier(self, now: datetime) -> None:
+        """Classify entity into an activity tier based on median daily event rate.
+
+        Gates on confidence >= 0.8. Recomputes at most once per calendar day.
+        Logs tier changes at DEBUG level.
+        """
+        # Confidence gate
+        if self.confidence(now) < 0.8:
+            self._activity_tier = None
+            return
+
+        # Once-per-day guard
+        if self._tier_classified_date == now.date():
+            return
+
+        # Compute median rate
+        median_rate = self._compute_median_daily_rate()
+        if median_rate is None:
+            self._activity_tier = None
+            self._tier_classified_date = now.date()
+            return
+
+        # Map rate to tier
+        if median_rate >= TIER_BOUNDARY_HIGH:
+            new_tier = ActivityTier.HIGH
+        elif median_rate <= TIER_BOUNDARY_LOW:
+            new_tier = ActivityTier.LOW
+        else:
+            new_tier = ActivityTier.MEDIUM
+
+        # Log tier changes (skip first classification)
+        old_tier = self._activity_tier
+        if old_tier is not None and old_tier != new_tier:
+            _LOGGER.debug(
+                "Tier reclassified for %s: %s -> %s (median_rate=%.1f)",
+                self.entity_id,
+                old_tier.value,
+                new_tier.value,
+                median_rate,
+            )
+
+        self._activity_tier = new_tier
+        self._tier_classified_date = now.date()
 
     # ------------------------------------------------------------------
     # Serialization

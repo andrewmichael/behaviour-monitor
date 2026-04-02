@@ -863,17 +863,23 @@ class TestTierClassification:
         """When tier changes from MEDIUM to HIGH, DEBUG log emitted."""
         import logging
 
-        er, now = _build_routine_with_rate(10)
+        # Build a routine classified as MEDIUM (10 events/day)
+        er, now = _build_routine_with_rate(10, num_days=3)
         er.classify_tier(now)
         assert er.activity_tier == ActivityTier.MEDIUM
 
-        # Now add more events to push into HIGH tier on next day
+        # Clear all existing event_times and repopulate with HIGH-rate data
+        # so the median shifts above TIER_BOUNDARY_HIGH
+        for slot in er.slots:
+            slot.event_times.clear()
         next_day = now + timedelta(days=1)
-        for i in range(30):
-            hour = i % 24
-            ts = next_day.replace(hour=hour, minute=0, second=0)
-            idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
-            er.slots[idx].record_binary(ts.isoformat())
+        for day_offset in range(5):
+            day_dt = next_day - timedelta(days=day_offset)
+            for i in range(30):
+                hour = i % 24
+                ts = day_dt.replace(hour=hour, minute=0, second=0)
+                idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+                er.slots[idx].record_binary(ts.isoformat())
 
         with caplog.at_level(
             logging.DEBUG,
