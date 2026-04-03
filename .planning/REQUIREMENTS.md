@@ -9,7 +9,7 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 
 ### Rehydration
 
-- [ ] **RHY-01**: Tier classification runs on first coordinator update cycle after startup, not just at day boundary
+- [x] **RHY-01**: Tier classification runs on first coordinator update cycle after startup, not just at day boundary
 
 ### Correlation Discovery
 
@@ -66,7 +66,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RHY-01 | Phase 17 | Pending |
+| RHY-01 | Phase 17 | Complete |
 | COR-01 | Phase 18 | Pending |
 | COR-02 | Phase 18 | Pending |
 | COR-03 | Phase 18 | Pending |
