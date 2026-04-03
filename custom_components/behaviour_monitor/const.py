@@ -56,7 +56,7 @@ DEFAULT_TRACK_ATTRIBUTES: Final = True
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 8
+STORAGE_VERSION: Final = 9
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
@@ -195,3 +195,21 @@ TIER_BOOST_FACTOR: Final = {
     ActivityTier.MEDIUM: 1.0,  # no boost
     ActivityTier.LOW: 1.0,  # no boost
 }
+
+# ---------------------------------------------------------------------------
+# Cross-entity correlation (v4.0)
+# ---------------------------------------------------------------------------
+
+# Config key for user-facing correlation time window
+CONF_CORRELATION_WINDOW: Final = "correlation_window"
+
+# Default correlation window in seconds (per D-03: 120s = 2 minutes)
+DEFAULT_CORRELATION_WINDOW: Final = 120
+
+# Internal correlation constants (not user-facing config)
+# Minimum co-occurrences before a pair is considered for correlation
+MIN_CO_OCCURRENCES: Final = 10
+
+# PMI threshold — pairs with PMI > this are considered correlated
+# PMI > 1.0 means 2x more likely than chance (medium-confidence, tunable)
+PMI_THRESHOLD: Final[float] = 1.0
