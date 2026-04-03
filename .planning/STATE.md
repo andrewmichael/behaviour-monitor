@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: verifying
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-04-03T10:21:25.469Z"
+stopped_at: Phase 16 context gathered
+last_updated: "2026-04-03T10:46:37.011Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
@@ -74,6 +74,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-04-03T10:19:01.527Z
-Stopped at: Completed 15-01-PLAN.md
-Resume file: None
+Last session: 2026-04-03T10:46:37.006Z
+Stopped at: Phase 16 context gathered
+Resume file: .planning/phases/16-config-ui-and-migration/16-CONTEXT.md
