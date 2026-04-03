@@ -1,5 +1,19 @@
 # Milestones
 
+## v3.1 Activity-Rate Classification (Shipped: 2026-04-03)
+
+**Phases completed:** 5 phases, 5 plans, 10 tasks
+
+**Key accomplishments:**
+
+- ActivityTier enum with HIGH/MEDIUM/LOW classification, tier boundary/floor/boost constants, and format_duration() utility for human-readable duration strings
+- EntityRoutine.classify_tier() with median daily rate mapping to HIGH/MEDIUM/LOW tiers, confidence gating, once-per-day guard, and DEBUG-level tier change logging
+- Tier-aware inactivity thresholds with HIGH/MEDIUM/LOW boost factors, absolute floors, and format_duration in alert explanations
+- Wired tier classification into coordinator: activity_tier in entity_status, daily reclassification on day change, and format_duration replacing inline h/m arithmetic
+- Activity tier override SelectSelector in config UI with v7->v8 migration and coordinator wiring
+
+---
+
 ## v3.0 Detection Accuracy (Shipped: 2026-03-14)
 
 **Phases completed:** 3 phases, 6 plans, 5 tasks
@@ -7,6 +21,7 @@
 **Git range:** `584782e` (feat(09-01)) → `7cf8b8a` (docs(phase-11))
 
 **Key accomplishments:**
+
 1. Fire-once-then-throttle alert suppression — `_alert_suppression` dict prevents same-condition spam, persisted to HA storage with clear-on-resolve
 2. Alert repeat interval configurable in HA options UI (30–1440 min, default 4 h) with seamless v5→v6 migration
 3. CUSUM drift baseline split by day-type (weekday vs weekend) — weekend anomalies no longer diluted by 5× more weekday history
@@ -20,6 +35,7 @@
 **Phases completed:** 3 phases, 6 plans, 0 tasks
 
 **Key accomplishments:**
+
 - (none recorded)
 
 ---
@@ -32,6 +48,7 @@
 **Git range:** `27791e6` (refactor(06-01)) → `51d6049` (docs(08-01))
 
 **Key accomplishments:**
+
 1. Removed deprecated ML sensor stubs (ml_status, cross_sensor_patterns, ml_training_remaining) and dead constants block from const.py
 2. Removed unused CONF_* constant definitions (CONF_SENSITIVITY, CONF_ENABLE_ML, CONF_RETRAIN_PERIOD, and others)
 3. Exposed learning period (days) and attribute tracking toggle as user-configurable options in the HA config UI
@@ -48,6 +65,7 @@
 **Git range:** `8dc94b2` (feat(03-01)) → `e118dcc` (docs(05-03))
 
 **Key accomplishments:**
+
 1. Built RoutineModel — pure-Python baseline engine with 168 hour×day slots, Welford statistics, and recorder bootstrap from HA history
 2. Built AcuteDetector — inactivity and unusual-time detection with sustained-evidence gating (3 consecutive cycles required)
 3. Built DriftDetector — bidirectional CUSUM change-point detection with configurable sensitivity tiers (high/medium/low)
@@ -64,6 +82,7 @@
 **Git range:** `d921f26` (feat(01-01)) → `bbd10b4` (docs(phase-2))
 
 **Key accomplishments:**
+
 1. Built notification suppression layer: severity gate, per-entity cooldown, cross-path dedup, and welfare debounce in coordinator
 2. Added sparse-bucket guard (MIN_BUCKET_OBSERVATIONS=3) eliminating infinite z-scores from zero-variance buckets
 3. Raised default sensitivity from 2.0σ to 2.5σ, reducing statistical false positive rate from ~4.5% to ~1.2%
@@ -72,4 +91,3 @@
 6. Tightened ML contamination values and raised cross-sensor co-occurrence threshold from 10 to 30
 
 ---
-

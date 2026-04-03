@@ -39,16 +39,15 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Recency-weighted drift baseline — exponential decay weights recent days more heavily — v3.0
 - ✓ Per-entity adaptive inactivity threshold — auto-learned from observed timing variance — v3.0
 
+- ✓ Auto-classify entities into HIGH/MEDIUM/LOW frequency tiers based on median daily event rate — v3.1
+- ✓ Tier-aware inactivity detection with multiplier boost AND absolute minimum floor for high-frequency entities — v3.1
+- ✓ Human-readable duration formatting (minutes for sub-hour, hours+minutes for longer) via shared format_duration() utility — v3.1
+- ✓ Activity tier exposed as sensor attribute on entity_status_summary — v3.1
+- ✓ Global tier override in config UI (Auto/High/Medium/Low) with config migration v7→v8 — v3.1
+
 ### Active
 
-**Current Milestone: v3.1 Activity-Rate Classification**
-
-**Goal:** Eliminate false-positive inactivity alerts on high-frequency entities by classifying entities into activity tiers with tier-appropriate detection logic.
-
-**Target features:**
-- Auto-classify entities into frequency tiers (high/medium/low) based on observed event rates, with user override in config UI
-- Separate inactivity detection for high-frequency entities: higher multiplier AND minimum absolute floor
-- Fix alert display formatting — show minutes instead of hours when typical interval < 1h
+*No active milestone. Ready for next milestone planning.*
 
 ### Out of Scope
 
@@ -62,17 +61,17 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v3.0 with ~9,892 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 403 tests passing.
+Shipped v3.1 with ~10,900 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 449 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v7.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v8.
 
 Architecture:
-- `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance computation
-- `acute_detector.py` — inactivity detection with CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
+- `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
+- `acute_detector.py` — tier-aware inactivity detection with boost factors and absolute floors; CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
 - `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
-- `coordinator.py` — DataUpdateCoordinator wiring all engines; fire-once-then-throttle alert suppression via `_alert_suppression` dict
-- `sensor.py` — 11 sensor entity descriptions
-- `config_flow.py` — v7 config with alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity; min>max cross-field validation
+- `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
+- `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
+- `config_flow.py` — v8 config with tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
 - `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7)
 - `translations/en.json` — user-friendly labels for all config fields
 
