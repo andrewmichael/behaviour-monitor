@@ -1084,3 +1084,93 @@ class TestAlertSuppression:
         }
         coord2 = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
         assert coord2._alert_repeat_interval == 120
+
+
+# ---------------------------------------------------------------------------
+# TestTierIntegration — tier wiring in coordinator
+# ---------------------------------------------------------------------------
+
+
+class TestTierIntegration:
+    """Tests for tier classification integration in coordinator."""
+
+    @pytest.fixture
+    def coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> BehaviourMonitorCoordinator:
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    def test_entity_status_includes_activity_tier(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """entity_status dicts include activity_tier with tier value when classified."""
+        from custom_components.behaviour_monitor.const import ActivityTier
+
+        now = datetime.now(timezone.utc)
+        # Set up a routine entity with a classified tier
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        r = coordinator._routine_model._entities["sensor.test1"]
+        r._activity_tier = ActivityTier.HIGH
+        coordinator._last_seen["sensor.test1"] = now
+
+        data = coordinator._build_sensor_data([], now)
+        statuses = {s["entity_id"]: s for s in data["entity_status"]}
+        assert statuses["sensor.test1"]["activity_tier"] == "high"
+
+    def test_entity_status_tier_none_when_unclassified(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """entity_status dicts include activity_tier as None when unclassified."""
+        now = datetime.now(timezone.utc)
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        r = coordinator._routine_model._entities["sensor.test1"]
+        r._activity_tier = None
+        coordinator._last_seen["sensor.test1"] = now
+
+        data = coordinator._build_sensor_data([], now)
+        statuses = {s["entity_id"]: s for s in data["entity_status"]}
+        assert statuses["sensor.test1"]["activity_tier"] is None
+
+    @pytest.mark.asyncio
+    async def test_day_change_triggers_reclassification(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """Day change block in _async_update_data calls classify_tier on all entity routines."""
+        now = datetime.now(timezone.utc)
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        r = coordinator._routine_model._entities["sensor.test1"]
+
+        # Set today_date to yesterday so day-change triggers
+        coordinator._today_date = (now - timedelta(days=1)).date()
+
+        with patch.object(r, "classify_tier") as mock_classify:
+            await coordinator._async_update_data()
+            mock_classify.assert_called_once()
+            # The argument should be a datetime
+            call_arg = mock_classify.call_args[0][0]
+            assert isinstance(call_arg, datetime)
+
+    def test_format_duration_used_for_time_since(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_build_sensor_data uses format_duration for time_since_formatted."""
+        now = datetime.now(timezone.utc)
+        # Set last_seen to 45 minutes ago
+        coordinator._last_seen["sensor.test1"] = now - timedelta(minutes=45)
+
+        data = coordinator._build_sensor_data([], now)
+        assert data["activity_context"]["time_since_formatted"] == "45m ago"
+
+    def test_format_duration_used_for_typical_interval(
+        self, coordinator: BehaviourMonitorCoordinator
+    ) -> None:
+        """_build_sensor_data uses format_duration for typical_interval_formatted."""
+        now = datetime.now(timezone.utc)
+        coordinator._last_seen["sensor.test1"] = now - timedelta(minutes=10)
+        # Set up a routine entity that returns expected_gap_seconds of 2700 (45 min)
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        r = coordinator._routine_model._entities["sensor.test1"]
+
+        with patch.object(r, "expected_gap_seconds", return_value=2700.0):
+            data = coordinator._build_sensor_data([], now)
+        assert data["activity_context"]["typical_interval_formatted"] == "45m"
