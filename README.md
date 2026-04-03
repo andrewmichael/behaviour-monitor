@@ -77,8 +77,11 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Inactivity multiplier | Alert when inactive for this multiple of learned typical interval (1.5-10.0×) | 3.0× |
 | Drift sensitivity | CUSUM change-point detection sensitivity (High/Medium/Low) | Medium |
 | Enable notifications | Send persistent notifications when anomalies are detected | Yes |
+| Alert repeat interval | Minimum minutes before re-alerting the same condition (30–1440) | 240 (4 hours) |
 | Notification cooldown | Minutes before re-alerting the same entity | 30 minutes |
 | Minimum notification severity | Minimum anomaly severity to trigger a notification | significant |
+| Min inactivity multiplier | Lower bound for adaptive inactivity scalar (1.0–5.0) | 1.5 |
+| Max inactivity multiplier | Upper bound for adaptive inactivity scalar (2.0–20.0) | 10.0 |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
 | Activity tier override | Override auto-classified frequency tier for all entities (Auto/High/Medium/Low) | Auto |
 | Track attributes | Also track attribute changes, not just state changes | Yes |
@@ -301,7 +304,10 @@ A global override is available in the config UI to force all entities to a speci
 
 Two types of acute alerts, both requiring **sustained evidence** (3 consecutive polling cycles) before firing:
 
-**Inactivity**: Fires when an entity has been silent for longer than a configurable multiplier of its learned typical interval. The threshold is adjusted by the entity's activity tier — high-frequency entities (like motion sensors) get a 2× multiplier boost and a 1-hour minimum floor to prevent false positives from brief pauses in otherwise constant activity.
+**Inactivity**: Fires when an entity has been silent for longer than a configurable multiplier of its learned typical interval. The threshold adapts in two ways:
+
+- **CV-adaptive scaling**: The inactivity multiplier is automatically adjusted based on each entity's observed timing variance (coefficient of variation). Regular entities with consistent intervals get a tighter threshold (floor: 1.5×), while erratic entities get a wider threshold (ceiling: 10×). Both bounds are configurable in the UI.
+- **Tier-aware boost and floor**: High-frequency entities (like motion sensors) get a 2× multiplier boost and a 1-hour minimum floor to prevent false positives from brief pauses in otherwise constant activity. See [Activity-Rate Classification](#activity-rate-classification) above.
 
 Alert explanations display durations in human-readable format: minutes for sub-hour intervals (e.g., "45m"), hours and minutes for longer periods (e.g., "2h 15m").
 
@@ -317,6 +323,8 @@ Severity is graded based on how far the inactivity exceeds the threshold:
 ### Drift Detection
 
 Uses **bidirectional CUSUM** (Cumulative Sum) to detect persistent shifts in daily activity rates. Unlike acute detection (which catches immediate events), drift detection identifies gradual changes over days or weeks.
+
+Drift baselines are **split by day type** (weekday vs weekend) so that weekend anomalies aren't diluted by 5× more weekday history. Baselines use **exponential decay weighting** (halves every ~14 days) so recent activity dominates over stale history.
 
 Examples:
 - "Daily activity from bedroom motion sensor has decreased persistently" (possible reduced mobility)
@@ -334,6 +342,7 @@ The `routine_reset` service clears the drift accumulator for an entity when a ro
 ### Suppression Logic
 
 All notifications pass through suppression filters:
+- **Alert suppression**: Fire-once-then-throttle — after an alert fires, the same condition is suppressed for a configurable repeat interval (default 4 hours). Suppression entries are automatically cleared when the condition resolves.
 - **Holiday mode**: Blocks all notifications
 - **Snooze**: Blocks all notifications for the snooze duration
 - **Per-entity cooldown**: Prevents re-alerting the same entity within the cooldown window
