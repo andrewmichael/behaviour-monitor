@@ -47,14 +47,21 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ### Active
 
-*No active milestone. Ready for next milestone planning.*
+**Current Milestone: v4.0 Cross-Entity Correlation**
+
+**Goal:** Add cross-entity routine correlation to detect when normally co-occurring entities diverge, plus fix startup tier rehydration gap.
+
+**Target features:**
+- Automatically discover entity groups that correlate (fire within a time window of each other)
+- Expose discovered correlation groups as sensor attributes for user visibility
+- Alert when learned correlations break (entity A fires without expected companion entity B)
+- Fix startup tier rehydration — classify tiers on first update cycle, not just at midnight
 
 ### Out of Scope
 
 - Daily digest or summary notifications — may revisit in future milestone
 - Offline mode — real-time monitoring is core value
 - Per-entity sensitivity tuning UI — future milestone
-- Cross-entity routine correlation — future milestone
 - Seasonal pattern adjustment — future milestone
 - Population-based norms — privacy concern; per-individual learning only
 - Deep learning models — complexity/dependency overhead; pure Python constraint
@@ -125,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-28 after v3.1 milestone started*
+*Last updated: 2026-04-03 after v4.0 milestone started*
