@@ -12,6 +12,7 @@ import voluptuous as vol
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
@@ -21,6 +22,7 @@ from .const import (
     CONF_TRACK_ATTRIBUTES,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_CORRELATION_WINDOW,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
@@ -157,6 +159,14 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=8)
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v8 — activity_tier_override added"
+        )
+
+    if config_entry.version < 9:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=9)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v9 — correlation_window added"
         )
 
     return True

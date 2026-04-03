@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS,
@@ -41,6 +42,7 @@ from .const import (
     CONF_TRACK_ATTRIBUTES,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
@@ -90,6 +92,7 @@ def _build_data_schema(
     max_inactivity_multiplier_default: float = DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
     activity_tier_override_default: str = DEFAULT_ACTIVITY_TIER_OVERRIDE,
+    correlation_window_default: int = DEFAULT_CORRELATION_WINDOW,
     enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
     notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
     alert_repeat_interval_default: int = DEFAULT_ALERT_REPEAT_INTERVAL,
@@ -194,6 +197,17 @@ def _build_data_schema(
             )
         ),
         vol.Required(
+            CONF_CORRELATION_WINDOW, default=correlation_window_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=30,
+                max=600,
+                step=10,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
+        vol.Required(
             CONF_ENABLE_NOTIFICATIONS, default=enable_notifications_default
         ): BooleanSelector(),
         vol.Optional(
@@ -262,7 +276,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 8
+    VERSION = 9
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -398,6 +412,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_activity_tier_override = self._config_entry.data.get(
             CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE
         )
+        current_correlation_window = self._config_entry.data.get(
+            CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -407,6 +424,7 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             max_inactivity_multiplier_default=current_max_inactivity_multiplier,
             drift_sensitivity_default=current_drift_sensitivity,
             activity_tier_override_default=current_activity_tier_override,
+            correlation_window_default=current_correlation_window,
             enable_notifications_default=current_notifications,
             notification_cooldown_default=current_cooldown,
             alert_repeat_interval_default=current_alert_repeat_interval,

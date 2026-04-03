@@ -13,6 +13,7 @@ from custom_components.behaviour_monitor.config_flow import (
 from custom_components.behaviour_monitor.const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS,
@@ -26,6 +27,7 @@ from custom_components.behaviour_monitor.const import (
     CONF_TRACK_ATTRIBUTES,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
@@ -164,9 +166,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_8(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 8 after v3.1 activity tier override config flow additions."""
-        assert config_flow.VERSION == 8
+    async def test_version_is_9(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 9 after v4.0 correlation window config flow additions."""
+        assert config_flow.VERSION == 9
 
     @pytest.mark.asyncio
     async def test_schema_includes_activity_tier_override(self) -> None:
@@ -177,6 +179,17 @@ class TestBehaviourMonitorConfigFlow:
         schema_keys = [str(k) for k in schema.keys()]
         assert any(CONF_ACTIVITY_TIER_OVERRIDE in k for k in schema_keys), (
             f"activity_tier_override missing from schema keys: {schema_keys}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_schema_includes_correlation_window(self) -> None:
+        """Test that schema built with no args includes correlation_window key."""
+        from custom_components.behaviour_monitor.config_flow import _build_data_schema
+
+        schema = _build_data_schema()
+        schema_keys = [str(k) for k in schema.keys()]
+        assert any(CONF_CORRELATION_WINDOW in k for k in schema_keys), (
+            f"correlation_window missing from schema keys: {schema_keys}"
         )
 
     @pytest.mark.asyncio
@@ -750,3 +763,47 @@ class TestBehaviourMonitorOptionsFlow:
         call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
         updated_data = call_kwargs[1]["data"]
         assert updated_data[CONF_ACTIVITY_TIER_OVERRIDE] == "low"
+
+    @pytest.mark.asyncio
+    async def test_options_flow_prefills_correlation_window(self) -> None:
+        """Test options flow prefills correlation_window from entry.data."""
+        config_entry = MagicMock()
+        config_entry.data = {
+            "monitored_entities": ["sensor.test"],
+            CONF_CORRELATION_WINDOW: 300,
+        }
+        flow = BehaviourMonitorOptionsFlow(config_entry)
+        flow.hass = MagicMock()
+
+        result = await flow.async_step_init(user_input=None)
+
+        assert result["type"] == "form"
+        schema = result["data_schema"]
+        schema_keys = [str(k) for k in schema.keys()]
+        assert any(CONF_CORRELATION_WINDOW in k for k in schema_keys), (
+            f"correlation_window missing from options schema: {schema_keys}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_options_flow_correlation_window_round_trips(
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+    ) -> None:
+        """Test correlation_window round-trips through options flow into entry data."""
+        user_input = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
+            CONF_HISTORY_WINDOW_DAYS: 28,
+            CONF_INACTIVITY_MULTIPLIER: 3.0,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: True,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+            CONF_MIN_NOTIFICATION_SEVERITY: SEVERITY_SIGNIFICANT,
+            CONF_CORRELATION_WINDOW: 180,
+        }
+
+        result = await options_flow.async_step_init(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        options_flow.hass.config_entries.async_update_entry.assert_called_once()
+        call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
+        updated_data = call_kwargs[1]["data"]
+        assert updated_data[CONF_CORRELATION_WINDOW] == 180
