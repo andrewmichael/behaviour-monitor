@@ -98,6 +98,10 @@ Plans:
 **Files:** `coordinator.py`, `sensor.py`
 **Requirements:** CLASS-04
 **Depends on:** Phase 13, Phase 14
+**Plans:** 1 plan
+
+Plans:
+- [ ] 15-01-PLAN.md — Wire tier reclassification, entity_status tier field, and format_duration into coordinator
 
 ### Phase 16: Config UI and Migration
 
@@ -125,5 +129,5 @@ Plans:
 | 12. Constants and Utilities | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 13. Tier Classification | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete    | 2026-04-03 |
-| 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
+| 15. Coordinator Integration | v3.1 | 0/1 | Planning | — |
 | 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |
