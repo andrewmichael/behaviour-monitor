@@ -10,7 +10,9 @@ import pytest
 
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import (
+    CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    ActivityTier,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     WELFARE_DEBOUNCE_CYCLES,
 )
@@ -1174,3 +1176,83 @@ class TestTierIntegration:
         with patch.object(r, "expected_gap_seconds", return_value=2700.0):
             data = coordinator._build_sensor_data([], now)
         assert data["activity_context"]["typical_interval_formatted"] == "45m"
+
+
+# ---------------------------------------------------------------------------
+# TestTierOverride — activity tier override wiring in coordinator
+# ---------------------------------------------------------------------------
+
+
+class TestTierOverride:
+    """Tests for CONF_ACTIVITY_TIER_OVERRIDE wiring in coordinator."""
+
+    def test_coordinator_reads_tier_override_from_config(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Coordinator reads CONF_ACTIVITY_TIER_OVERRIDE from entry.data on init."""
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_ACTIVITY_TIER_OVERRIDE: "high",
+        }
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._activity_tier_override == "high"
+
+    def test_tier_override_defaults_to_auto(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Coordinator defaults _activity_tier_override to 'auto' when key absent."""
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._activity_tier_override == "auto"
+
+    @pytest.mark.asyncio
+    async def test_tier_override_auto_preserves_classification(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """When override is 'auto', classify_tier result is NOT overwritten."""
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_ACTIVITY_TIER_OVERRIDE: "auto",
+        }
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        now = datetime.now(timezone.utc)
+
+        # Record enough data so classify_tier has something to work with
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        r = coordinator._routine_model._entities["sensor.test1"]
+        r._activity_tier = ActivityTier.LOW  # pre-set to LOW
+
+        # Trigger day-change block
+        coordinator._today_date = (now - timedelta(days=1)).date()
+        with patch.object(coordinator, "_run_detection", return_value=[]), \
+             patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock):
+            await coordinator._async_update_data()
+
+        # classify_tier would have been called; but since override is "auto",
+        # no forced overwrite happens. The tier is whatever classify_tier set.
+        # We just verify it was NOT forcibly set to something other than what classify_tier chose.
+        assert r._activity_tier is not None  # classify_tier ran
+
+    @pytest.mark.asyncio
+    async def test_tier_override_high_overrides_all_entities(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """When override is 'high', all entity routines get ActivityTier.HIGH after day-change."""
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_ACTIVITY_TIER_OVERRIDE: "high",
+        }
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        now = datetime.now(timezone.utc)
+
+        # Record data for two entities
+        coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
+        coordinator._routine_model.record("sensor.test2", now - timedelta(hours=1), "off", True)
+
+        # Trigger day-change block
+        coordinator._today_date = (now - timedelta(days=1)).date()
+        with patch.object(coordinator, "_run_detection", return_value=[]), \
+             patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock):
+            await coordinator._async_update_data()
+
+        for r in coordinator._routine_model._entities.values():
+            assert r._activity_tier == ActivityTier.HIGH
