@@ -389,15 +389,14 @@ class EntityRoutine:
             self._activity_tier = None
             return
 
-        # Once-per-day guard
-        if self._tier_classified_date == now.date():
+        # Once-per-day guard (allow retry when tier is still None)
+        if self._tier_classified_date == now.date() and self._activity_tier is not None:
             return
 
         # Compute median rate
         median_rate = self._compute_median_daily_rate()
         if median_rate is None:
             self._activity_tier = None
-            self._tier_classified_date = now.date()
             return
 
         # Map rate to tier
