@@ -919,3 +919,67 @@ class TestTierClassification:
             er.record(ts, "21.5")
         er.classify_tier(now)
         assert er.activity_tier is None
+
+    # ------------------------------------------------------------------
+    # Rehydration retry tests
+    # ------------------------------------------------------------------
+
+    def test_rehydration_retry_low_confidence(self) -> None:
+        """Low confidence -> _tier_classified_date stays None, retry succeeds same day."""
+        er = EntityRoutine(entity_id="sensor.retry_conf", is_binary=True)
+        now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        # Set first_observation to only 10 days ago (confidence ~0.36)
+        er.first_observation = (now - timedelta(days=10)).isoformat()
+
+        # Add events so median rate would classify if confidence were sufficient
+        for day_offset in range(5):
+            day_dt = now - timedelta(days=day_offset + 1)
+            for i in range(30):
+                hour = i % 24
+                ts = day_dt.replace(hour=hour, minute=0, second=0)
+                idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+                er.slots[idx].record_binary(ts.isoformat())
+
+        er.classify_tier(now)
+        assert er.activity_tier is None
+        # Key assertion: _tier_classified_date must be None so retry is possible
+        assert er._tier_classified_date is None
+
+        # Now boost confidence by moving first_observation far enough back
+        er.first_observation = (now - timedelta(days=35)).isoformat()
+        er.classify_tier(now)  # Same calendar day — should succeed now
+        assert er.activity_tier == ActivityTier.HIGH
+
+    def test_rehydration_retry_no_median_data(self) -> None:
+        """Sufficient confidence but no event data -> retries same day when data added."""
+        now = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        er = EntityRoutine(entity_id="sensor.retry_median", is_binary=True)
+        er.first_observation = (now - timedelta(days=35)).isoformat()
+        # No event_times at all — _compute_median_daily_rate returns None
+
+        er.classify_tier(now)
+        assert er.activity_tier is None
+        # Key assertion: _tier_classified_date must be None so retry is possible
+        assert er._tier_classified_date is None
+
+        # Now add event data and retry same day
+        for day_offset in range(5):
+            day_dt = now - timedelta(days=day_offset + 1)
+            for i in range(10):
+                hour = i % 24
+                ts = day_dt.replace(hour=hour, minute=0, second=0)
+                idx = er.slot_index(hour=ts.hour, dow=ts.weekday())
+                er.slots[idx].record_binary(ts.isoformat())
+
+        er.classify_tier(now)  # Same calendar day — should succeed now
+        assert er.activity_tier == ActivityTier.MEDIUM
+
+    def test_once_per_day_guard_allows_retry_when_tier_none(self) -> None:
+        """Once-per-day guard should NOT block when _activity_tier is None."""
+        er, now = _build_routine_with_rate(30)
+        # Force the scenario: date is set but tier is None (simulating failed prior attempt)
+        er._tier_classified_date = now.date()
+        er._activity_tier = None
+
+        er.classify_tier(now)  # Should NOT be blocked by guard
+        assert er.activity_tier == ActivityTier.HIGH
