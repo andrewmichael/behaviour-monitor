@@ -12,7 +12,7 @@ Requirements for Activity-Rate Classification milestone. Each maps to roadmap ph
 - [x] **CLASS-01**: System auto-classifies each entity into HIGH/MEDIUM/LOW frequency tier based on median daily event rate from observed routine data
 - [x] **CLASS-02**: Classification is gated on learning confidence — entities without sufficient data use conservative defaults
 - [x] **CLASS-03**: Tier is reclassified at most once per day to prevent flapping
-- [ ] **CLASS-04**: Computed tier is exposed as an attribute on the entity status summary sensor
+- [x] **CLASS-04**: Computed tier is exposed as an attribute on the entity status summary sensor
 - [x] **CLASS-05**: Tier changes are logged at debug level for troubleshooting
 
 ### Detection
@@ -58,7 +58,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLASS-01 | 13 | Complete |
 | CLASS-02 | 13 | Complete |
 | CLASS-03 | 13 | Complete |
-| CLASS-04 | 15 | Pending |
+| CLASS-04 | 15 | Complete |
 | CLASS-05 | 13 | Complete |
 | DET-01 | 14 | Complete |
 | DET-02 | 14 | Complete |

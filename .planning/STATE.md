@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: verifying
-stopped_at: Phase 15 context gathered
-last_updated: "2026-04-03T10:09:26.458Z"
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-04-03T10:19:01.530Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 14 — Tier-Aware Detection
+**Current focus:** Phase 15 — Coordinator Integration
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
+Phase: 15 (Coordinator Integration) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-03
 
@@ -56,6 +56,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 13]: Tier classification state not serialized -- recomputed on startup via classify_tier() call
 - [Phase 13]: Median daily rate computed from all slots event_times deques grouped by calendar date
 - [Phase 14]: Tier variable set unconditionally before conditional block for AlertResult details availability
+- [Phase 15-coordinator-integration]: Reclassification runs in day-change block (not every update cycle) -- consistent with classify_tier once-per-day guard
 
 ### Blockers/Concerns
 
@@ -73,6 +74,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-04-03T10:09:26.447Z
-Stopped at: Phase 15 context gathered
-Resume file: .planning/phases/15-coordinator-integration/15-CONTEXT.md
+Last session: 2026-04-03T10:19:01.527Z
+Stopped at: Completed 15-01-PLAN.md
+Resume file: None
