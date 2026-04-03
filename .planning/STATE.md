@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Cross-Entity Correlation
 status: planning
-stopped_at: "v4.0 roadmap created, ready to plan Phase 17"
-last_updated: "2026-04-03T17:00:00.000Z"
+stopped_at: Phase 17 context gathered
+last_updated: "2026-04-03T20:47:10.991Z"
 last_activity: 2026-04-03 — v4.0 roadmap created
 progress:
   total_phases: 4
@@ -59,6 +59,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-03
-Stopped at: v4.0 roadmap created, ready to plan Phase 17
-Resume file: None
+Last session: 2026-04-03T20:47:10.983Z
+Stopped at: Phase 17 context gathered
+Resume file: .planning/phases/17-foundation-and-rehydration/17-CONTEXT.md
