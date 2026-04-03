@@ -66,24 +66,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RHY-01 | — | Pending |
-| COR-01 | — | Pending |
-| COR-02 | — | Pending |
-| COR-03 | — | Pending |
-| COR-04 | — | Pending |
-| COR-05 | — | Pending |
-| COR-06 | — | Pending |
-| COR-07 | — | Pending |
-| CFG-01 | — | Pending |
-| CFG-02 | — | Pending |
-| COR-08 | — | Pending |
-| COR-09 | — | Pending |
+| RHY-01 | Phase 17 | Pending |
+| COR-01 | Phase 18 | Pending |
+| COR-02 | Phase 18 | Pending |
+| COR-03 | Phase 18 | Pending |
+| COR-04 | Phase 18 | Pending |
+| COR-05 | Phase 19 | Pending |
+| COR-06 | Phase 19 | Pending |
+| COR-07 | Phase 19 | Pending |
+| CFG-01 | Phase 17 | Pending |
+| CFG-02 | Phase 17 | Pending |
+| COR-08 | Phase 20 | Pending |
+| COR-09 | Phase 20 | Pending |
 
 **Coverage:**
 - v4.0 requirements: 12 total
-- Mapped to phases: 0
-- Unmapped: 12
+- Mapped to phases: 12
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-03 after initial definition*
+*Last updated: 2026-04-03 after roadmap creation*

@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Cross-Entity Correlation
 status: planning
-stopped_at: ""
-last_updated: "2026-04-03T16:00:00.000Z"
-last_activity: 2026-04-03 — Milestone v4.0 started
+stopped_at: "v4.0 roadmap created, ready to plan Phase 17"
+last_updated: "2026-04-03T17:00:00.000Z"
+last_activity: 2026-04-03 — v4.0 roadmap created
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** v4.0 Cross-Entity Correlation
+**Current focus:** Phase 17 - Foundation and Rehydration
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-03 — Milestone v4.0 started
+Phase: 17 of 20 (Foundation and Rehydration)
+Plan: 0 of 0 in current phase
+Status: Ready to plan
+Last activity: 2026-04-03 — v4.0 roadmap created
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
 
 ## Accumulated Context
 
@@ -38,25 +38,10 @@ Progress: [░░░░░░░░░░] 0%
 
 See PROJECT.md Key Decisions table for full log.
 
-- [Phase 09-alert-suppression]: Keep _notification_cooldowns intact for backward compatibility; _alert_suppression is the new active suppression gate
-- [Phase 09-alert-suppression]: DEFAULT_ALERT_REPEAT_INTERVAL = 240 min (4 hours); clear-on-resolve prunes suppression entries when conditions disappear
-- [Phase 09-alert-suppression]: STORAGE_VERSION and ConfigFlow.VERSION both bumped to 6 simultaneously to keep storage and config entry versions aligned
-- [Phase 09-alert-suppression]: alert_repeat_interval placed after notification_cooldown in schema to group notification-related fields
-- [Phase 10-drift-accuracy]: Keep _compute_baseline_rates intact for fallback path in DriftDetector
-- [Phase 10-drift-accuracy]: decay_factor=0.95 for CUSUM baseline: halves weight every ~14 days
-- [Phase 10-drift-accuracy]: _compute_baseline_rates_for_day_type returns dict[date,int] to preserve age for decay weighting
-- [Phase 10-drift-accuracy]: Fresh routine per simulated day in recency weighting test prevents baseline decay over simulation iterations
-- [Phase 10-drift-accuracy]: old_start_offset=15 gap in _build_recency_routine ensures old/recent history windows never overlap on a calendar date
-- [Phase 11-adaptive-inactivity]: CV computed at query time from event_times deque — no serialization overhead, always fresh
-- [Phase 11-adaptive-inactivity]: Adaptive threshold clamps scalar between min=1.5 and max=10.0; fallback to plain multiplier x gap when CV=None (sparse slot)
-- [Phase 11-adaptive-inactivity]: adaptive_scalar stored in AlertResult.details for diagnostics without altering alert API
-- [Phase 11-adaptive-inactivity]: VERSION and STORAGE_VERSION both bumped to 7 in same task — consistent with Phase 9 pattern of keeping storage and config entry versions aligned
-- [Phase 12]: TIER_BOUNDARY_HIGH=24 events/day, TIER_BOUNDARY_LOW=4 events/day per research ARCHITECTURE.md
-- [Phase 12]: format_duration() placed in routine_model.py (logic, not constants) for shared use by acute_detector and coordinator
-- [Phase 13]: Tier classification state not serialized -- recomputed on startup via classify_tier() call
-- [Phase 13]: Median daily rate computed from all slots event_times deques grouped by calendar date
-- [Phase 14]: Tier variable set unconditionally before conditional block for AlertResult details availability
-- [Phase 15-coordinator-integration]: Reclassification runs in day-change block (not every update cycle) -- consistent with classify_tier once-per-day guard
+- [v4.0-roadmap]: PMI-based correlation with daily batch recomputation (follows classify_tier scheduling pattern)
+- [v4.0-roadmap]: CORRELATION_BREAK alerts should NOT contribute to welfare status escalation (LOW severity only)
+- [v4.0-roadmap]: Startup tier rehydration fix uses _tiers_initialized flag pattern
+- [v4.0-roadmap]: PMI threshold constants defined as named constants in const.py for easy tuning (medium-confidence values)
 
 ### Blockers/Concerns
 
@@ -64,7 +49,7 @@ None.
 
 ### Known Tech Debt
 
-None from prior milestones.
+- Phase 10 fallback path derives baseline data twice (informational, not a defect)
 
 ### Quick Tasks Completed
 
@@ -74,6 +59,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-04-03T10:46:37.006Z
-Stopped at: Phase 16 context gathered
-Resume file: .planning/phases/16-config-ui-and-migration/16-CONTEXT.md
+Last session: 2026-04-03
+Stopped at: v4.0 roadmap created, ready to plan Phase 17
+Resume file: None

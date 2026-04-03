@@ -7,6 +7,7 @@
 - ✅ **v2.9 Housekeeping & Config** — Phases 6-8 (shipped 2026-03-14)
 - ✅ **v3.0 Detection Accuracy** — Phases 9-11 (shipped 2026-03-14)
 - ✅ **v3.1 Activity-Rate Classification** — Phases 12-16 (shipped 2026-04-03)
+- 🚧 **v4.0 Cross-Entity Correlation** — Phases 17-20 (in progress)
 
 ## Phases
 
@@ -56,6 +57,57 @@
 
 </details>
 
+### 🚧 v4.0 Cross-Entity Correlation (In Progress)
+
+**Milestone Goal:** Add cross-entity routine correlation to detect when normally co-occurring entities diverge, plus fix startup tier rehydration gap.
+
+- [ ] **Phase 17: Foundation and Rehydration** - Constants, config migration v8->v9, config UI for correlation window, and startup tier rehydration fix
+- [ ] **Phase 18: Correlation Discovery** - CorrelationDetector with PMI-based discovery, sensor attribute exposure, and persistence
+- [ ] **Phase 19: Break Detection and Alerting** - Alert on broken correlations with sustained evidence and group-level deduplication
+- [ ] **Phase 20: Correlation Lifecycle** - Stale pair decay and cleanup on entity removal
+
+## Phase Details
+
+### Phase 17: Foundation and Rehydration
+**Goal**: Tier classification works correctly from first startup cycle, and all constants, config keys, and migration infrastructure for correlation are in place
+**Depends on**: Phase 16
+**Requirements**: RHY-01, CFG-01, CFG-02
+**Success Criteria** (what must be TRUE):
+  1. After a restart, entity tiers are classified on the first coordinator update cycle (not deferred to midnight)
+  2. The HA config UI shows a correlation time window option that the user can adjust
+  3. Existing installs upgrading from config v8 to v9 preserve all current settings and receive correlation defaults automatically
+**Plans**: TBD
+
+### Phase 18: Correlation Discovery
+**Goal**: The system automatically discovers which entities co-occur and exposes those relationships to the user
+**Depends on**: Phase 17
+**Requirements**: COR-01, COR-02, COR-03, COR-04
+**Success Criteria** (what must be TRUE):
+  1. After sufficient observation, entity pairs that regularly fire within the configured time window appear as discovered correlation groups
+  2. Pairs with fewer than the minimum co-occurrence count are not promoted to learned correlations (no premature discoveries)
+  3. The entity_status_summary sensor includes a cross_sensor_patterns attribute listing discovered correlation groups with their co-occurrence rates
+  4. Correlation state survives a Home Assistant restart (persisted to storage, restored on startup)
+**Plans**: TBD
+
+### Phase 19: Break Detection and Alerting
+**Goal**: Users are alerted when learned correlations break, with noise suppression that prevents false or redundant alerts
+**Depends on**: Phase 18
+**Requirements**: COR-05, COR-06, COR-07
+**Success Criteria** (what must be TRUE):
+  1. When entity A fires without its expected companion entity B within the correlation window, a correlation break alert is generated
+  2. Break alerts only fire after multiple consecutive missed co-occurrences (sustained evidence gating), not on a single miss
+  3. A multi-entity correlation group produces one alert per broken group, not one alert per missing pair
+**Plans**: TBD
+
+### Phase 20: Correlation Lifecycle
+**Goal**: Correlation state stays clean over time without manual intervention
+**Depends on**: Phase 18
+**Requirements**: COR-08, COR-09
+**Success Criteria** (what must be TRUE):
+  1. Correlation pairs that stop co-occurring gradually decay and are eventually removed from the learned set
+  2. When a monitored entity is removed from the integration, all correlation pairs involving that entity are cleaned up
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -76,3 +128,7 @@
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
+| 17. Foundation and Rehydration | v4.0 | 0/0 | Not started | - |
+| 18. Correlation Discovery | v4.0 | 0/0 | Not started | - |
+| 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
+| 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
