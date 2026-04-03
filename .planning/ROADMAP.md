@@ -51,7 +51,7 @@
 
 - [x] **Phase 12: Constants and Utilities** — DET-03 (completed 2026-04-02)
 - [x] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05 (completed 2026-04-02)
-- [ ] **Phase 14: Tier-Aware Detection** — DET-01, DET-02
+- [x] **Phase 14: Tier-Aware Detection** — DET-01, DET-02 (completed 2026-04-03)
 - [ ] **Phase 15: Coordinator Integration** — CLASS-04
 - [ ] **Phase 16: Config UI and Migration** — CFG-01, CFG-02
 
@@ -86,10 +86,10 @@ Plans:
 **Files:** `acute_detector.py`
 **Requirements:** DET-01, DET-02
 **Depends on:** Phase 12, Phase 13
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 14-01-PLAN.md — Tier-aware threshold (boost + floor) and formatted duration display
+- [x] 14-01-PLAN.md — Tier-aware threshold (boost + floor) and formatted duration display
 
 ### Phase 15: Coordinator Integration
 
@@ -124,6 +124,6 @@ Plans:
 | 11. Adaptive Inactivity | v3.0 | 2/2 | Complete | 2026-03-14 |
 | 12. Constants and Utilities | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 13. Tier Classification | v3.1 | 1/1 | Complete    | 2026-04-02 |
-| 14. Tier-Aware Detection | v3.1 | 0/0 | Pending | — |
+| 14. Tier-Aware Detection | v3.1 | 1/1 | Complete   | 2026-04-03 |
 | 15. Coordinator Integration | v3.1 | 0/0 | Pending | — |
 | 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |

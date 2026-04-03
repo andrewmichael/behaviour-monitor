@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: verifying
-stopped_at: Phase 14 context gathered
-last_updated: "2026-04-02T18:46:22.719Z"
-last_activity: 2026-04-02
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-04-03T08:41:15.031Z"
+last_activity: 2026-04-03
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 13 — Tier Classification
+**Current focus:** Phase 14 — Tier-Aware Detection
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
+Phase: 14 (Tier-Aware Detection) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
-Last activity: 2026-04-02
+Last activity: 2026-04-03
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 12]: format_duration() placed in routine_model.py (logic, not constants) for shared use by acute_detector and coordinator
 - [Phase 13]: Tier classification state not serialized -- recomputed on startup via classify_tier() call
 - [Phase 13]: Median daily rate computed from all slots event_times deques grouped by calendar date
+- [Phase 14]: Tier variable set unconditionally before conditional block for AlertResult details availability
 
 ### Blockers/Concerns
 
@@ -72,6 +73,6 @@ None from prior milestones.
 
 ## Session Continuity
 
-Last session: 2026-04-02T18:46:22.715Z
-Stopped at: Phase 14 context gathered
-Resume file: .planning/phases/14-tier-aware-detection/14-CONTEXT.md
+Last session: 2026-04-03T08:41:15.023Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: None
