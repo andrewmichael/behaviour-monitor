@@ -27,12 +27,14 @@ def make_routine(
     confidence: float = 0.8,
     slot_is_sufficient: bool = True,
     interval_cv: float | None = None,
+    activity_tier=None,
 ) -> MagicMock:
     """Return a mock EntityRoutine with configurable properties."""
     routine = MagicMock()
     routine.expected_gap_seconds.return_value = expected_gap
     routine.confidence.return_value = confidence
     routine.interval_cv.return_value = interval_cv
+    routine.activity_tier = activity_tier
 
     # Build a mock slot whose is_sufficient matches the parameter
     slot = MagicMock()
@@ -699,3 +701,200 @@ class TestCompareRegularVsErratic:
         result = detector.check_inactivity("sensor.sparse", routine, now, last_seen)
         assert result is not None
         assert result.details["adaptive_scalar"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tier-aware threshold (DET-01)
+# ---------------------------------------------------------------------------
+
+
+class TestTierAwareThreshold:
+    """Tier-aware inactivity threshold: boost factor and absolute floor per tier."""
+
+    def test_high_tier_floor_wins_over_computed_threshold(self) -> None:
+        """HIGH tier, expected_gap=120s. Computed=3.0*2.0*1.5*120=1080. Floor=3600. Final=3600."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from custom_components.behaviour_monitor.const import ActivityTier
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=120.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=ActivityTier.HIGH,
+        )
+        now = make_now()
+
+        # Elapsed=2000s < 3600 floor -> no alert
+        last_seen = now - timedelta(seconds=2000)
+        result = detector.check_inactivity("sensor.motion", routine, now, last_seen)
+        assert result is None
+
+        # Elapsed=5000s > 3600 floor -> alert fires
+        last_seen = now - timedelta(seconds=5000)
+        result = detector.check_inactivity("sensor.motion", routine, now, last_seen)
+        assert result is not None
+
+    def test_high_tier_boost_wins_over_floor(self) -> None:
+        """HIGH tier, expected_gap=3600s. Computed=3.0*2.0*1.5*3600=32400. Floor=3600. Final=32400."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from custom_components.behaviour_monitor.const import ActivityTier
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=3600.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=ActivityTier.HIGH,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=40000)  # > 32400
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(32400.0)
+
+    def test_medium_tier_no_boost(self) -> None:
+        """MEDIUM tier, expected_gap=3600s. Computed=3.0*1.0*1.5*3600=16200. Floor=1800. Final=16200."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from custom_components.behaviour_monitor.const import ActivityTier
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=3600.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=ActivityTier.MEDIUM,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=20000)  # > 16200
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(16200.0)
+
+    def test_low_tier_no_change(self) -> None:
+        """LOW tier, expected_gap=3600s. Computed=3.0*1.0*1.5*3600=16200. Floor=0. Final=16200."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from custom_components.behaviour_monitor.const import ActivityTier
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=3600.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=ActivityTier.LOW,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=20000)  # > 16200
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(16200.0)
+
+    def test_unclassified_tier_skips_tier_logic(self) -> None:
+        """tier=None, expected_gap=3600s, CV=0.0. Threshold=3.0*1.5*3600=16200. No boost. Per D-03."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=3600.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=None,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=20000)  # > 16200
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert result.details["threshold_seconds"] == pytest.approx(16200.0)
+
+
+# ---------------------------------------------------------------------------
+# Tier-aware details keys
+# ---------------------------------------------------------------------------
+
+
+class TestTierAwareDetails:
+    """AlertResult.details contains activity_tier, elapsed_formatted, typical_formatted."""
+
+    def _fire_alert(self, *, activity_tier=None, expected_gap: float = 3600.0):
+        """Fire an inactivity alert and return the result."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=expected_gap, confidence=0.9, interval_cv=0.0,
+            activity_tier=activity_tier,
+        )
+        now = make_now()
+        # Make elapsed large enough to exceed any threshold
+        last_seen = now - timedelta(seconds=50000)
+        return detector.check_inactivity("sensor.test", routine, now, last_seen)
+
+    def test_details_contains_activity_tier_high(self) -> None:
+        from custom_components.behaviour_monitor.const import ActivityTier
+
+        result = self._fire_alert(activity_tier=ActivityTier.HIGH)
+        assert result is not None
+        assert result.details["activity_tier"] == "high"
+
+    def test_details_contains_activity_tier_none(self) -> None:
+        result = self._fire_alert(activity_tier=None)
+        assert result is not None
+        assert result.details["activity_tier"] is None
+
+    def test_details_contains_elapsed_formatted(self) -> None:
+        result = self._fire_alert()
+        assert result is not None
+        assert "elapsed_formatted" in result.details
+        assert isinstance(result.details["elapsed_formatted"], str)
+
+    def test_details_contains_typical_formatted(self) -> None:
+        result = self._fire_alert()
+        assert result is not None
+        assert "typical_formatted" in result.details
+        assert isinstance(result.details["typical_formatted"], str)
+
+
+# ---------------------------------------------------------------------------
+# Formatted explanation (DET-02)
+# ---------------------------------------------------------------------------
+
+
+class TestFormattedExplanation:
+    """AlertResult.explanation uses format_duration() for human-readable durations."""
+
+    def test_explanation_uses_minutes_for_sub_hour(self) -> None:
+        """expected_gap=120s (2min). Explanation should contain '2m', not '0.0h'."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from custom_components.behaviour_monitor.const import ActivityTier
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=120.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=ActivityTier.HIGH,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=5000)  # > 3600 floor
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert "2m" in result.explanation
+        assert "0.0h" not in result.explanation
+
+    def test_explanation_uses_hours_minutes_for_long_gap(self) -> None:
+        """expected_gap=7200s (2h). Explanation should contain '2h 0m', not '2.0h'."""
+        from custom_components.behaviour_monitor.acute_detector import AcuteDetector
+        from datetime import timedelta
+
+        detector = AcuteDetector(inactivity_multiplier=3.0, sustained_cycles=1)
+        routine = make_routine(
+            expected_gap=7200.0, confidence=0.9, interval_cv=0.0,
+            activity_tier=None,
+        )
+        now = make_now()
+        last_seen = now - timedelta(seconds=50000)  # > 3*1.5*7200=32400
+
+        result = detector.check_inactivity("sensor.test", routine, now, last_seen)
+        assert result is not None
+        assert "2h 0m" in result.explanation
+        assert "2.0h" not in result.explanation
