@@ -129,5 +129,5 @@ Plans:
 | 12. Constants and Utilities | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 13. Tier Classification | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete    | 2026-04-03 |
-| 15. Coordinator Integration | v3.1 | 1/1 | Complete   | 2026-04-03 |
+| 15. Coordinator Integration | v3.1 | 1/1 | Complete    | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |
