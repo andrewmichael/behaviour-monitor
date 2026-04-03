@@ -1,161 +1,241 @@
 # Domain Pitfalls
 
-**Domain:** Activity-rate classification for anomaly detection (adding to existing behaviour-monitor)
-**Researched:** 2026-03-28
+**Domain:** Cross-entity correlation and startup tier rehydration added to existing per-entity anomaly detection
+**Researched:** 2026-04-03
 
 ## Critical Pitfalls
 
-Mistakes that cause rewrites, broken upgrades, or detection regressions.
+Mistakes that cause rewrites, false positive floods, or broken existing detection.
 
-### Pitfall 1: Tier boundary oscillation (entity flaps between tiers)
+### Pitfall 1: Combinatorial Pair Explosion
 
-**What goes wrong:** An entity whose event rate sits near a tier boundary (e.g., 50 events/day when the high/medium cutoff is 48) gets reclassified every time the sliding window shifts by a single day. Each reclassification changes its detection parameters, which can cause alerts to fire then clear then fire again on a per-day cadence.
+**What goes wrong:** Naively tracking all entity pairs creates O(N^2) correlation slots. With 20 monitored entities, that is 190 pairs. With 50, it is 1,225. Each pair needs its own co-occurrence window, state tracking, and persistence. The coordinator update cycle (currently 60s) becomes CPU-bound iterating pairs, and storage balloons.
 
-**Why it happens:** Naive threshold-based classification with no hysteresis. The event rate is a noisy signal -- weekday vs weekend, holidays, seasonal variation all shift the rate. A hard cutoff at a single number guarantees oscillation for entities near the boundary.
+**Why it happens:** The natural mental model is "compare every entity to every other entity," but correlation discovery must be selective, not exhaustive.
 
-**Consequences:** Users see spurious alerts disappearing and reappearing. If tier changes trigger detection parameter changes mid-cycle, the system may also lose accumulated evidence counters in `_inactivity_cycles` and `_unusual_time_cycles`, resetting the sustained-evidence gate and producing transient false positives.
-
-**Prevention:**
-- Implement hysteresis bands around tier boundaries (e.g., classify UP at 48 events/day but only classify DOWN at 36). Once an entity enters a tier, it stays until it clearly belongs elsewhere.
-- Alternatively, compute the classification from a longer window (e.g., full `history_window_days` median) rather than a recent-day snapshot.
-- Never reset sustained-evidence counters when tier changes -- the counters belong to the detection engine, not the classification layer.
-
-**Detection:** Log tier transitions with timestamps. If any entity transitions more than once per week, the hysteresis band is too narrow.
-
-### Pitfall 2: Auto-classification runs before enough data exists
-
-**What goes wrong:** On first load or after adding new entities, the system attempts to classify entities into tiers with only hours or days of data. A motion sensor that fired 200 times on install day (testing, setup activity) gets classified as "high frequency" permanently, or a sensor that happened to be quiet on day one gets classified as "low frequency" and receives overly aggressive inactivity thresholds.
-
-**Why it happens:** The classification runs unconditionally in the coordinator update loop. There is no guard equivalent to the existing `learning_status` / `confidence` gate that prevents detection from firing before the routine model is ready.
-
-**Consequences:** Wrong tier assignment persists because the user does not know to override it. Detection parameters are wrong from the start, producing either false positives (low-freq entity with tight thresholds) or missed alerts (high-freq entity with loose thresholds).
+**Consequences:** Update cycle latency exceeds the 60s interval. Storage JSON grows from kilobytes to megabytes. HA event loop blocks during `_save_data()`. Users with many entities see UI lag.
 
 **Prevention:**
-- Gate auto-classification on `routine.confidence(now) >= 0.5` (at minimum). Below that threshold, use a "default" tier with conservative parameters.
-- The existing `RoutineModel.learning_status()` already returns "inactive" / "learning" / "ready". Classification should only produce a confident tier when learning_status is "ready".
-- Store the classification timestamp and mark it as "provisional" vs "confirmed" so the user (and logs) know whether the tier is data-driven or a guess.
+- Gate correlation discovery behind a minimum co-occurrence count (e.g., 5+ co-occurrences within the time window before a pair is promoted to a tracked candidate). This is the "candidate promotion" pattern.
+- Limit tracked correlation groups to a configurable maximum (e.g., 20 groups). Drop lowest-confidence groups first.
+- Use an event-driven approach: only evaluate correlation when an entity fires, checking it against recent events in a bounded time-window buffer, not by iterating all pairs every cycle.
+- Track groups (sets of entities), not pairs. If A, B, and C all co-occur, that is one group, not three pairs.
 
-**Detection:** If an entity's auto-classified tier differs from what a manual inspection of its `daily_activity_rate()` history would suggest, the classification ran too early or on insufficient data.
+**Detection:** Monitor `_async_update_data` wall-clock time. If it exceeds 5s with correlation enabled, the pair count is too high.
 
-### Pitfall 3: Config migration v7 to v8 silently drops user overrides
+**Phase guidance:** Address in the correlation discovery phase. The data structure design must enforce bounded pair counts from day one.
 
-**What goes wrong:** The v7->v8 migration adds the new `activity_tier_override` config key with `setdefault()`, which is fine. But the migration also needs to handle the case where detection parameters that were previously global (single `inactivity_multiplier`) now need to coexist with tier-specific parameters. If the migration simply adds tier defaults without preserving the user's existing `inactivity_multiplier` as the baseline for their entities' actual tiers, the user's carefully tuned sensitivity resets to defaults on upgrade.
+---
 
-**Why it happens:** Previous migrations (v4->v5, v5->v6, v6->v7) only added new keys with `setdefault()` and never needed to reinterpret existing keys. The v7->v8 migration is structurally different because the new tier system changes the *meaning* of existing parameters.
+### Pitfall 2: Correlation Alerts During Learning Period
 
-**Consequences:** Users who tuned `inactivity_multiplier` to 5.0 for their specific entity mix suddenly get the default 3.0 for some tiers. This manifests as a wave of false positive alerts immediately after upgrading, which destroys trust.
+**What goes wrong:** The correlation detector starts generating "broken correlation" alerts before it has enough evidence that entities actually correlate. A pair that co-occurred 2 out of 3 days fires a divergence alert on day 4 when one entity is simply quiet.
 
-**Prevention:**
-- The migration must read the existing `inactivity_multiplier` value and use it as the base for all tiers, not just inject new tier-specific defaults.
-- Specifically: if a user had `inactivity_multiplier: 5.0`, the high-frequency tier should get `5.0 * high_tier_multiplier_factor` (not `DEFAULT_INACTIVITY_MULTIPLIER * high_tier_multiplier_factor`).
-- Test the migration with a config entry that has non-default values for every parameter.
-- The `setdefault` pattern from previous migrations is safe for *new* keys but dangerous when new keys interact with old keys.
+**Why it happens:** The existing per-entity detectors have confidence gates (0.8 for tier classification, 0.3 for unusual-time). A new correlation detector without equivalent gates produces noise immediately.
 
-**Detection:** Migration test that creates a v7 config with non-default `inactivity_multiplier`, migrates to v8, and asserts the user's value is preserved as the effective baseline.
-
-### Pitfall 4: Display formatting breaks existing automations
-
-**What goes wrong:** The alert `explanation` string in `AlertResult` currently formats all intervals as hours (e.g., `"no activity for 0.3h (typical interval: 0.2h)"`). Changing this to minutes for sub-hour intervals (e.g., `"no activity for 18m (typical interval: 12m)"`) breaks any user automations that parse the explanation string with regex patterns expecting the `Xh` format.
-
-**Why it happens:** The `explanation` field is a human-readable string exposed as a sensor attribute via `anomalies` in the coordinator data dict. Users build automations that trigger on specific text patterns. HA template sensors parsing `{:.1f}h` will break when the format changes to `{:d}m`.
-
-**Consequences:** Silent automation breakage. The user's regex stops matching because the format changed. Since HA automations fail silently (they just don't trigger), the user may not notice until a real alert goes undelivered.
+**Consequences:** Users see false alerts about "broken routines" that never existed. Trust in the entire alert system erodes. This is especially damaging because cross-entity alerts are inherently harder for users to evaluate ("is it really unusual that the kitchen and hallway didn't fire together?").
 
 **Prevention:**
-- Add the formatted values as *separate structured fields* in `AlertResult.details` (e.g., `elapsed_formatted`, `typical_formatted`) rather than changing the `explanation` string format.
-- Keep the `explanation` field format stable -- always use hours -- and add a new `explanation_display` field with the user-friendly format.
-- Or: change the format but also add `elapsed_seconds` and `typical_interval_seconds` to the details dict (already present at lines 128-133 of `acute_detector.py`) and document that automations should use the structured fields, not the explanation string.
-- The `details` dict already contains `elapsed_seconds` and `expected_gap_seconds`, so the raw data is available. The formatting change is purely cosmetic and should be additive, not a replacement.
+- Require a minimum observation window before any correlation is considered "learned" (e.g., 14 days of co-occurrence data, or N co-occurrences where N >= 10).
+- Apply a confidence threshold to correlation strength before divergence alerts fire. A pair must co-occur in >= 70% of observation windows before absence is flagged.
+- Reuse the existing `SUSTAINED_EVIDENCE_CYCLES` pattern: require 3+ consecutive update cycles where the expected companion is missing before alerting.
+- Gate on the routine model's `learning_status == "ready"` for both entities in the pair.
 
-**Detection:** Search for any documentation, examples, or community templates that reference the explanation string format. Add a deprecation note if changing the format.
+**Detection:** Track correlation_confidence per group and log when alerts are suppressed by the confidence gate. If suppressed alerts >> fired alerts during the first month, the gate is working.
+
+**Phase guidance:** Must be implemented in the same phase as correlation detection, not deferred. Gating is not a polish feature; it is a correctness feature.
+
+---
+
+### Pitfall 3: Corrupting Existing Detection by Modifying the Update Cycle
+
+**What goes wrong:** Adding correlation logic inside `_run_detection()` or `_handle_state_changed()` introduces subtle side effects. For example, recording a correlation timestamp in `_handle_state_changed` changes the timing of `async_request_refresh()`, or adding correlation alerts to the `alerts` list changes welfare status derivation and alert suppression keys.
+
+**Why it happens:** The coordinator is tightly wired: `_handle_state_changed` -> `async_request_refresh` -> `_async_update_data` -> `_run_detection` -> `_handle_alerts` -> `_derive_welfare`. Inserting correlation into this pipeline requires understanding the full chain. The `_handle_alerts` method uses `f"{a.entity_id}|{a.alert_type.value}"` as suppression keys (line 216, 248 of coordinator.py). A new AlertType will create new keys, but if welfare derivation counts correlation alerts toward severity escalation, the welfare status becomes noisier.
+
+**Consequences:** 449 existing tests pass, but production behavior changes. Alert suppression keys collide if the new AlertType is not carefully namespaced. Welfare status derivation sees correlation alerts and escalates unnecessarily. Notification deduplication breaks.
+
+**Prevention:**
+- Add a new `AlertType.CORRELATION_DIVERGENCE` to the enum, ensuring suppression keys are distinct from existing `INACTIVITY`, `UNUSUAL_TIME`, and `DRIFT` types.
+- Run correlation detection as a separate method called from `_run_detection`, appending results to the same `alerts` list but after existing detectors (lines 202-211 of coordinator.py). This preserves existing detector ordering.
+- Ensure correlation alerts default to LOW severity. A broken correlation should not escalate welfare to "alert" unless combined with per-entity evidence. Consider excluding correlation alerts from `_derive_welfare` entirely, or weighting them lower.
+- Do NOT modify `_handle_state_changed`. Instead, maintain a separate recent-events buffer that `_handle_state_changed` feeds into, and let `_run_detection` query it.
+- Write integration tests that run the full coordinator cycle with correlation enabled and verify that existing per-entity alerts are unchanged.
+
+**Detection:** Before merging, run the full 449-test suite with correlation enabled in the coordinator config. Any failure is a regression signal.
+
+**Phase guidance:** The AlertType addition and suppression key namespace should be in a foundation phase before the detector itself. Alert integration (welfare weight) is a separate concern from detection.
+
+---
+
+### Pitfall 4: Storage Schema Migration Breaks Existing Installs
+
+**What goes wrong:** Adding correlation state to the persisted JSON (currently `routine_model` + `cusum_states` + `coordinator` dict in `_save_data` at line 147 of coordinator.py) without a migration path causes `async_setup` to crash on existing installs that lack the new keys.
+
+**Why it happens:** The current `_save_data` / `async_setup` uses `stored.get("key", {})` for top-level keys (lines 121-134 of coordinator.py) but relies on the keys existing in the stored JSON. The `STORAGE_VERSION` is 8 (in const.py line 59), used in the `Store` constructor. If the stored data structure changes shape and the Store version is not bumped, `async_load` returns old-format data silently.
+
+**Consequences:** HA restart after upgrade fails to load the integration. Users see "Integration failed to set up" in the UI. They must delete `.storage/behaviour_monitor.{entry_id}.json` and lose all learned patterns (routine model, CUSUM state, alert suppression history).
+
+**Prevention:**
+- Use `.get()` with safe defaults for ALL new top-level keys in `async_setup` when loading stored data. The existing code already does this well for `cusum_states` (line 123). Follow the identical pattern for correlation state.
+- Store correlation state under a single new top-level key (e.g., `"correlation_state"`) so there is exactly one new key to `.get()` safely.
+- Bump `STORAGE_VERSION` to 9 and implement a data migration in `async_setup` that handles the v8-to-v9 transition.
+- Add a test that loads a v8-format stored dict (without correlation keys) and verifies `async_setup` completes without error and initializes empty correlation state.
+
+**Detection:** Test with a storage fixture that matches the current v8 format. If `async_setup` raises, migration is broken.
+
+**Phase guidance:** Storage persistence phase. Must be addressed when correlation state is first persisted, not after.
+
+---
+
+### Pitfall 5: Startup Tier Rehydration Gap
+
+**What goes wrong:** After HA restart, `EntityRoutine._activity_tier` is `None` for all entities because the field is explicitly not serialized (routine_model.py line 244-249: "not serialized -- recomputed on startup"). The first `_async_update_data` call (lines 182-190 of coordinator.py) classifies tiers via `classify_tier(now)` on date rollover. However, this classification is gated on two conditions:
+1. `self._today_date != now.date()` -- True on first run because `_today_date` is None. This works.
+2. Inside `classify_tier()`: `self.confidence(now) >= 0.8` -- This may fail for recently-added entities.
+
+The real gap: between `async_setup()` completing (line 138 of coordinator.py) and the first `_async_update_data()` execution (triggered by `async_config_entry_first_refresh` at line 173 of __init__.py), the `AcuteDetector` can run with `routine.activity_tier == None`. The tier-aware boost/floor in `check_inactivity` (acute_detector.py lines 98-102) is skipped when tier is None, meaning high-frequency entities lose their protective floor for one cycle.
+
+**Why it happens:** Tier classification was designed to run daily in the coordinator update loop. It was not designed to run at load time. The "recomputed on startup" comment implies it happens automatically, but there is a timing gap.
+
+**Consequences:** High-frequency entities (PIR sensors, power monitors) may fire a spurious inactivity alert on the first update cycle after restart because the 1-hour floor (TIER_FLOOR_SECONDS[HIGH] = 3600) is not applied. For correlation, entities without tier classification may be grouped inconsistently.
+
+**Prevention:**
+- Call `classify_tier(now)` for all entities inside `async_setup()`, after loading stored data and before the first coordinator refresh. Insert at line 137 (after `_handle_state_changed` listener but before returning).
+- Apply tier overrides from config in the same block (same pattern as lines 187-190 of coordinator.py).
+- Add a test: load stored data for entities with sufficient history, verify `_activity_tier` is not None before `_async_update_data` runs.
+
+**Detection:** Log tier classification results at startup. If tiers are None for entities with weeks of history, rehydration is broken.
+
+**Phase guidance:** This is a standalone bug fix that should be an early phase, before correlation work begins. It affects the existing v3.1 system independently.
 
 ## Moderate Pitfalls
 
-### Pitfall 5: Tier-specific parameters create a combinatorial config explosion
+### Pitfall 6: Time Window Alignment Creates Phantom Correlations
 
-**What goes wrong:** If each tier (high/medium/low) gets its own `inactivity_multiplier`, `min_inactivity_multiplier`, and `max_inactivity_multiplier`, the config UI balloons from the current 12 fields to 18+ fields. Users are already confused by the distinction between `inactivity_multiplier`, `min_inactivity_multiplier`, and `max_inactivity_multiplier`. Adding per-tier variants makes the UI unusable.
-
-**Prevention:**
-- Do NOT expose per-tier multipliers in the config UI. Instead, define tier behavior as internal multiplier *factors* applied on top of the user's single global `inactivity_multiplier`.
-- Example: high-frequency tier internally uses `global_multiplier * 2.0` and a minimum absolute floor of 300 seconds. The user only sees and tunes the single global multiplier.
-- The tier factors and absolute floors should be constants in `const.py`, not user-configurable (at least in v3.1). Per-entity sensitivity tuning is explicitly out of scope per PROJECT.md.
-
-### Pitfall 6: Minimum absolute floor without considering entity's actual rate
-
-**What goes wrong:** A "minimum absolute floor" for high-frequency inactivity (e.g., "never alert if silent less than 5 minutes") sounds reasonable, but if the floor is too low, it generates noise for entities that fire every 30 seconds (PIR sensors). If too high, it masks genuine inactivity for entities that fire every 2 minutes.
+**What goes wrong:** The co-occurrence time window (e.g., "entities that fire within 10 minutes of each other") is either too tight or too loose. Too tight: real correlations are missed (kitchen motion and hallway motion are 12 minutes apart due to HA polling latency or human movement speed). Too loose: everything correlates with everything because a 30-minute window captures unrelated events in an active household.
 
 **Prevention:**
-- The floor should be derived from the entity's *observed* median interval, not a global constant. E.g., floor = `max(ABSOLUTE_MINIMUM, median_interval * floor_factor)`.
-- The current `expected_gap_seconds()` on `EntityRoutine` already computes the median interval per-slot. The floor should be a function of this value, not independent of it.
-- Start with a generous floor (e.g., 3x the median interval or 5 minutes, whichever is greater) and tune down based on testing.
+- Make the window configurable with a sensible default (5 minutes is a good starting point for home automation entity co-occurrence).
+- Use asymmetric windows: if A fires, check for B in [A-window, A+window]. Do not require exact simultaneity.
+- Consider time-of-day bucketed correlation (same hour-of-day x day-of-week slot) as a complementary approach. Two entities that both have activity in the same routine slot are "slot-correlated" even if their exact timestamps differ by 20 minutes. This is coarser but robust to polling delays and HA restart gaps.
 
-### Pitfall 7: User tier override not persisted correctly
+**Phase guidance:** Correlation discovery phase. The window size should be a constant in `const.py` first, with a config UI option added in a later phase only if needed.
 
-**What goes wrong:** The user overrides an entity's auto-classified tier via the config UI, but the override is stored only in the config entry data (not consulted by the coordinator). On reload, the auto-classifier runs again and overwrites the user's choice because the coordinator reads auto-classified tiers from the routine model, not from config.
+---
 
-**Prevention:**
-- User overrides must be stored in the config entry data (via config flow) and take precedence over auto-classification. The coordinator must check for overrides *before* running auto-classification.
-- The existing pattern stores all user config in `entry.data`. Tier overrides should follow this pattern: `entry.data["activity_tier_overrides"] = {"sensor.motion_kitchen": "high"}`.
-- Auto-classification should only apply to entities without an override.
+### Pitfall 7: Correlation State Not Cleaned Up When Entities Are Removed
 
-### Pitfall 8: Coordinator reload path does not re-apply tier parameters
-
-**What goes wrong:** When the user changes config options (triggering `async_reload_entry` at line 264 of `__init__.py`), the coordinator is reconstructed from scratch. If the tier classification is computed during `async_setup()` but the `AcuteDetector` is constructed in `__init__()` with only global parameters (lines 79-83 of `coordinator.py`), the detector does not receive tier-specific parameters until classification completes.
+**What goes wrong:** User removes an entity from `monitored_entities` via the config UI (triggering `async_reload_entry`). Per-entity state (routine model, CUSUM) is naturally orphaned but harmless -- it sits in storage doing nothing. Correlation state referencing the removed entity continues to track groups containing it. The system produces "broken correlation" alerts for a group that no longer makes sense, or worse, tries to check `_routine_model._entities[removed_id]` and gets a KeyError.
 
 **Prevention:**
-- The `AcuteDetector` must accept tier-aware parameters per-entity, not just global parameters in its constructor. This means either:
-  - Passing tier info to `check_inactivity()` at call time (preferred -- keeps detector stateless re: tiers), or
-  - Reconstructing the detector when tiers change.
-- The current `_run_detection` loop (line 191 of `coordinator.py`) already passes per-entity `routine` objects. Adding a per-entity tier parameter to `check_inactivity()` is the natural extension.
+- On config reload (`async_reload_entry` at line 274 of __init__.py), prune correlation groups that reference entities no longer in `_monitored_entities`.
+- When an entity is removed, dissolve any group that contained it and re-evaluate the remaining members. Two remaining entities from a 3-entity group may not correlate without the third.
+- Guard all correlation detection lookups with `if eid in self._monitored_entities` (same pattern as `_run_detection` line 205-206 of coordinator.py).
+- Add a test: configure 3 entities in a correlation group, remove one via config flow, verify the group is dissolved or reformed without the removed entity.
+
+**Phase guidance:** Correlation lifecycle management phase, after basic correlation works.
+
+---
+
+### Pitfall 8: Correlation Alerts Flood the Notification Pipeline
+
+**What goes wrong:** If 5 entities form a correlated group and one entity goes quiet, the system could generate 4 "expected companion missing" alerts (one for each remaining entity noticing the absence). The notification pipeline sends 4 alerts in one cycle via `_send_notification` (line 252 of coordinator.py), overwhelming the user with redundant information about the same underlying event.
+
+**Prevention:**
+- Alert at the GROUP level, not the pair level. "Correlation group [kitchen, hallway, living room]: kitchen_motion not seen alongside expected companions" is one alert, not three.
+- Use the existing `_alert_suppression` mechanism with a group-level key (e.g., `"correlation_group:kitchen_cluster|correlation_divergence"`).
+- Cap correlation alerts per update cycle (e.g., max 2 correlation alerts per cycle, highest confidence first).
+- The existing deduplication in `_handle_alerts` (lines 214-249) uses per-entity suppression keys. Group-level keys need to coexist without interfering.
+
+**Detection:** If correlation alert count regularly exceeds per-entity alert count by 3x+, the grouping or deduplication is wrong.
+
+**Phase guidance:** Alert integration phase. Must be designed alongside the correlation detector, not bolted on after.
+
+---
+
+### Pitfall 9: Async Event Buffer Grows Unbounded
+
+**What goes wrong:** The correlation detector needs a recent-events buffer (timestamps of recent state changes per entity) to check for co-occurrences. If this buffer is not bounded, it grows with every state change and is never pruned. High-frequency entities (24+ events/day = HIGH tier) can generate hundreds of entries per day. Over weeks, the buffer holds thousands of timestamps consuming memory unnecessarily.
+
+**Prevention:**
+- Use a bounded deque per entity (matching the existing `event_times` deque pattern with `maxlen=56` in routine_model.py line 89). For correlation, a shorter window suffices: keep only events from the last 30 minutes (or 2x the correlation window).
+- Prune by timestamp, not by count: on each `_handle_state_changed` call, append the new event and lazily discard entries older than the correlation window on next read.
+- Do NOT persist this buffer to storage. It is ephemeral -- correlation detection only needs recent events. On restart, the buffer starts empty and refills naturally.
+
+**Phase guidance:** Correlation data structure design phase (same as Pitfall 1).
+
+---
+
+### Pitfall 10: Correlation Discovery Runs Every Update Cycle
+
+**What goes wrong:** Correlation group discovery (which entities correlate?) is expensive: it must scan co-occurrence history across all entity pairs, compute co-occurrence rates, and form/update groups. Running this every 60 seconds (in every `_run_detection` call) wastes CPU when correlations change slowly over days or weeks.
+
+**Prevention:**
+- Separate discovery from detection. Discovery runs once per day (like tier classification at lines 184-190 of coordinator.py). Detection runs every cycle but only checks already-discovered groups.
+- Use the same `_today_date` guard pattern: `if self._today_date != now.date(): ... run_correlation_discovery()`.
+- Discovery writes to a `_correlation_groups` list. Detection reads from it. This mirrors the tier pattern (`_activity_tier` computed daily, used every cycle by `AcuteDetector`).
+- If an entity fires and it is in a known correlation group, check the group. If it is not in any group, skip it. This makes per-cycle detection O(groups) not O(entities^2).
+
+**Detection:** Profile `_run_detection` with correlation enabled. If discovery logic dominates, it is running too often.
+
+**Phase guidance:** Correlation discovery phase. This separation must be an architectural decision made before implementation.
 
 ## Minor Pitfalls
 
-### Pitfall 9: Time formatting edge cases
+### Pitfall 11: AlertType Enum Extension Breaks Sensor Serialization
 
-**What goes wrong:** The "show minutes instead of hours" formatting logic has edge cases: exactly 60 minutes (show as "1h 0m" or "60m"?), exactly 0 minutes (show as "0m" or "just now"?), very large values (show as "72h" or "3d"?). Inconsistent formatting across the codebase -- the coordinator's `_build_sensor_data` (lines 282-288) has one inline formatter, the `AcuteDetector.check_inactivity` explanation (lines 113-114) has another.
-
-**Prevention:**
-- Create a single `format_duration(seconds: float) -> str` utility function and use it everywhere. Define the rules once: <60s = "<1m", 1-59m = "Xm", 60m-1439m = "Xh Ym", >=24h = "Xd Yh".
-- Replace the inline formatting in both `coordinator.py` and `acute_detector.py` with calls to this function.
-
-### Pitfall 10: Storage version bump missed for new tier data
-
-**What goes wrong:** If tier classification results are persisted in the `.storage` file (e.g., cached tier assignments), the `STORAGE_VERSION` must be bumped from 7 to 8. If forgotten, loading old storage data into new code that expects tier fields causes KeyError or incorrect defaults.
+**What goes wrong:** Adding `AlertType.CORRELATION_DIVERGENCE` to the enum is straightforward, but existing sensor data serialization (`AlertResult.to_dict()` at line 56 of alert_result.py) emits `alert_type.value` as a string. If downstream consumers (HA automations, template sensors) match on alert type strings with an exhaustive list, a new type value could cause unexpected behavior (e.g., a Jinja template that does `{% if alert.alert_type in ['inactivity', 'unusual_time', 'drift'] %}` silently drops correlation alerts).
 
 **Prevention:**
-- If tier data is stored in `.storage`, bump `STORAGE_VERSION` and handle the old-format gracefully in `async_setup()` (the `from_dict` pattern already handles missing fields with defaults).
-- If tier data is computed at runtime and not persisted, no storage version bump is needed -- but document this decision explicitly.
-- Note: config entry VERSION (currently 7 in `config_flow.py` line 249) and STORAGE_VERSION (currently 7 in `const.py` line 52) are separate. Both may need bumping but for different reasons.
+- Use a descriptive value string: `"correlation_divergence"` not just `"correlation"`. This makes it self-documenting in sensor attributes.
+- Document the new alert type value in release notes with an example of how to handle it in automations.
+- The existing `_build_sensor_data` (line 306 of coordinator.py) includes all alerts in the `anomalies` list using `to_dict()`. No special handling needed -- correlation alerts flow through the same path.
 
-### Pitfall 11: Entity tier override UI becomes stale
+**Phase guidance:** Foundation phase (AlertType addition).
 
-**What goes wrong:** The config UI shows a list of entities with tier override dropdowns. If the user removes an entity from monitoring, the override for that entity remains in config data as dead weight. If the user later re-adds the entity, the stale override may apply an inappropriate tier.
+---
 
-**Prevention:**
-- On config save (options flow), prune any tier overrides for entities not in the current `monitored_entities` list.
-- This is the same pattern as how `notify_services` is handled in the current options flow (lines 333-336 of `config_flow.py`).
+### Pitfall 12: Config Migration Chain Extends to v9
 
-### Pitfall 12: Classification uses wrong time window for rate calculation
-
-**What goes wrong:** `daily_activity_rate()` on `EntityRoutine` (line 284 of `routine_model.py`) counts events for a *specific calendar date* by filtering `event_times` in the 24 hour-slots for that day-of-week. But the deque has `maxlen=56` and events are ISO timestamps -- if the entity has been running for weeks, older events age out of the deque. The "rate" computed from a single recent day is volatile. Computing rate from multiple days requires calling `daily_activity_rate()` for each day and averaging, which iterates the same deques repeatedly.
+**What goes wrong:** The migration chain in `__init__.py` is already v2 through v8 (seven sequential if-blocks, lines 73-161). Adding v8-to-v9 for correlation config (e.g., correlation window size, max groups) extends it further. The chain is linear and each migration is independent (setdefault pattern), so it is structurally sound. The risk is in testing: each new migration needs a test for every prior version that might upgrade directly.
 
 **Prevention:**
-- Add a dedicated rate-computation method that aggregates across the full deque contents (all timestamps in all slots) and divides by the number of distinct days observed. This is O(n) over events, not O(days * slots * events).
-- Alternatively, maintain a running event counter per entity (increment on every `record()` call, store first/last observation timestamps) and compute rate as `total_events / days_elapsed`. This is O(1) at query time.
+- Follow the established `setdefault` pattern exactly. Each migration only adds keys with defaults; it never modifies existing keys.
+- Add a test that creates a v8 config entry and verifies it migrates to v9 with correct defaults.
+- Minimize new config keys. Consider making correlation window and max groups constants in `const.py` initially, promoting to config only if user tuning proves necessary. Fewer config keys = fewer migration steps.
+
+**Phase guidance:** Config/storage phase, when new config keys are added.
+
+---
+
+### Pitfall 13: `cross_sensor_patterns` Attribute Already Exists as Empty List
+
+**What goes wrong:** The `_build_sensor_data` method (line 325 of coordinator.py) already outputs `"cross_sensor_patterns": []`. If the correlation feature populates this key with a different data shape than what users or the UI might expect, or if the key name implies something different from what correlation groups represent, there is a naming mismatch.
+
+**Prevention:**
+- Reuse the existing `cross_sensor_patterns` key to expose discovered correlation groups. This avoids adding new sensor attributes and maintains backward compatibility (it was always a list, just empty).
+- Define the list item schema clearly: each item should be a dict with `group_id`, `entities`, `confidence`, and `last_co_occurrence`. Keep it flat and JSON-serializable.
+- Limit exposed groups (e.g., top 10 by confidence) to avoid HA recorder database bloat from large attribute payloads.
+
+**Phase guidance:** Sensor exposure phase.
 
 ## Phase-Specific Warnings
 
 | Phase Topic | Likely Pitfall | Mitigation |
 |-------------|---------------|------------|
-| Auto-classification logic | Pitfall 1 (oscillation), Pitfall 2 (premature classification) | Implement hysteresis + confidence gate before wiring into detector |
-| Tier-specific detection parameters | Pitfall 5 (config explosion), Pitfall 6 (wrong floor) | Use internal factors, not per-tier UI fields; derive floor from observed rate |
-| User override in config UI | Pitfall 7 (override not persisted), Pitfall 11 (stale overrides) | Store in entry.data, prune on save |
-| Display formatting (minutes vs hours) | Pitfall 4 (automation breakage), Pitfall 9 (edge cases) | Add structured fields, single format utility, keep explanation stable |
-| Config migration v7 to v8 | Pitfall 3 (user values lost), Pitfall 10 (storage version) | Read existing multiplier as baseline; test with non-default values |
-| Coordinator integration | Pitfall 8 (reload path), Pitfall 12 (rate computation) | Pass tier to check_inactivity() at call time; add efficient rate method |
+| Startup tier rehydration fix | Pitfall 5 - tiers None after restart | Call `classify_tier()` in `async_setup` after loading stored data; standalone fix before correlation |
+| Foundation (AlertType, constants) | Pitfall 11 - enum extension, Pitfall 13 - attribute naming | Descriptive value string; reuse `cross_sensor_patterns` key |
+| Correlation data structures | Pitfall 1 - pair explosion, Pitfall 9 - unbounded buffer | Bounded candidate set, bounded event deque, max group cap |
+| Correlation discovery | Pitfall 6 - phantom correlations, Pitfall 10 - runs too often | Configurable window, daily discovery cycle separated from per-cycle detection |
+| Correlation detection + alerting | Pitfall 2 - alerts during learning, Pitfall 8 - alert flood | Confidence gate, group-level alerts, sustained evidence |
+| Alert integration with coordinator | Pitfall 3 - breaks existing detection | Separate AlertType, careful welfare weight, run full 449-test regression |
+| Storage persistence | Pitfall 4 - migration breaks installs | New top-level key with `.get()` default, bump STORAGE_VERSION to 9, test v8 fixture |
+| Config migration | Pitfall 12 - chain extension | Follow setdefault pattern, minimize new config keys |
+| Entity lifecycle | Pitfall 7 - stale groups after entity removal | Prune groups on config reload, guard lookups |
 
 ## Sources
 
-- Direct codebase analysis of `acute_detector.py`, `coordinator.py`, `routine_model.py`, `config_flow.py`, `__init__.py`, `const.py`, `sensor.py` (HIGH confidence -- all pitfalls derived from actual code structure and line-level inspection)
-- Existing migration chain pattern (v2->v3->v4->v5->v6->v7) in `__init__.py` (HIGH confidence)
-- PROJECT.md constraints: sensor stability, config migration, no new dependencies, per-entity sensitivity tuning out of scope (HIGH confidence)
+- Direct code analysis of coordinator.py (391 lines), routine_model.py (560 lines), acute_detector.py (226 lines), drift_detector.py (389 lines), __init__.py (277 lines), const.py (198 lines), alert_result.py (66 lines) -- all line references verified against current codebase (HIGH confidence)
+- Existing architecture patterns observed in codebase: sustained evidence cycles, daily reclassification guard, `.get()` migration pattern, bounded deques, setdefault config migration chain (HIGH confidence)
+- Cross-entity correlation pitfalls derived from combinatorial analysis and the specific constraints of this codebase: pure Python stdlib, 60s update cycle, HA async event loop, 449 existing tests (MEDIUM confidence -- engineering analysis, not empirical post-mortems)

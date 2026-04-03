@@ -1,8 +1,8 @@
-# Architecture Research: Activity-Rate Classification
+# Architecture Patterns
 
-**Domain:** Home Assistant custom integration — activity-rate classification and display formatting (v3.1)
-**Researched:** 2026-03-28
-**Confidence:** HIGH (full codebase read, all integration points identified from source)
+**Domain:** Cross-entity correlation and startup tier rehydration for Home Assistant anomaly detection integration
+**Researched:** 2026-04-03
+**Confidence:** HIGH (analysis derived from complete codebase reading; no external dependencies or novel patterns)
 
 ---
 
@@ -10,418 +10,594 @@
 
 ```
 custom_components/behaviour_monitor/
-├── __init__.py           # HA entry point, config migration chain (v2->v7), service registration
+├── __init__.py           # HA entry point, config migration chain (v2->v8), service registration
 ├── sensor.py             # 11 sensor entity descriptions via CoordinatorEntity
-├── coordinator.py        # BehaviourMonitorCoordinator (~377 lines) — orchestrator
+├── coordinator.py        # BehaviourMonitorCoordinator — orchestrator
 ├── routine_model.py      # RoutineModel + EntityRoutine + ActivitySlot (pure Python)
 ├── acute_detector.py     # AcuteDetector — inactivity + unusual-time (pure Python)
 ├── drift_detector.py     # DriftDetector — bidirectional CUSUM (pure Python)
 ├── alert_result.py       # AlertResult, AlertType, AlertSeverity (pure Python)
-├── config_flow.py        # v7 config with OptionsFlowHandler
+├── config_flow.py        # v8 config with OptionsFlowHandler
 └── const.py              # All constants and defaults
 ```
 
-### Key Data Flow (Relevant to This Milestone)
+### Existing Detector Pattern
+
+All detectors follow this contract:
+- Pure Python, zero HA imports
+- Take domain objects (`EntityRoutine`, `datetime`) as inputs
+- Return `AlertResult` or `None`
+- Maintain internal state (cycle counters, accumulators)
+- Serialize via `to_dict()`/`from_dict()`
+- Wired by coordinator, which owns instances and feeds data
+
+### Existing Data Flow
 
 ```
-EntityRoutine.record(timestamp, state_value)
-        |
-        v
-ActivitySlot.event_times deque (maxlen=56 per slot, 168 slots)
-        |
-        +---> ActivitySlot.expected_gap_seconds()  -- median inter-event interval
-        +---> ActivitySlot.interval_cv()           -- coefficient of variation
-        |
-        v
-AcuteDetector.check_inactivity(entity_id, routine, now, last_seen)
-        |
-        +---> expected_gap = routine.expected_gap_seconds(hour, dow)
-        +---> cv = routine.interval_cv(hour, dow)
-        +---> scalar = clamp(1.0 + cv, min_multiplier, max_multiplier)
-        +---> threshold = inactivity_multiplier * scalar * expected_gap
-        +---> elapsed >= threshold? -> increment sustained counter
-        |
-        v
-AlertResult with explanation: "{elapsed_hours:.1f}h (typical interval: {typical_hours:.1f}h, ...)"
+state_changed event
+      |
+      v
+coordinator._handle_state_changed()
+      |
+      +---> routine_model.record(entity_id, timestamp, state_value)
+      +---> self._last_seen[entity_id] = now
+      +---> async_request_refresh()
+      |
+      v
+coordinator._async_update_data()
+      |
+      +---> daily rollover: classify_tier() for all entities
+      +---> _run_detection(now)
+      |       |
+      |       +---> per entity:
+      |       |       acute_detector.check_inactivity()
+      |       |       acute_detector.check_unusual_time()
+      |       |       drift_detector.check()
+      |       |
+      |       +---> return list[AlertResult]
+      |
+      +---> _handle_alerts(alerts)
+      +---> _build_sensor_data(alerts)
 ```
-
-**The problem this milestone solves:** A motion sensor firing every 2 minutes has `expected_gap_seconds() = ~120`. With `inactivity_multiplier=3.0` and even maximum `scalar=10.0`, the threshold is `3.0 * 10.0 * 120 = 3600s = 1 hour`. Any 1-hour gap triggers an alert -- completely normal for someone leaving the house. There is no minimum floor, and the hardcoded hours-based display formatting shows "0.0h" for sub-hour intervals.
 
 ---
 
-## Recommended Architecture (v3.1 Integration)
+## Recommended Architecture (v4.0 Integration)
 
-### Design Principle: Classify at the Data Layer, Consume Everywhere
+### High-Level View
 
-Activity-rate classification is a **property of an entity's learned routine**, not a property of the detector. The tier should be computed from `EntityRoutine` data and stored on `EntityRoutine`, then consumed by `AcuteDetector` (for tier-appropriate thresholds), by `coordinator.py` (for sensor data), and by the config flow (for user override).
+Cross-entity correlation is a **new detector class** (`CorrelationDetector`) that follows the identical pattern as `AcuteDetector` and `DriftDetector`. The coordinator wires it into the existing detection loop. Startup tier rehydration is a surgical fix inside coordinator.
 
-### Where Each Piece Lives
+```
+                       coordinator.py
+                      +-------------------+
+                      |                   |
+  state_changed ----->| RoutineModel      |
+  events              | (per-entity)      |
+                      |                   |
+                      | CorrelationDetector|<-- record_event() on each state change
+                      |   (cross-entity)  |
+                      |                   |
+                      | _run_detection()  |
+                      |   |               |
+                      |   +-> AcuteDetector.check_inactivity()
+                      |   +-> AcuteDetector.check_unusual_time()
+                      |   +-> DriftDetector.check()
+                      |   +-> CorrelationDetector.check()    <-- NEW
+                      |                   |
+                      | alerts ---------->| _handle_alerts()
+                      |                   |
+                      | sensor_data ----->| _build_sensor_data()
+                      |   includes:       |
+                      |   cross_sensor_patterns (populated)  <-- NEW
+                      +-------------------+
+```
 
-| Concern | File | New or Modified | Rationale |
-|---------|------|-----------------|-----------|
-| `ActivityTier` enum | `const.py` | Modified | Enum + tier boundary constants belong with other constants |
-| Tier classification logic | `routine_model.py` | Modified | Pure function on EntityRoutine data; keeps HA-free testability |
-| `activity_tier` stored field | `routine_model.py` | Modified | Persisted on EntityRoutine for stability (no flapping) |
-| Tier override config key | `const.py` | Modified | New `CONF_ACTIVITY_TIER_OVERRIDES` key |
-| Tier override UI | `config_flow.py` | Modified | Per-entity dropdown in options flow |
-| Tier-aware inactivity logic | `acute_detector.py` | Modified | Receives tier; applies tier-specific multiplier + floor |
-| Display formatting | `acute_detector.py` | Modified | Format explanation string based on interval magnitude |
-| Tier in sensor data | `coordinator.py` | Modified | Pass tier info to sensor data dict |
-| Tier display sensor | `sensor.py` | Modified | Expose tier as sensor attribute (not new sensor) |
-| Config migration v7->v8 | `__init__.py` | Modified | Add `activity_tier_overrides` with empty default |
+### Component Boundaries
 
-**No new files.** This milestone modifies existing components. The classification logic is small enough (~30 lines) to live as a method on `EntityRoutine` rather than a separate module.
+| Component | Responsibility | New/Modified | Communicates With |
+|-----------|---------------|--------------|-------------------|
+| `correlation_detector.py` | Learn co-occurrence patterns; detect broken correlations | **NEW FILE** | Reads `last_seen` dict; produces `AlertResult` |
+| `coordinator.py` | Wire CorrelationDetector; persist correlation state; startup tier rehydration | MODIFIED | `correlation_detector.py`, HA storage |
+| `alert_result.py` | Add `CORRELATION_BREAK` to `AlertType` enum | MODIFIED | All detectors |
+| `const.py` | Add correlation constants and config keys | MODIFIED | All modules |
+| `sensor.py` | Expose correlation groups via existing `cross_sensor_patterns` key | MODIFIED (minimal) | `coordinator.py` data dict |
+| `config_flow.py` | Add correlation window config option | MODIFIED | `const.py` |
+| `__init__.py` | Config migration v8 -> v9 | MODIFIED | `const.py` |
 
 ---
 
-## Component Boundaries
+## New Component: CorrelationDetector
 
-### 1. ActivityTier Enum and Constants (`const.py`)
+### Design Principles
 
-```python
-class ActivityTier(str, Enum):
-    HIGH = "high"        # >24 events/day typical (motion sensors, power monitors)
-    MEDIUM = "medium"    # 4-24 events/day typical (doors, lights)
-    LOW = "low"          # <4 events/day typical (garage door, rarely-used rooms)
+1. **Same pattern as existing detectors** -- pure Python, no HA imports, returns `AlertResult`
+2. **Symmetric pairs** -- correlation between A and B is one relationship. Use `frozenset` keys.
+3. **Lazy discovery** -- only track pairs where co-occurrence has actually been observed
+4. **Sustained-evidence gating** -- same pattern as `AcuteDetector`; no single-cycle false positives
+5. **Conservative defaults** -- high co-occurrence threshold before a pair is "learned"
 
-# Tier classification boundaries (events per day across all observed days)
-TIER_HIGH_THRESHOLD: Final = 24    # above this = HIGH
-TIER_LOW_THRESHOLD: Final = 4     # below this = LOW; between = MEDIUM
-
-# Tier-specific inactivity parameters
-TIER_INACTIVITY_FLOORS: Final = {
-    ActivityTier.HIGH: 3600,    # 1 hour minimum -- a person leaving the house is normal
-    ActivityTier.MEDIUM: 0,     # no floor -- existing logic is appropriate
-    ActivityTier.LOW: 0,        # no floor -- long gaps are expected and already handled
-}
-
-TIER_INACTIVITY_MULTIPLIER_BOOST: Final = {
-    ActivityTier.HIGH: 2.0,     # double the effective multiplier for high-frequency entities
-    ActivityTier.MEDIUM: 1.0,   # no change
-    ActivityTier.LOW: 1.0,      # no change
-}
-
-# Config key for per-entity tier overrides
-CONF_ACTIVITY_TIER_OVERRIDES: Final = "activity_tier_overrides"
-DEFAULT_ACTIVITY_TIER_OVERRIDES: Final = {}  # empty = all auto-classified
-```
-
-**Rationale for thresholds:** A motion sensor in an active room fires 50-200+ times per day. A door contact fires 4-20 times. A garage door fires 0-4 times. The 24/4 split cleanly separates these categories based on real-world HA usage patterns. These are median daily rates across the observation window, not peak rates.
-
-### 2. Tier Classification on EntityRoutine (`routine_model.py`)
-
-Add a `classify_tier()` method and a persisted `_activity_tier` field:
+### Internal State
 
 ```python
 @dataclass
-class EntityRoutine:
-    entity_id: str
-    is_binary: bool
-    slots: list[ActivitySlot] = ...
-    history_window_days: int = ...
-    first_observation: str | None = None
-    _activity_tier: str | None = None  # persisted tier; None = not yet classified
-
-    def classify_tier(self) -> str | None:
-        """Compute activity tier from median daily event rate across all observed days.
-
-        Returns tier string ("high"/"medium"/"low") or None if insufficient data.
-        Scans all slots' event_times to build per-date event counts, then takes
-        the median daily count as the classification signal.
-        """
-        # Collect per-date event counts across all slots
-        date_counts: dict[date, int] = {}
-        for slot in self.slots:
-            for ts_str in slot.event_times:
-                try:
-                    dt = datetime.fromisoformat(ts_str)
-                    d = dt.date()
-                    date_counts[d] = date_counts.get(d, 0) + 1
-                except (ValueError, TypeError):
-                    pass
-        if len(date_counts) < 3:  # need at least 3 days of data
-            return None
-        med = median(sorted(date_counts.values()))
-        if med >= TIER_HIGH_THRESHOLD:
-            return ActivityTier.HIGH.value
-        if med < TIER_LOW_THRESHOLD:
-            return ActivityTier.LOW.value
-        return ActivityTier.MEDIUM.value
+class CorrelationPair:
+    """Tracks co-occurrence statistics for a pair of entities."""
+    entities: tuple[str, str]         # Sorted pair of entity IDs
+    co_occurrences: int = 0           # Times both fired within window
+    solo_counts: dict[str, int] = field(default_factory=dict)
+    first_observed: str | None = None # ISO timestamp
 
     @property
-    def activity_tier(self) -> str | None:
-        """Return the current activity tier, computing if not yet set."""
-        if self._activity_tier is None:
-            self._activity_tier = self.classify_tier()
-        return self._activity_tier
+    def total_events(self) -> int:
+        return self.co_occurrences + sum(self.solo_counts.values())
 
-    def reclassify_tier(self) -> None:
-        """Force reclassification (called periodically by coordinator)."""
-        self._activity_tier = self.classify_tier()
-```
+    @property
+    def co_occurrence_rate(self) -> float:
+        total = self.total_events
+        if total == 0:
+            return 0.0
+        return self.co_occurrences / total
 
-**Key design decisions:**
 
-- **Median, not mean:** A single high-activity day should not push a normally quiet entity into the HIGH tier. Median is robust to outliers.
-- **Minimum 3 days:** Classification needs enough data to be meaningful. Aligns with `MIN_EVIDENCE_DAYS` used by DriftDetector.
-- **Cached with explicit reclassify:** Tier should not flap on every poll cycle. The coordinator calls `reclassify_tier()` once per day (or on config change). Between reclassifications, the cached value is used.
-- **Persisted via `to_dict`/`from_dict`:** Tier survives HA restart. No flapping during learning period.
+class CorrelationDetector:
+    """Detects broken co-occurrence patterns between entity pairs.
 
-### 3. Tier-Aware AcuteDetector (`acute_detector.py`)
-
-The `check_inactivity` method gains two new behaviors based on tier:
-
-```python
-def check_inactivity(
-    self,
-    entity_id: str,
-    routine: EntityRoutine,
-    now: datetime,
-    last_seen: datetime | None,
-) -> AlertResult | None:
-    # ... existing guards ...
-
-    # Tier-aware threshold computation
-    tier = routine.activity_tier  # may be None during learning
-    tier_enum = ActivityTier(tier) if tier else ActivityTier.MEDIUM
-
-    # Base threshold (existing logic)
-    if cv is not None:
-        raw_scalar = 1.0 + cv
-        scalar = max(self._min_multiplier, min(self._max_multiplier, raw_scalar))
-        threshold = self._inactivity_multiplier * scalar * expected_gap
-    else:
-        threshold = self._inactivity_multiplier * expected_gap
-
-    # Tier-specific adjustments
-    multiplier_boost = TIER_INACTIVITY_MULTIPLIER_BOOST[tier_enum]
-    floor = TIER_INACTIVITY_FLOORS[tier_enum]
-    threshold = max(threshold * multiplier_boost, floor)
-
-    # ... rest of existing logic (elapsed comparison, sustained evidence, alert creation) ...
-
-    # Display formatting (see section 5)
-    elapsed_fmt = _format_duration(elapsed)
-    typical_fmt = _format_duration(expected_gap)
-
-    return AlertResult(
-        ...,
-        explanation=(
-            f"{entity_id}: no activity for {elapsed_fmt} "
-            f"(typical interval: {typical_fmt}, "
-            f"{severity_ratio:.1f}x over threshold)"
-        ),
-        details={
-            ...,
-            "activity_tier": tier,
-        },
-    )
-```
-
-**Why the tier modifies AcuteDetector rather than RoutineModel:** The tier is a classification of the entity. The threshold adjustment is a detection policy. These are separate concerns. RoutineModel answers "what is this entity's pattern?" AcuteDetector answers "is this entity behaving anomalously right now?" The tier bridges them by informing the detector's policy.
-
-**Why multiplier boost AND floor (not just floor):**
-- Floor alone: A HIGH entity with `expected_gap=2min` and `multiplier=3.0` gets threshold `max(360s, 3600s) = 3600s`. Good. But an entity with `expected_gap=30min` gets `max(5400s, 3600s) = 5400s` -- the floor has no effect and the threshold is still potentially too tight for high-frequency entities.
-- Boost alone: Doubles the threshold from `360s` to `720s` -- still only 12 minutes, still too aggressive.
-- Both: `max(720s, 3600s) = 3600s`. The floor catches very-high-frequency entities; the boost catches moderately-high ones.
-
-### 4. Tier Override in Config Flow (`config_flow.py`)
-
-Add a per-entity tier override to the options flow. This is a dict mapping `entity_id -> tier_string`, stored in config entry data.
-
-```python
-# In _build_data_schema(), add after existing fields:
-vol.Optional(
-    CONF_ACTIVITY_TIER_OVERRIDES,
-    default=DEFAULT_ACTIVITY_TIER_OVERRIDES,
-): ObjectSelector(
-    ObjectSelectorConfig()  # Free-form dict; see note below
-)
-```
-
-**UI approach:** HA's config flow does not natively support a "per-entity key-value map" selector. Two practical options:
-
-1. **Option A (recommended): Separate step in options flow.** Add an `async_step_tier_overrides` that shows monitored entities with their auto-detected tier and a dropdown to override. This is the cleanest UX -- users see current classification and can change it.
-
-2. **Option B: TextSelector with JSON.** Store overrides as a JSON string. Functional but poor UX for non-technical users.
-
-Option A implementation sketch:
-```python
-async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-    # ... existing options logic ...
-    # Add a "Configure activity tiers" menu item
-    return self.async_show_menu(
-        step_id="init",
-        menu_options=["settings", "activity_tiers"],
-    )
-
-async def async_step_activity_tiers(self, user_input=None) -> ConfigFlowResult:
-    if user_input is not None:
-        # user_input is {entity_id: tier_string} for each monitored entity
-        overrides = {k: v for k, v in user_input.items() if v != "auto"}
-        updated_data = dict(self._config_entry.data)
-        updated_data[CONF_ACTIVITY_TIER_OVERRIDES] = overrides
-        self.hass.config_entries.async_update_entry(self._config_entry, data=updated_data)
-        return self.async_create_entry(title="", data={})
-
-    # Build schema: one SelectSelector per monitored entity
-    coordinator = self.hass.data[DOMAIN][self._config_entry.entry_id]
-    schema_dict = {}
-    for eid in coordinator.monitored_entities:
-        routine = coordinator._routine_model._entities.get(eid)
-        auto_tier = routine.activity_tier if routine else None
-        current_override = self._config_entry.data.get(
-            CONF_ACTIVITY_TIER_OVERRIDES, {}
-        ).get(eid, "auto")
-        schema_dict[vol.Optional(eid, default=current_override)] = SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    {"value": "auto", "label": f"Auto ({auto_tier or 'learning'})"},
-                    {"value": "high", "label": "High frequency"},
-                    {"value": "medium", "label": "Medium frequency"},
-                    {"value": "low", "label": "Low frequency"},
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-            )
-        )
-    return self.async_show_form(
-        step_id="activity_tiers",
-        data_schema=vol.Schema(schema_dict),
-    )
-```
-
-**Important:** The options flow currently uses a single `async_step_init` without menus. Adding a multi-step flow with `async_show_menu` changes the UX pattern. This is a moderate-complexity change to config_flow.py but follows standard HA patterns.
-
-**Alternative (simpler, recommended for v3.1):** Skip the separate step. Add tier overrides as a single `TextSelector` with format instructions, or defer the override UI to a future milestone and ship auto-classification only. The auto-classification itself solves the primary false-positive problem; override is a refinement.
-
-### 5. Display Formatting (`acute_detector.py`)
-
-Add a module-level helper for human-readable duration formatting:
-
-```python
-def _format_duration(seconds: float) -> str:
-    """Format a duration in seconds to a human-readable string.
-
-    Uses minutes for intervals < 1 hour, hours+minutes for >= 1 hour.
+    Pure Python stdlib only. Zero Home Assistant imports.
     """
-    total_seconds = int(seconds)
-    if total_seconds < 3600:
-        minutes = total_seconds // 60
-        return f"{minutes}m"
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    if minutes == 0:
-        return f"{hours}h"
-    return f"{hours}h {minutes}m"
+
+    def __init__(
+        self,
+        co_occurrence_window_seconds: int = 300,  # 5 minutes
+        min_observations: int = 20,
+        min_co_occurrence_rate: float = 0.7,
+        sustained_cycles: int = SUSTAINED_EVIDENCE_CYCLES,
+    ) -> None:
+        self._window = co_occurrence_window_seconds
+        self._min_obs = min_observations
+        self._min_rate = min_co_occurrence_rate
+        self._sustained_cycles = sustained_cycles
+        self._pairs: dict[tuple[str, str], CorrelationPair] = {}
+        self._break_cycles: dict[tuple[str, str], int] = {}  # sustained evidence counters
+
+    def record_event(
+        self,
+        entity_id: str,
+        timestamp: datetime,
+        all_last_seen: dict[str, datetime],
+    ) -> None:
+        """Record an event and update co-occurrence counts for all pairs."""
+
+    def check(
+        self,
+        now: datetime,
+        last_seen: dict[str, datetime],
+    ) -> list[AlertResult]:
+        """Check all learned correlation pairs for broken correlations."""
+
+    def get_correlation_groups(self) -> list[dict[str, Any]]:
+        """Return discovered groups for sensor attributes."""
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CorrelationDetector: ...
 ```
 
-This replaces the current hardcoded `f"{elapsed_hours:.1f}h"` and `f"{typical_hours:.1f}h"` formatting in `check_inactivity`.
+### Why This Shape
 
-**Also fix coordinator.py:** The `_build_sensor_data` method has identical hardcoded hours formatting for `time_since_formatted` and `typical_interval_formatted`. Extract to a shared utility or import `_format_duration` from `acute_detector`. Since `acute_detector` is pure Python (no HA imports), importing from it is safe. Alternatively, place the helper in a new `formatting.py` or in `routine_model.py` as a module-level function.
+**Why a separate detector class, not embedded in RoutineModel?**
+- `RoutineModel` is per-entity. Correlation is inherently cross-entity.
+- The detector pattern is proven: stateless check function, internal cycle counters, returns `AlertResult`.
+- Testable in isolation with zero HA mocking.
 
-**Recommendation:** Place `_format_duration` in `routine_model.py` as a module-level utility. Both `acute_detector.py` and `coordinator.py` already import from `routine_model`. This avoids a new file and keeps the import graph clean.
+**Why frozenset/sorted-tuple keys instead of ordered pairs?**
+- A correlating with B is the same relationship as B correlating with A.
+- Halves the state space. Simplifies lookup.
+- Serialization: store as sorted list of two entity IDs.
 
-### 6. Coordinator Integration (`coordinator.py`)
+**Why lazy discovery (not pre-computing all pairs)?**
+- With N entities, there are N*(N-1)/2 theoretical pairs. For 20 entities, that is 190 pairs. Most are noise.
+- Only pairs where an actual co-occurrence has been observed get tracked.
+- Typical install: 20 monitored entities yield 10-30 observed pairs, not 190.
 
-Changes to the coordinator are minimal:
+**Why 5-minute co-occurrence window?**
+- Human routine sequences (enter room, turn on light, start kettle) complete within 1-5 minutes.
+- Wider windows (15+ min) create spurious correlations between independent activities.
+- Configurable via config flow for users with different needs.
+
+**Why NOT slot-aware (hour-of-day) co-occurrence for v4.0?**
+- Slot-level correlation requires much more data to reach statistical confidence (each slot needs `min_observations` independently).
+- Global co-occurrence rate is already useful for welfare monitoring.
+- Can add slot-level refinement in a future milestone if needed.
+
+---
+
+## Startup Tier Rehydration Fix
+
+### The Bug
+
+The tier classification block in `_async_update_data` runs when `self._today_date != now.date()`:
 
 ```python
-# In __init__:
-self._tier_overrides: dict[str, str] = dict(
-    d.get(CONF_ACTIVITY_TIER_OVERRIDES, DEFAULT_ACTIVITY_TIER_OVERRIDES)
-)
+async def _async_update_data(self) -> dict[str, Any]:
+    now = dt_util.now()
+    if self._today_date != now.date():
+        self._today_count = 0
+        self._today_date = now.date()
+        for r in self._routine_model._entities.values():
+            r.classify_tier(now)
+        # ...
+```
 
-# In _handle_state_changed (after routine_model.record):
-# Apply tier override if configured
-if eid in self._tier_overrides:
-    routine = self._routine_model._entities.get(eid)
-    if routine:
-        routine._activity_tier = self._tier_overrides[eid]
+On startup, `_today_date` is `None`, so this condition is `True` and tiers get classified on the first `_async_update_data` call. This appears correct. However, there is a race condition:
 
-# In _async_update_data (once per day logic, reuse existing _today_date check):
+**In `_handle_state_changed`:**
+```python
 if self._today_date != now.date():
-    # Reclassify tiers daily (unless overridden)
-    for eid in self._monitored_entities:
-        if eid not in self._tier_overrides:
-            routine = self._routine_model._entities.get(eid)
-            if routine:
-                routine.reclassify_tier()
+    self._today_count, self._today_date = 0, now.date()
+```
 
-# In _build_sensor_data: add tier info to entity_status entries
+If a state change event arrives BEFORE the first `_async_update_data` call (which happens -- `async_setup` registers the listener before `async_config_entry_first_refresh`), `_today_date` gets set to today. Then when `_async_update_data` first runs, `self._today_date == now.date()` is `True`, and the tier classification block is SKIPPED. Tiers remain `None` until midnight.
+
+### Recommended Fix
+
+```python
+class BehaviourMonitorCoordinator:
+    def __init__(self, ...):
+        ...
+        self._tiers_initialized: bool = False  # NEW
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        now = dt_util.now()
+
+        # Daily rollover (existing)
+        if self._today_date != now.date():
+            self._today_count = 0
+            self._today_date = now.date()
+            self._classify_all_tiers(now)
+
+        # Startup rehydration (NEW)
+        elif not self._tiers_initialized:
+            self._classify_all_tiers(now)
+
+        # ... rest of method unchanged
+
+    def _classify_all_tiers(self, now: datetime) -> None:
+        """Classify activity tiers for all entities, applying override if set."""
+        for r in self._routine_model._entities.values():
+            r.classify_tier(now)
+        if self._activity_tier_override != "auto":
+            override_tier = ActivityTier(self._activity_tier_override)
+            for r in self._routine_model._entities.values():
+                r._activity_tier = override_tier
+        self._tiers_initialized = True
+```
+
+**Why `_tiers_initialized` flag instead of calling `classify_tier` in `async_setup`?**
+- `async_setup` runs before `async_config_entry_first_refresh`. Calling `dt_util.now()` there works, but classification logically belongs in the update cycle where it can be tested alongside other update behavior.
+- The flag approach is consistent with the existing `_today_date` guard pattern.
+- No new persistence needed -- the flag resets on every restart, which is the desired behavior.
+- The fix is 5 lines of code. Minimal risk.
+
+---
+
+## AlertType Extension
+
+```python
+class AlertType(str, Enum):
+    INACTIVITY = "inactivity"
+    UNUSUAL_TIME = "unusual_time"
+    DRIFT = "drift"
+    CORRELATION_BREAK = "correlation_break"  # NEW
+```
+
+This integrates with existing systems with zero changes:
+- **Alert suppression:** Uses `f"{a.entity_id}|{a.alert_type.value}"` as key -- naturally extends.
+- **Notification cooldown:** Same key pattern.
+- **Severity gating:** `AlertResult.severity` is already checked by `_handle_alerts`.
+- **Sensor data:** `AlertResult.to_dict()` serializes the new type value automatically.
+
+**Which entity_id for a pair alert?** Use the entity that fired WITHOUT its expected companion. If entity A fires but expected companion B does not, the alert's `entity_id` is A. This maps cleanly to existing per-entity alert suppression.
+
+---
+
+## Coordinator Modifications
+
+### __init__ (Modified)
+
+```python
+def __init__(self, hass, entry):
+    ...
+    self._correlation_detector = CorrelationDetector(
+        co_occurrence_window_seconds=int(
+            d.get(CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW)
+        ),
+    )
+    self._tiers_initialized: bool = False
+```
+
+### async_setup (Modified)
+
+```python
+async def async_setup(self) -> None:
+    stored = await self._store.async_load()
+    if stored:
+        if "routine_model" in stored:
+            self._routine_model = RoutineModel.from_dict(stored["routine_model"])
+        for eid, sd in stored.get("cusum_states", {}).items():
+            self._drift_detector._states[eid] = CUSUMState.from_dict(sd)
+        # NEW: restore correlation state
+        if "correlation_state" in stored:
+            self._correlation_detector = CorrelationDetector.from_dict(
+                stored["correlation_state"]
+            )
+        # ... rest unchanged
+```
+
+### _handle_state_changed (Modified)
+
+```python
+@callback
+def _handle_state_changed(self, event: Event) -> None:
+    ...
+    now, sv = dt_util.now(), str(ns.state)
+    self._routine_model.record(...)
+    self._last_seen[eid] = now
+
+    # NEW: feed correlation detector
+    self._correlation_detector.record_event(eid, now, self._last_seen)
+
+    # ... rest unchanged
+```
+
+### _run_detection (Modified)
+
+```python
+def _run_detection(self, now: datetime) -> list[AlertResult]:
+    alerts: list[AlertResult] = []
+    d = now.date()
+    for eid in self._monitored_entities:
+        if (r := self._routine_model._entities.get(eid)) is None:
+            continue
+        alerts.extend(x for x in (
+            self._acute_detector.check_inactivity(eid, r, now, self._last_seen.get(eid)),
+            self._acute_detector.check_unusual_time(eid, r, now),
+            self._drift_detector.check(eid, r, d, now),
+        ) if x is not None)
+
+    # NEW: cross-entity correlation check (runs once per cycle, not per-entity)
+    alerts.extend(
+        self._correlation_detector.check(now, self._last_seen)
+    )
+    return alerts
+```
+
+### _save_data (Modified)
+
+```python
+async def _save_data(self) -> None:
+    await self._store.async_save({
+        "routine_model": self._routine_model.to_dict(),
+        "cusum_states": {e: s.to_dict() for e, s in self._drift_detector._states.items()},
+        "correlation_state": self._correlation_detector.to_dict(),  # NEW
+        "coordinator": { ... },
+    })
+```
+
+### _build_sensor_data (Modified)
+
+The existing `cross_sensor_patterns` key (currently hardcoded as `[]`) gets populated:
+
+```python
+"cross_sensor_patterns": self._correlation_detector.get_correlation_groups(),
+```
+
+Entity status entries get correlation info:
+
+```python
 "entity_status": [
     {
         "entity_id": e,
         "status": "active" if e in self._last_seen else "unknown",
         "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
-        "activity_tier": (
-            self._routine_model._entities[e].activity_tier
-            if e in self._routine_model._entities else None
-        ),
+        "activity_tier": r.activity_tier.value if (r := ...) and r.activity_tier else None,
+        "correlated_with": self._correlation_detector.get_correlated_entities(e),  # NEW
     }
     for e in self._monitored_entities
 ],
 ```
 
-### 7. Sensor Exposure (`sensor.py`)
+### _build_safe_defaults
 
-No new sensor entities. Tier is exposed as an attribute on the existing `entity_status_summary` sensor:
-
-```python
-# In the entity_status_summary description's extra_attrs_fn:
-extra_attrs_fn=lambda coord, data: {
-    ATTR_ENTITY_STATUS: data.get("entity_status", []),
-    # Each entity_status entry now includes "activity_tier" key
-},
-```
-
-This preserves the 11-sensor count and avoids sensor entity ID changes.
-
-### 8. Config Migration (`__init__.py`)
-
-```python
-# Add v7->v8 migration:
-if config_entry.version < 8:
-    new_data = dict(config_entry.data)
-    new_data.setdefault(CONF_ACTIVITY_TIER_OVERRIDES, DEFAULT_ACTIVITY_TIER_OVERRIDES)
-    hass.config_entries.async_update_entry(config_entry, data=new_data, version=8)
-    _LOGGER.info(
-        "Behaviour Monitor: Config entry migrated to v8 -- activity tier overrides added"
-    )
-```
-
-Also bump `BehaviourMonitorConfigFlow.VERSION = 8` and `STORAGE_VERSION` if storage schema changes (it does -- `EntityRoutine.to_dict` now includes `_activity_tier`).
-
-**Storage migration:** No special handling needed. `EntityRoutine.from_dict` already uses `.get()` with defaults for missing keys. Adding `_activity_tier` to `to_dict`/`from_dict` is backward-compatible -- old storage simply has no `_activity_tier` key, which defaults to `None` (triggers auto-classification on next load).
+No change needed -- `cross_sensor_patterns: []` is already present.
 
 ---
 
-## Data Flow: Complete Tier-Aware Inactivity Check
+## Persistence Design
 
+### Same Store File
+
+Correlation state persists alongside existing data in `.storage/behaviour_monitor.{entry_id}.json`. No new Store instance.
+
+**Why same file?**
+- Existing pattern uses one `Store` per config entry. Adding a second Store adds complexity for no benefit.
+- Correlation state is small: one dict per observed pair, typically 10-30 pairs.
+- Atomic save: all state is consistent at save time.
+- Forward-compatible: `stored.get("correlation_state")` returns `None` for old storage files, causing the detector to start fresh (correct behavior).
+
+### Serialization Format
+
+```json
+{
+    "routine_model": { ... },
+    "cusum_states": { ... },
+    "correlation_state": {
+        "co_occurrence_window_seconds": 300,
+        "min_observations": 20,
+        "min_co_occurrence_rate": 0.7,
+        "pairs": {
+            "binary_sensor.kitchen_motion|binary_sensor.kettle_power": {
+                "entities": ["binary_sensor.kettle_power", "binary_sensor.kitchen_motion"],
+                "co_occurrences": 47,
+                "solo_counts": {
+                    "binary_sensor.kitchen_motion": 12,
+                    "binary_sensor.kettle_power": 3
+                },
+                "first_observed": "2026-03-15T07:23:00+00:00"
+            }
+        }
+    },
+    "coordinator": { ... }
+}
 ```
-EntityRoutine (168 slots of event_times)
-        |
-        +---> classify_tier() [called once/day by coordinator]
-        |     Scans all event_times, builds date->count map, takes median
-        |     Returns "high" / "medium" / "low" / None
-        |     Cached in _activity_tier field (persisted)
-        |
-        +---> expected_gap_seconds(hour, dow) [called per check]
-        +---> interval_cv(hour, dow) [called per check]
-        |
-        v
-AcuteDetector.check_inactivity(entity_id, routine, now, last_seen)
-        |
-        +---> tier = routine.activity_tier
-        +---> base_threshold = inactivity_multiplier * adaptive_scalar * expected_gap
-        +---> boosted_threshold = base_threshold * TIER_INACTIVITY_MULTIPLIER_BOOST[tier]
-        +---> final_threshold = max(boosted_threshold, TIER_INACTIVITY_FLOORS[tier])
-        +---> elapsed >= final_threshold? sustained evidence? -> AlertResult
-        |
-        v
-AlertResult.explanation uses _format_duration() for human-readable output
-        |  "no activity for 45m (typical interval: 2m, 3.1x over threshold)"
-        |  instead of: "no activity for 0.8h (typical interval: 0.0h, ...)"
+
+**Pair key format:** Sorted entity IDs joined by `|`. Deterministic, human-readable in storage files.
+
+---
+
+## Sensor Modifications
+
+### No New Sensor Entities
+
+The milestone says "expose discovered correlation groups as sensor attributes." This is done by:
+
+1. Populating the existing `cross_sensor_patterns` key in sensor data (currently `[]`)
+2. Adding `correlated_with` to each `entity_status` entry
+
+This preserves the 11-sensor stability constraint and avoids breaking user automations.
+
+### Data Shape for cross_sensor_patterns
+
+```python
+[
+    {
+        "entities": ["binary_sensor.kitchen_motion", "binary_sensor.kettle_power"],
+        "co_occurrence_rate": 0.78,
+        "total_observations": 62,
+        "status": "active",  # or "broken" if correlation is currently violated
+    },
+    ...
+]
 ```
+
+---
+
+## Config Migration: v8 -> v9
+
+```python
+# In __init__.py
+if config_entry.version < 9:
+    new_data = dict(config_entry.data)
+    new_data.setdefault(CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW)
+    hass.config_entries.async_update_entry(config_entry, data=new_data, version=9)
+    _LOGGER.info(
+        "Behaviour Monitor: Config entry migrated to v9 -- correlation window added"
+    )
+```
+
+New constants in `const.py`:
+```python
+# v4.0 config keys
+CONF_CORRELATION_WINDOW: Final = "correlation_window"
+DEFAULT_CORRELATION_WINDOW: Final = 300  # seconds (5 minutes)
+
+# v4.0 detection constants
+CORRELATION_MIN_OBSERVATIONS: Final = 20
+CORRELATION_MIN_RATE: Final = 0.7
+```
+
+---
+
+## Patterns to Follow
+
+### Pattern 1: Detector Interface
+**What:** All detectors are pure Python classes with no HA imports. They take domain objects and datetimes, return `AlertResult`.
+**When:** Any new detection logic.
+**Example:** `CorrelationDetector` follows this exactly -- `record_event()` for learning, `check()` for detection, `to_dict()`/`from_dict()` for persistence.
+
+### Pattern 2: Sustained Evidence Gating
+**What:** Require N consecutive cycles of evidence before firing an alert. Counter resets when condition clears.
+**When:** Any detection that runs on a polling cycle.
+**Why:** Prevents transient false positives. Proven in `AcuteDetector` with `_inactivity_cycles` and `_unusual_time_cycles` dicts.
+**CorrelationDetector applies this:** `_break_cycles` dict tracks consecutive cycles where a learned pair is broken.
+
+### Pattern 3: Coordinator as Wiring Layer
+**What:** Coordinator owns detector instances, feeds them data from state changes, collects `AlertResult` objects, handles notifications.
+**When:** Always. Detectors never talk to HA directly.
+
+### Pattern 4: Single Store File
+**What:** All persistent state goes in one `Store.async_save()` call with a versioned dict.
+**When:** Adding new persistent state.
+**Why:** Atomic saves, simple recovery, existing pattern. Forward-compatible via `.get()` with defaults.
+
+### Pattern 5: Config Migration via setdefault
+**What:** Each version bump adds new keys with `setdefault()`, preserving any user-set values.
+**When:** Any new config key.
+**Why:** Consistent with v4->v5, v5->v6, v6->v7, v7->v8 migration chain.
+
+---
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Correlation in RoutineModel
+**What:** Adding cross-entity logic to `RoutineModel` or `EntityRoutine`.
+**Why bad:** `RoutineModel` is per-entity by design. Cross-entity logic would require each entity to know about all other entities, creating circular data dependencies and violating single responsibility.
+**Instead:** Separate `CorrelationDetector` that reads from coordinator's `_last_seen` dict.
+
+### Anti-Pattern 2: Eager Pair Discovery
+**What:** Pre-creating `CorrelationPair` objects for all N*(N-1)/2 possible pairs at startup.
+**Why bad:** With 20 entities, that is 190 pairs. With 50 entities, 1,225. Most are noise. Wastes memory and makes storage bloated.
+**Instead:** Lazily create pairs only when a co-occurrence is actually observed. A pair entry is born when entity A fires and entity B's `last_seen` is within the window.
+
+### Anti-Pattern 3: New Sensor Entities for Correlation
+**What:** Adding `correlation_groups` or `correlation_status` as new sensor entity IDs.
+**Why bad:** Violates the 11-sensor stability constraint. Users have automations built on existing sensor entity IDs.
+**Instead:** Populate the existing `cross_sensor_patterns` key (already `[]` in sensor data) and add `correlated_with` to `entity_status` entries.
+
+### Anti-Pattern 4: Persisting Tier Classification
+**What:** Serializing `_activity_tier` and `_tier_classified_date` in `EntityRoutine.to_dict()`.
+**Why bad:** Tiers are cheap to compute and depend on current data. Persisting creates stale-tier bugs when data changes between restarts. The existing code correctly marks these fields as `init=False, repr=False`.
+**Instead:** Recompute on startup (the rehydration fix) and daily thereafter.
+
+### Anti-Pattern 5: Two-Way Correlation Tracking
+**What:** Tracking "A co-occurs with B" and "B co-occurs with A" as separate relationships.
+**Why bad:** Doubles the state space, doubles the alert potential, and creates confusing duplicate alerts.
+**Instead:** Use sorted tuple keys so (A,B) and (B,A) resolve to the same `CorrelationPair`.
+
+---
+
+## Build Order
+
+Based on dependency analysis. Each step is independently testable.
+
+| Step | What | Depends On | Risk |
+|------|------|------------|------|
+| 1 | `alert_result.py` -- Add `CORRELATION_BREAK` to `AlertType` | Nothing | Zero -- enum extension |
+| 2 | `const.py` -- Add `CONF_CORRELATION_WINDOW`, defaults, detection constants | Nothing | Zero -- new constants |
+| 3 | `correlation_detector.py` -- New file, full implementation | Steps 1, 2 | Low -- pure Python, fully testable in isolation |
+| 4 | Startup tier rehydration fix in `coordinator.py` | Nothing | Low -- 5 lines, independent of correlation work |
+| 5 | `coordinator.py` -- Wire `CorrelationDetector` into `__init__`, `async_setup`, `_handle_state_changed`, `_run_detection`, `_save_data`, `_build_sensor_data` | Steps 1-3 | Medium -- most integration points |
+| 6 | `config_flow.py` + `__init__.py` -- Config migration v8->v9, correlation window option | Steps 2, 5 | Low -- follows existing migration pattern |
+| 7 | `sensor.py` attribute exposure (minimal -- mostly data flow from step 5) | Step 5 | Low |
+
+**Steps 1-3 and step 4 are fully independent** and can be built in parallel.
+**Steps 5-7 depend on steps 1-3.**
+**Step 4 can be delivered independently** as a quick bugfix, even before the correlation feature.
+
+---
+
+## Scalability Considerations
+
+| Concern | 5 entities | 20 entities | 50 entities |
+|---------|-----------|-------------|-------------|
+| Theoretical pairs | 10 | 190 | 1,225 |
+| Observed pairs (lazy) | 2-5 | 10-30 | 20-60 |
+| Memory per pair | ~200 bytes | ~200 bytes | ~200 bytes |
+| Detection time per cycle | <1ms | <5ms | <15ms |
+| Storage overhead | ~1KB | ~6KB | ~15KB |
+
+Lazy discovery keeps practical pair counts well below theoretical maximums. The 60-second update cycle gives ample time for correlation checks.
 
 ---
 
@@ -429,88 +605,36 @@ AlertResult.explanation uses _format_duration() for human-readable output
 
 | Touchpoint | File | Change Type | Lines (est.) |
 |------------|------|-------------|-------------|
-| `ActivityTier` enum + constants | `const.py` | Add | ~25 |
-| `classify_tier()`, `activity_tier` property, `reclassify_tier()` | `routine_model.py` | Add methods to EntityRoutine | ~40 |
-| `_activity_tier` in `to_dict`/`from_dict` | `routine_model.py` | Modify serialization | ~6 |
-| `_format_duration()` utility | `routine_model.py` | Add module-level function | ~12 |
-| Tier-aware threshold (boost + floor) | `acute_detector.py` | Modify `check_inactivity` | ~10 |
-| Duration formatting in explanation | `acute_detector.py` | Modify explanation string | ~4 |
-| Duration formatting in sensor data | `coordinator.py` | Modify `_build_sensor_data` | ~6 |
-| Tier override from config | `coordinator.py` | Add to `__init__`, apply in handlers | ~15 |
-| Daily reclassification | `coordinator.py` | Add to `_async_update_data` | ~8 |
-| Tier in entity_status dict | `coordinator.py` | Modify `_build_sensor_data` | ~5 |
-| Tier override step | `config_flow.py` | Add optional step (or defer) | ~40 |
-| Config migration v7->v8 | `__init__.py` | Add migration block | ~10 |
-| New config constant | `const.py` | Add key + default | ~3 |
-| Translations | `translations/en.json` | Add tier labels | ~10 |
+| `CORRELATION_BREAK` enum value | `alert_result.py` | Add 1 line | 1 |
+| Correlation constants | `const.py` | Add constants | 10 |
+| `CorrelationDetector` + `CorrelationPair` | `correlation_detector.py` | **New file** | ~200 |
+| `_tiers_initialized` flag + `_classify_all_tiers` | `coordinator.py` | Add method + flag | 12 |
+| Wire correlation detector | `coordinator.py` | Modify 5 methods | 25 |
+| Populate `cross_sensor_patterns` | `coordinator.py` | Modify `_build_sensor_data` | 5 |
+| Config migration v8->v9 | `__init__.py` | Add migration block | 8 |
+| Correlation window option | `config_flow.py` | Add field | 10 |
+| Translations | `translations/en.json` | Add labels | 5 |
 
-**Total estimated: ~195 lines of new/modified code** (excluding tests).
-
----
-
-## Suggested Build Order
-
-Dependencies run bottom-up. Each step is independently testable.
-
-| Step | What | Depends On | Test Focus |
-|------|------|------------|------------|
-| 1 | `const.py` -- `ActivityTier` enum, tier thresholds, floor/boost maps, config key | Nothing | Import verification |
-| 2 | `routine_model.py` -- `_format_duration()` utility function | Nothing | Unit tests for edge cases (0s, 59s, 60s, 3599s, 3600s, multi-hour) |
-| 3 | `routine_model.py` -- `classify_tier()`, `activity_tier`, `reclassify_tier()`, `to_dict`/`from_dict` update | Step 1 (enum import) | Classification with varying event rates; persistence round-trip; None for insufficient data |
-| 4 | `acute_detector.py` -- tier-aware threshold (boost + floor) + display formatting | Steps 1, 2, 3 | HIGH-tier entity gets floor applied; MEDIUM/LOW unchanged; formatted strings use minutes when < 1h |
-| 5 | `coordinator.py` -- tier override injection, daily reclassification, tier in sensor data, display formatting fix | Steps 1-4 | Integration: override applied; reclassify runs daily; sensor data contains tier |
-| 6 | `config_flow.py` -- tier override UI + `__init__.py` migration | Step 5 | Config migration v7->v8; UI renders; overrides saved |
-| 7 | `sensor.py` + `translations/en.json` -- tier in entity_status attributes, labels | Step 5 | Sensor attributes include tier |
-
-**Steps 2 and 3 can be combined** into a single phase since they both modify `routine_model.py`.
-
-**Step 6 (config UI) is optional for MVP.** Auto-classification alone solves the primary false-positive problem. Override UI can ship in a follow-up if needed. If deferred, skip the config migration too (no new config key needed if no override).
-
----
-
-## Anti-Patterns to Avoid
-
-### Anti-Pattern 1: Tier Classification Inside AcuteDetector
-
-**What goes wrong:** Putting `classify_tier()` logic inside `AcuteDetector.check_inactivity` so it computes the tier on every check.
-
-**Why bad:** Classification scans all 168 slots' event_times deques -- O(total_events). Running this every 60 seconds per entity is wasteful. The tier changes at most once per day.
-
-**Instead:** Classify once per day on `EntityRoutine`. Cache the result. Detector reads the cached tier.
-
-### Anti-Pattern 2: Adding a New Sensor for Tier
-
-**What goes wrong:** Creating a 12th sensor entity for activity tier display.
-
-**Why bad:** Adds a sensor entity ID that users must discover. Tier is a property of existing entities, not a standalone metric. It also risks the "too many sensors" problem where users feel overwhelmed.
-
-**Instead:** Expose tier as an attribute on the existing `entity_status_summary` sensor, where per-entity information already lives.
-
-### Anti-Pattern 3: Tier Flapping Without Hysteresis
-
-**What goes wrong:** Reclassifying tier on every coordinator update cycle. An entity near the 24 events/day boundary flips between HIGH and MEDIUM with each poll.
-
-**Why bad:** Flapping tier means flapping threshold behavior. An entity could go from floor-protected to non-floor-protected between cycles.
-
-**Instead:** Reclassify once per day. Use median (not mean) of daily rates, which is inherently resistant to single-day outliers. Consider adding hysteresis bands (e.g., transition HIGH->MEDIUM requires dropping below 20, not just below 24) in a future iteration if flapping is observed.
-
-### Anti-Pattern 4: Modifying AlertResult Structure
-
-**What goes wrong:** Adding `activity_tier` as a field on `AlertResult` dataclass.
-
-**Why bad:** Tier is metadata about the entity, not about the alert. `AlertResult.details` dict already handles arbitrary extra data.
-
-**Instead:** Include tier in `details={"activity_tier": tier, ...}` as already shown in the design.
+**Total estimated: ~275 lines of new/modified production code** (excluding tests).
 
 ---
 
 ## Sources
 
-- Full codebase read: `routine_model.py` (458 lines), `acute_detector.py` (215 lines), `coordinator.py` (377 lines), `config_flow.py` (406 lines), `sensor.py` (252 lines), `const.py` (156 lines), `alert_result.py` (66 lines), `drift_detector.py` (389 lines), `__init__.py` (267 lines)
-- Home Assistant SelectSelector docs: verified via codebase usage in existing `config_flow.py`
-- PROJECT.md milestone description and constraints
+- Existing codebase analysis (HIGH confidence -- direct code reading of all source files)
+- `coordinator.py` lines 118-138: `async_setup` lifecycle and storage restoration
+- `coordinator.py` lines 160-178: `_handle_state_changed` -- the race condition site for tier rehydration
+- `coordinator.py` lines 180-199: `_async_update_data` -- daily rollover and detection wiring
+- `coordinator.py` lines 146-158: `_save_data` -- single Store pattern
+- `coordinator.py` lines 201-211: `_run_detection` -- per-entity detector loop
+- `acute_detector.py` lines 49-51: sustained evidence counter pattern
+- `alert_result.py` lines 14-19: `AlertType` enum (extension point)
+- `routine_model.py` lines 381-423: `classify_tier` with once-per-day guard and confidence gate
+- `__init__.py` lines 165-177: setup lifecycle (`async_setup` -> `first_refresh`)
+- `const.py`: `SUSTAINED_EVIDENCE_CYCLES = 3` (reuse for correlation)
+- `sensor.py` line 325 in coordinator: `cross_sensor_patterns: []` (existing empty placeholder)
 
 ---
 
-*Architecture research for: behaviour-monitor v3.1 Activity-Rate Classification*
-*Researched: 2026-03-28*
+*Architecture research for: behaviour-monitor v4.0 Cross-Entity Correlation*
+*Researched: 2026-04-03*
