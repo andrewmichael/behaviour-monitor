@@ -30,7 +30,7 @@ from .const import (
     UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
 from .drift_detector import CUSUMState, DriftDetector
-from .routine_model import RoutineModel, is_binary_state
+from .routine_model import RoutineModel, format_duration, is_binary_state
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -178,6 +178,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._today_date != now.date():
             self._today_count = 0
             self._today_date = now.date()
+            for r in self._routine_model._entities.values():
+                r.classify_tier(now)
         if self._holiday_mode or self.is_snoozed():
             return self._build_safe_defaults()
         try:
@@ -280,12 +282,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._last_seen:
             most = max(self._last_seen.values())
             tsec = int((now - most).total_seconds())
-            h, m = tsec // 3600, (tsec % 3600) // 60
-            ts_fmt = f"{h}h {m}m ago" if h else f"{m}m ago"
+            ts_fmt = f"{format_duration(tsec)} ago"
             best_r = self._routine_model._entities.get(max(self._last_seen, key=lambda e: self._last_seen[e]))
             if best_r and (gap := best_r.expected_gap_seconds(now.hour, now.weekday())):
-                typ_sec = int(gap); gh, gm = typ_sec // 3600, (typ_sec % 3600) // 60
-                typ_fmt = f"{gh}h {gm}m" if gh else f"{gm}m"; concern = min(10, int(tsec / gap))
+                typ_sec = int(gap); typ_fmt = format_duration(typ_sec); concern = min(10, int(tsec / gap))
             ctx_st = "active" if tsec < 3600 else "inactive"
         obs_list = [er.first_observation for er in self._routine_model._entities.values() if er.first_observation]
         first_obs = min(obs_list) if obs_list else None
@@ -303,9 +303,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "activity_context": {"time_since_formatted": ts_fmt, "time_since_seconds": tsec,
                                  "typical_interval_seconds": typ_sec, "typical_interval_formatted": typ_fmt,
                                  "concern_level": concern, "status": ctx_st, "context": ts_fmt},
-            "entity_status": [{"entity_id": e, "status": "active" if e in self._last_seen else "unknown",
-                                "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None}
-                               for e in self._monitored_entities],
+            "entity_status": [
+                {
+                    "entity_id": e,
+                    "status": "active" if e in self._last_seen else "unknown",
+                    "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
+                    "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
+                }
+                for e in self._monitored_entities
+            ],
             "stat_training": {"complete": complete, "formatted": stat_fmt, "days_remaining": days_rem,
                               "days_elapsed": days_el, "total_days": self._history_window_days, "first_observation": first_obs},
             "ml_status": {"enabled": False}, "cross_sensor_patterns": [],
