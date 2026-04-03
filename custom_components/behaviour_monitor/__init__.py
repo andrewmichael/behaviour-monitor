@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 import voluptuous as vol
 
 from .const import (
+    CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
@@ -18,6 +19,7 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
@@ -147,6 +149,14 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=7)
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v7 — adaptive inactivity bounds added"
+        )
+
+    if config_entry.version < 8:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=8)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v8 — activity_tier_override added"
         )
 
     return True

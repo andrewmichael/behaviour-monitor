@@ -25,6 +25,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
@@ -38,6 +39,7 @@ from .const import (
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_TRACK_ATTRIBUTES,
+    DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
@@ -87,6 +89,7 @@ def _build_data_schema(
     min_inactivity_multiplier_default: float = DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     max_inactivity_multiplier_default: float = DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
+    activity_tier_override_default: str = DEFAULT_ACTIVITY_TIER_OVERRIDE,
     enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
     notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
     alert_repeat_interval_default: int = DEFAULT_ALERT_REPEAT_INTERVAL,
@@ -178,6 +181,19 @@ def _build_data_schema(
             )
         ),
         vol.Required(
+            CONF_ACTIVITY_TIER_OVERRIDE, default=activity_tier_override_default
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {"value": "auto", "label": "Auto (recommended)"},
+                    {"value": "high", "label": "High frequency"},
+                    {"value": "medium", "label": "Medium frequency"},
+                    {"value": "low", "label": "Low frequency"},
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Required(
             CONF_ENABLE_NOTIFICATIONS, default=enable_notifications_default
         ): BooleanSelector(),
         vol.Optional(
@@ -246,7 +262,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 7
+    VERSION = 8
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -379,6 +395,9 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_max_inactivity_multiplier = self._config_entry.data.get(
             CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
         )
+        current_activity_tier_override = self._config_entry.data.get(
+            CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -387,6 +406,7 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             min_inactivity_multiplier_default=current_min_inactivity_multiplier,
             max_inactivity_multiplier_default=current_max_inactivity_multiplier,
             drift_sensitivity_default=current_drift_sensitivity,
+            activity_tier_override_default=current_activity_tier_override,
             enable_notifications_default=current_notifications,
             notification_cooldown_default=current_cooldown,
             alert_repeat_interval_default=current_alert_repeat_interval,

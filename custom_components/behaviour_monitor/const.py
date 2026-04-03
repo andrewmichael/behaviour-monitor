@@ -26,10 +26,16 @@ CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
 CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
 CONF_MAX_INACTIVITY_MULTIPLIER: Final = "max_inactivity_multiplier"
 
+# New v3.1 config keys
+CONF_ACTIVITY_TIER_OVERRIDE: Final = "activity_tier_override"
+
 # New v3.0 defaults
 DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240  # minutes (4 hours)
 DEFAULT_MIN_INACTIVITY_MULTIPLIER: Final = 1.5
 DEFAULT_MAX_INACTIVITY_MULTIPLIER: Final = 10.0
+
+# New v3.1 defaults
+DEFAULT_ACTIVITY_TIER_OVERRIDE: Final = "auto"
 
 # Sensitivity levels
 SENSITIVITY_LOW: Final = "low"
@@ -50,7 +56,7 @@ DEFAULT_TRACK_ATTRIBUTES: Final = True
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 7
+STORAGE_VERSION: Final = 8
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
