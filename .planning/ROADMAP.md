@@ -76,7 +76,10 @@
   1. After a restart, entity tiers are classified on the first coordinator update cycle (not deferred to midnight)
   2. The HA config UI shows a correlation time window option that the user can adjust
   3. Existing installs upgrading from config v8 to v9 preserve all current settings and receive correlation defaults automatically
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — Fix tier classification rehydration bug
+- [ ] 17-02-PLAN.md — Correlation constants, config UI, and v8->v9 migration
 
 ### Phase 18: Correlation Discovery
 **Goal**: The system automatically discovers which entities co-occur and exposes those relationships to the user
@@ -128,7 +131,7 @@
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
-| 17. Foundation and Rehydration | v4.0 | 0/0 | Not started | - |
+| 17. Foundation and Rehydration | v4.0 | 0/2 | Not started | - |
 | 18. Correlation Discovery | v4.0 | 0/0 | Not started | - |
 | 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
