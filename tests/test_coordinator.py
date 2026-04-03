@@ -1216,21 +1216,22 @@ class TestTierOverride:
         coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
         now = datetime.now(timezone.utc)
 
-        # Record enough data so classify_tier has something to work with
+        # Record data and manually set tier to LOW
         coordinator._routine_model.record("sensor.test1", now - timedelta(hours=1), "on", True)
         r = coordinator._routine_model._entities["sensor.test1"]
-        r._activity_tier = ActivityTier.LOW  # pre-set to LOW
 
-        # Trigger day-change block
-        coordinator._today_date = (now - timedelta(days=1)).date()
-        with patch.object(coordinator, "_run_detection", return_value=[]), \
-             patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock):
-            await coordinator._async_update_data()
+        # Mock classify_tier so it sets tier to MEDIUM deterministically
+        original_tier = ActivityTier.MEDIUM
+        with patch.object(r, "classify_tier", side_effect=lambda t: setattr(r, "_activity_tier", original_tier)):
+            # Trigger day-change block
+            coordinator._today_date = (now - timedelta(days=1)).date()
+            with patch.object(coordinator, "_run_detection", return_value=[]), \
+                 patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock), \
+                 patch.object(coordinator, "_build_sensor_data", return_value={}):
+                await coordinator._async_update_data()
 
-        # classify_tier would have been called; but since override is "auto",
-        # no forced overwrite happens. The tier is whatever classify_tier set.
-        # We just verify it was NOT forcibly set to something other than what classify_tier chose.
-        assert r._activity_tier is not None  # classify_tier ran
+        # Since override is "auto", the tier should remain what classify_tier set (MEDIUM)
+        assert r._activity_tier == ActivityTier.MEDIUM
 
     @pytest.mark.asyncio
     async def test_tier_override_high_overrides_all_entities(
@@ -1251,7 +1252,8 @@ class TestTierOverride:
         # Trigger day-change block
         coordinator._today_date = (now - timedelta(days=1)).date()
         with patch.object(coordinator, "_run_detection", return_value=[]), \
-             patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock):
+             patch.object(coordinator, "_handle_alerts", new_callable=AsyncMock), \
+             patch.object(coordinator, "_build_sensor_data", return_value={}):
             await coordinator._async_update_data()
 
         for r in coordinator._routine_model._entities.values():

@@ -16,11 +16,14 @@ from homeassistant.util import dt as dt_util
 from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
+    CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL, CONF_DRIFT_SENSITIVITY, CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES,
+    ActivityTier,
+    DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
@@ -85,6 +88,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_seen: dict[str, datetime] = {}
         self._notification_cooldowns: dict[str, datetime] = {}
         self._alert_repeat_interval: int = int(d.get(CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL))
+        self._activity_tier_override: str = str(d.get(CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE))
         self._alert_suppression: dict[str, datetime] = {}
         self._holiday_mode = False
         self._snooze_until: datetime | None = None
@@ -180,6 +184,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._today_date = now.date()
             for r in self._routine_model._entities.values():
                 r.classify_tier(now)
+            if self._activity_tier_override != "auto":
+                override_tier = ActivityTier(self._activity_tier_override)
+                for r in self._routine_model._entities.values():
+                    r._activity_tier = override_tier
         if self._holiday_mode or self.is_snoozed():
             return self._build_safe_defaults()
         try:
