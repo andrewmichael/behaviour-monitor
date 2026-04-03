@@ -5,7 +5,8 @@ A Home Assistant custom integration that learns entity behavior patterns and det
 ## Features
 
 - **Routine Learning**: Learns per-entity behavior baselines using 168 hour-of-day x day-of-week slots from configurable rolling history (default 4 weeks)
-- **Acute Detection**: Alerts when expected activity is missing (inactivity) or activity occurs at unusual times — requires sustained evidence across multiple polling cycles before firing
+- **Activity-Rate Classification**: Auto-classifies entities into HIGH/MEDIUM/LOW frequency tiers based on observed event rates — applies tier-appropriate detection thresholds so motion sensors and door locks aren't treated the same
+- **Acute Detection**: Alerts when expected activity is missing (inactivity) or activity occurs at unusual times — requires sustained evidence across multiple polling cycles before firing, with tier-aware boost and absolute minimum floor for high-frequency entities
 - **Drift Detection**: Detects persistent behavior changes over days/weeks using CUSUM change-point analysis with configurable sensitivity
 - **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
 - **Recorder Bootstrap**: Bootstraps baselines from existing HA recorder history on first load — no cold start for existing installations
@@ -41,7 +42,7 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | `alert` | Significant anomaly detected | Immediate welfare check recommended |
 
 **Example notifications:**
-- "Inactivity alert: No activity from motion_sensor.kitchen for 4 hours (usually active every 45 minutes)"
+- "Inactivity alert: No activity from motion_sensor.kitchen for 4h 0m (typical interval: 45m, 5.3x over threshold)"
 - "Drift alert: Daily activity from binary_sensor.front_door has decreased persistently over 5 days"
 - "Unusual time: Activity from motion_sensor.hallway at 03:15 — no baseline for this time slot"
 
@@ -79,11 +80,19 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Notification cooldown | Minutes before re-alerting the same entity | 30 minutes |
 | Minimum notification severity | Minimum anomaly severity to trigger a notification | significant |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
+| Activity tier override | Override auto-classified frequency tier for all entities (Auto/High/Medium/Low) | Auto |
 | Track attributes | Also track attribute changes, not just state changes | Yes |
 
-### Upgrading from v2.x
+### Upgrading
 
-Existing config entries migrate automatically to v4 format. Old ML-related options (enable_ml, ml_learning_period, retrain_period, cross_sensor_window) are removed and replaced with the new detection controls. No manual intervention is needed.
+Existing config entries migrate automatically through the full migration chain (v2 through v8). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
+
+Notable migrations:
+- **v2→v4**: Removed ML-related options, added detection controls
+- **v5**: Added learning period and attribute tracking
+- **v6**: Added alert repeat interval
+- **v7**: Added adaptive inactivity multiplier bounds
+- **v8**: Added activity tier override (defaults to "Auto")
 
 ## Holiday Mode and Visitor Snooze
 
@@ -253,7 +262,7 @@ The integration creates the following sensors and control entities:
 | `sensor.behaviour_monitor_welfare_status` | Overall welfare status: `ok`, `check_recommended`, `concern`, or `alert` |
 | `sensor.behaviour_monitor_routine_progress` | Daily routine completion percentage (0-100%) |
 | `sensor.behaviour_monitor_time_since_activity` | Human-readable time since last activity with context |
-| `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention") |
+| `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention"). Each entity includes an `activity_tier` attribute showing its classified frequency tier (high/medium/low or null if unclassified) |
 
 ### Deprecated Sensors (preserved for backward compatibility)
 
@@ -274,11 +283,27 @@ The integration learns per-entity behavior baselines using:
 
 The model bootstraps from existing HA recorder history on first load, so existing installations start with populated baselines immediately.
 
+### Activity-Rate Classification
+
+Entities are automatically classified into frequency tiers based on their observed median daily event rate:
+
+| Tier | Criteria | Effect |
+|------|----------|--------|
+| HIGH | ≥24 events/day | 2× multiplier boost + 1-hour minimum floor |
+| MEDIUM | 5–23 events/day | 30-minute minimum floor |
+| LOW | ≤4 events/day | Standard detection (no boost or floor) |
+
+Classification is gated on learning confidence (requires ~80% of the history window to be observed) and reclassifies at most once per day to prevent flapping. Each entity's tier is visible in the `entity_status_summary` sensor attributes.
+
+A global override is available in the config UI to force all entities to a specific tier (useful for testing or edge cases). Set to "Auto" (default) to use automatic classification.
+
 ### Acute Detection
 
 Two types of acute alerts, both requiring **sustained evidence** (3 consecutive polling cycles) before firing:
 
-**Inactivity**: Fires when an entity has been silent for longer than a configurable multiplier of its learned typical interval. For example, if a motion sensor usually triggers every 45 minutes and the multiplier is 3×, an alert fires after ~2.25 hours of silence (sustained across 3 cycles).
+**Inactivity**: Fires when an entity has been silent for longer than a configurable multiplier of its learned typical interval. The threshold is adjusted by the entity's activity tier — high-frequency entities (like motion sensors) get a 2× multiplier boost and a 1-hour minimum floor to prevent false positives from brief pauses in otherwise constant activity.
+
+Alert explanations display durations in human-readable format: minutes for sub-hour intervals (e.g., "45m"), hours and minutes for longer periods (e.g., "2h 15m").
 
 **Unusual Time**: Fires when activity occurs at a time slot that has very few historical observations — e.g., front door activity at 3am when baseline shows no history for that slot.
 
