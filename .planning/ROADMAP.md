@@ -107,9 +107,13 @@ Plans:
 
 **Goal:** Add global tier override setting in config UI, migrate config v7 to v8 preserving user-tuned multiplier values.
 
-**Files:** `config_flow.py`, `__init__.py`, `const.py`
+**Files:** `config_flow.py`, `__init__.py`, `const.py`, `coordinator.py`
 **Requirements:** CFG-01, CFG-02
 **Depends on:** Phase 15
+**Plans:** 1 plan
+
+Plans:
+- [ ] 16-01-PLAN.md — Tier override config UI, v7-to-v8 migration, coordinator wiring
 
 ## Progress
 
@@ -130,4 +134,4 @@ Plans:
 | 13. Tier Classification | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete    | 2026-04-03 |
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete    | 2026-04-03 |
-| 16. Config UI and Migration | v3.1 | 0/0 | Pending | — |
+| 16. Config UI and Migration | v3.1 | 0/1 | Planned | — |
