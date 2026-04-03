@@ -4,13 +4,13 @@ milestone: v3.1
 milestone_name: Activity-Rate Classification
 status: verifying
 stopped_at: Phase 16 context gathered
-last_updated: "2026-04-03T10:46:37.011Z"
+last_updated: "2026-04-03T15:02:43.003Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 5
+  total_plans: 5
+  completed_plans: 5
   percent: 0
 ---
 
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 15 — Coordinator Integration
+**Current focus:** Phase 16 — Config UI and Migration
 
 ## Current Position
 

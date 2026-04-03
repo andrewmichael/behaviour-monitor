@@ -53,7 +53,7 @@
 - [x] **Phase 13: Tier Classification** — CLASS-01, CLASS-02, CLASS-03, CLASS-05 (completed 2026-04-02)
 - [x] **Phase 14: Tier-Aware Detection** — DET-01, DET-02 (completed 2026-04-03)
 - [x] **Phase 15: Coordinator Integration** — CLASS-04 (completed 2026-04-03)
-- [ ] **Phase 16: Config UI and Migration** — CFG-01, CFG-02
+- [x] **Phase 16: Config UI and Migration** — CFG-01, CFG-02 (completed 2026-04-03)
 
 ### Phase 12: Constants and Utilities
 
@@ -110,7 +110,7 @@ Plans:
 **Files:** `config_flow.py`, `__init__.py`, `const.py`, `coordinator.py`
 **Requirements:** CFG-01, CFG-02
 **Depends on:** Phase 15
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 16-01-PLAN.md — Tier override config UI, v7-to-v8 migration, coordinator wiring
@@ -134,4 +134,4 @@ Plans:
 | 13. Tier Classification | v3.1 | 1/1 | Complete    | 2026-04-02 |
 | 14. Tier-Aware Detection | v3.1 | 1/1 | Complete    | 2026-04-03 |
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete    | 2026-04-03 |
-| 16. Config UI and Migration | v3.1 | 0/1 | Planned | — |
+| 16. Config UI and Migration | v3.1 | 0/1 | Complete    | 2026-04-03 |

@@ -23,8 +23,8 @@ Requirements for Activity-Rate Classification milestone. Each maps to roadmap ph
 
 ### Config
 
-- [ ] **CFG-01**: User can override the auto-classified tier via a global setting in the HA config UI
-- [ ] **CFG-02**: Config migration v7→v8 preserves existing user-tuned multiplier values and injects defaults for new keys
+- [x] **CFG-01**: User can override the auto-classified tier via a global setting in the HA config UI
+- [x] **CFG-02**: Config migration v7→v8 preserves existing user-tuned multiplier values and injects defaults for new keys
 
 ## Future Requirements
 
@@ -63,8 +63,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DET-01 | 14 | Complete |
 | DET-02 | 14 | Complete |
 | DET-03 | 12 | Complete |
-| CFG-01 | 16 | Pending |
-| CFG-02 | 16 | Pending |
+| CFG-01 | 16 | Complete |
+| CFG-02 | 16 | Complete |
 
 **Coverage:**
 - v3.1 requirements: 10 total
