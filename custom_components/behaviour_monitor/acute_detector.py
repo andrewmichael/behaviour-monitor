@@ -19,8 +19,10 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     MINIMUM_CONFIDENCE_FOR_UNUSUAL_TIME,
     SUSTAINED_EVIDENCE_CYCLES,
+    TIER_BOOST_FACTOR,
+    TIER_FLOOR_SECONDS,
 )
-from .routine_model import EntityRoutine
+from .routine_model import EntityRoutine, format_duration
 
 
 class AcuteDetector:
@@ -93,6 +95,12 @@ class AcuteDetector:
             scalar = None
             threshold = self._inactivity_multiplier * expected_gap
 
+        # Tier-aware boost and floor (DET-01)
+        tier = routine.activity_tier
+        if tier is not None:
+            threshold *= TIER_BOOST_FACTOR[tier]
+            threshold = max(threshold, TIER_FLOOR_SECONDS[tier])
+
         # Condition not met — reset counter
         if elapsed < threshold:
             self._inactivity_cycles[entity_id] = 0
@@ -110,8 +118,8 @@ class AcuteDetector:
         # severity_ratio = elapsed / threshold (how many times over the threshold)
         severity_ratio = elapsed / threshold
         severity = self._inactivity_severity(severity_ratio)
-        elapsed_hours = elapsed / 3600.0
-        typical_hours = expected_gap / 3600.0
+        elapsed_fmt = format_duration(elapsed)
+        typical_fmt = format_duration(expected_gap)
 
         return AlertResult(
             entity_id=entity_id,
@@ -119,8 +127,8 @@ class AcuteDetector:
             severity=severity,
             confidence=routine.confidence(now),
             explanation=(
-                f"{entity_id}: no activity for {elapsed_hours:.1f}h "
-                f"(typical interval: {typical_hours:.1f}h, "
+                f"{entity_id}: no activity for {elapsed_fmt} "
+                f"(typical interval: {typical_fmt}, "
                 f"{severity_ratio:.1f}x over threshold)"
             ),
             timestamp=now.isoformat(),
@@ -130,6 +138,9 @@ class AcuteDetector:
                 "threshold_seconds": threshold,
                 "severity_ratio": severity_ratio,
                 "adaptive_scalar": scalar,
+                "activity_tier": tier.value if tier is not None else None,
+                "elapsed_formatted": elapsed_fmt,
+                "typical_formatted": typical_fmt,
             },
         )
 
