@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-04-03
+
+### Changed
+- Documentation: add v3.0 features to README (adaptive thresholds, drift split, alert suppression)
+- Documentation: update README with v3.1 activity-rate classification features
+
 ## [3.0.1] - 2026-03-15
 
 ### Changed
