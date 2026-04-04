@@ -153,8 +153,15 @@ class TestRecompute:
         co_occurrences: int,
         solo_a: int,
         solo_b: int,
+        extra_global_events: int = 200,
     ) -> CorrelationDetector:
-        """Helper: create a detector with a pre-populated pair."""
+        """Helper: create a detector with a pre-populated pair and global counts.
+
+        Global entity event counts include additional background events
+        (from other entities) to give PMI meaningful base rates. Without
+        background events, marginal probabilities P(a) and P(b) would be
+        too high for PMI to exceed 1.0.
+        """
         det = CorrelationDetector(
             co_occurrence_window_seconds=120,
             min_observations=10,
@@ -167,6 +174,13 @@ class TestRecompute:
             first_observed="2026-01-01T00:00:00",
         )
         det._pairs[("sensor.a", "sensor.b")] = pair
+        # Set global event counts: each entity's total = co-occurrences + solos
+        det._entity_event_counts["sensor.a"] = co_occurrences + solo_a
+        det._entity_event_counts["sensor.b"] = co_occurrences + solo_b
+        # Total includes background events from other entities in the system
+        det._total_event_count = (
+            co_occurrences + solo_a + solo_b + extra_global_events
+        )
         return det
 
     def test_high_pmi_pair_becomes_learned(self) -> None:
@@ -184,8 +198,9 @@ class TestRecompute:
 
     def test_low_pmi_not_learned(self) -> None:
         """Pair with sufficient count but low PMI is NOT learned."""
-        # Many co-occurrences but also tons of solo events => low PMI
-        det = self._build_detector_with_pair(15, 500, 500)
+        # Many co-occurrences but also tons of solo events, no background
+        # events => marginals are high => PMI < 1.0
+        det = self._build_detector_with_pair(15, 500, 500, extra_global_events=0)
         det.recompute()
         assert ("sensor.a", "sensor.b") not in det._learned_pairs
 
@@ -195,9 +210,12 @@ class TestRecompute:
         det.recompute()
         assert ("sensor.a", "sensor.b") in det._learned_pairs
 
-        # Now add massive solo counts to dilute PMI
+        # Now add massive solo counts to dilute marginals and drop PMI
         det._pairs[("sensor.a", "sensor.b")].solo_counts["sensor.a"] = 5000
         det._pairs[("sensor.a", "sensor.b")].solo_counts["sensor.b"] = 5000
+        det._entity_event_counts["sensor.a"] = 47 + 5000
+        det._entity_event_counts["sensor.b"] = 47 + 5000
+        det._total_event_count = 47 + 5000 + 5000 + 200
         det.recompute()
         assert ("sensor.a", "sensor.b") not in det._learned_pairs
 
@@ -225,6 +243,10 @@ class TestSensorOutput:
             first_observed="2026-01-01T00:00:00",
         )
         det._pairs[("sensor.a", "sensor.b")] = pair
+        # Set global counts with background events for PMI > 1.0
+        det._entity_event_counts["sensor.a"] = 57
+        det._entity_event_counts["sensor.b"] = 52
+        det._total_event_count = 62 + 200  # background events from other entities
         det.recompute()
         return det
 
