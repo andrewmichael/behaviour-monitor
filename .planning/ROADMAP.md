@@ -135,6 +135,6 @@ Plans:
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
-| 18. Correlation Discovery | v4.0 | 2/2 | Complete   | 2026-04-04 |
+| 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
 | 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
