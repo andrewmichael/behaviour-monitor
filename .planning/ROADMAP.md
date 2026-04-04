@@ -92,7 +92,7 @@ Plans:
   4. Correlation state survives a Home Assistant restart (persisted to storage, restored on startup)
 **Plans**: 2 plans
 Plans:
-- [ ] 18-01-PLAN.md — CorrelationDetector class with PMI-based discovery and tests
+- [x] 18-01-PLAN.md — CorrelationDetector class with PMI-based discovery and tests
 - [ ] 18-02-PLAN.md — Coordinator wiring, sensor exposure, and persistence
 
 ### Phase 19: Break Detection and Alerting
@@ -135,6 +135,6 @@ Plans:
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
-| 18. Correlation Discovery | v4.0 | 0/2 | Not started | - |
+| 18. Correlation Discovery | v4.0 | 1/2 | In Progress|  |
 | 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
