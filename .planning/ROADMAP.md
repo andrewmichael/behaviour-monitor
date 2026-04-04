@@ -57,7 +57,7 @@
 
 </details>
 
-### 🚧 v4.0 Cross-Entity Correlation (In Progress)
+### v4.0 Cross-Entity Correlation (In Progress)
 
 **Milestone Goal:** Add cross-entity routine correlation to detect when normally co-occurring entities diverge, plus fix startup tier rehydration gap.
 
@@ -90,7 +90,10 @@ Plans:
   2. Pairs with fewer than the minimum co-occurrence count are not promoted to learned correlations (no premature discoveries)
   3. The entity_status_summary sensor includes a cross_sensor_patterns attribute listing discovered correlation groups with their co-occurrence rates
   4. Correlation state survives a Home Assistant restart (persisted to storage, restored on startup)
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 18-01-PLAN.md — CorrelationDetector class with PMI-based discovery and tests
+- [ ] 18-02-PLAN.md — Coordinator wiring, sensor exposure, and persistence
 
 ### Phase 19: Break Detection and Alerting
 **Goal**: Users are alerted when learned correlations break, with noise suppression that prevents false or redundant alerts
@@ -132,6 +135,6 @@ Plans:
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
-| 18. Correlation Discovery | v4.0 | 0/0 | Not started | - |
+| 18. Correlation Discovery | v4.0 | 0/2 | Not started | - |
 | 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
