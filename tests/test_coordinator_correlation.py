@@ -212,6 +212,8 @@ class TestCorrelationPersistence:
         coord, _ = _make_coordinator()
         coord._correlation_detector = MagicMock()
         coord._correlation_detector.to_dict.return_value = {"test": "data"}
+        coord._store = MagicMock()
+        coord._store.async_save = AsyncMock()
 
         await coord._save_data()
 
@@ -302,17 +304,24 @@ class TestCorrelationSensorData:
         # Need last_seen for entity_status to show "active"
         coord._last_seen = {"sensor.a": NOW, "sensor.b": NOW}
 
-        # Need routine model entries for activity_tier
-        from unittest.mock import PropertyMock
-
+        # Mock routine_model to avoid real learning_status calls
         mock_routine_a = MagicMock()
         mock_routine_a.activity_tier = None
+        mock_routine_a.daily_activity_rate.return_value = 10
+        mock_routine_a.expected_gap_seconds.return_value = 3600
+        mock_routine_a.first_observation = None
         mock_routine_b = MagicMock()
         mock_routine_b.activity_tier = None
+        mock_routine_b.daily_activity_rate.return_value = 5
+        mock_routine_b.expected_gap_seconds.return_value = 7200
+        mock_routine_b.first_observation = None
+        coord._routine_model = MagicMock()
         coord._routine_model._entities = {
             "sensor.a": mock_routine_a,
             "sensor.b": mock_routine_b,
         }
+        coord._routine_model.overall_confidence.return_value = 0.8
+        coord._routine_model.learning_status.return_value = "ready"
 
         data = coord._build_sensor_data([], NOW)
         statuses = data["entity_status"]

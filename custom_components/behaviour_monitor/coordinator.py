@@ -17,14 +17,16 @@ from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL, CONF_DRIFT_SENSITIVITY, CONF_ENABLE_NOTIFICATIONS,
+    CONF_ALERT_REPEAT_INTERVAL, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
+    CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
-    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_CORRELATION_WINDOW,
+    DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
@@ -32,6 +34,7 @@ from .const import (
     DOMAIN, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY, STORAGE_VERSION,
     UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
+from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
@@ -85,6 +88,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             max_multiplier=float(d.get(CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER)),
         )
         self._drift_detector = DriftDetector(d.get(CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM))
+        self._correlation_detector = CorrelationDetector(
+            co_occurrence_window_seconds=int(
+                d.get(CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW)
+            ),
+        )
         self._last_seen: dict[str, datetime] = {}
         self._notification_cooldowns: dict[str, datetime] = {}
         self._alert_repeat_interval: int = int(d.get(CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL))
@@ -122,6 +130,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._routine_model = RoutineModel.from_dict(stored["routine_model"])
             for eid, sd in stored.get("cusum_states", {}).items():
                 self._drift_detector._states[eid] = CUSUMState.from_dict(sd)
+            if "correlation_state" in stored:
+                self._correlation_detector = CorrelationDetector.from_dict(
+                    stored["correlation_state"]
+                )
             c = stored.get("coordinator", {})
             self._holiday_mode = c.get("holiday_mode", False)
             if (sn := c.get("snooze_until")) and (sdt := _parse_dt(sn)):
@@ -147,6 +159,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._store.async_save({
             "routine_model": self._routine_model.to_dict(),
             "cusum_states": {e: s.to_dict() for e, s in self._drift_detector._states.items()},
+            "correlation_state": self._correlation_detector.to_dict(),
             "coordinator": {
                 "holiday_mode": self._holiday_mode,
                 "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
@@ -172,6 +185,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now, sv = dt_util.now(), str(ns.state)
         self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
         self._last_seen[eid] = now
+        self._correlation_detector.record_event(eid, now, self._last_seen)
         if self._today_date != now.date():
             self._today_count, self._today_date = 0, now.date()
         self._today_count += 1
@@ -188,6 +202,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 override_tier = ActivityTier(self._activity_tier_override)
                 for r in self._routine_model._entities.values():
                     r._activity_tier = override_tier
+            self._correlation_detector.recompute()
         if self._holiday_mode or self.is_snoozed():
             return self._build_safe_defaults()
         try:
@@ -317,12 +332,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "status": "active" if e in self._last_seen else "unknown",
                     "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
                     "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
+                    "correlated_with": self._correlation_detector.get_correlated_entities(e),
                 }
                 for e in self._monitored_entities
             ],
             "stat_training": {"complete": complete, "formatted": stat_fmt, "days_remaining": days_rem,
                               "days_elapsed": days_el, "total_days": self._history_window_days, "first_observation": first_obs},
-            "ml_status": {"enabled": False}, "cross_sensor_patterns": [],
+            "ml_status": {"enabled": False}, "cross_sensor_patterns": self._correlation_detector.get_correlation_groups(),
             "last_notification": self._last_notification_info, "holiday_mode": self._holiday_mode,
             "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
             "learning_status": ls, "baseline_confidence": round(conf, 1),
