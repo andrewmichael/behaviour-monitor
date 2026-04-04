@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Cross-Entity Correlation
 status: executing
-stopped_at: Phase 18 context gathered
-last_updated: "2026-04-04T09:42:05.294Z"
-last_activity: 2026-04-04 -- Phase 18 execution started
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-04-04T14:39:07.700Z"
+last_activity: 2026-04-04
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 4
   percent: 0
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 ## Current Position
 
 Phase: 18 (Correlation Discovery) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 18
-Last activity: 2026-04-04 -- Phase 18 execution started
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-04-04
 
 Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
 
@@ -44,6 +44,7 @@ See PROJECT.md Key Decisions table for full log.
 - [v4.0-roadmap]: PMI threshold constants defined as named constants in const.py for easy tuning (medium-confidence values)
 - [Phase 17]: Only set _tier_classified_date when _activity_tier is assigned a real tier (not None)
 - [Phase 17]: PMI_THRESHOLD=1.0 as medium-confidence tunable constant; correlation window 30-600s range in config UI
+- [Phase 18]: record_event placed after last_seen update so all_last_seen includes current entity timestamp
 
 ### Blockers/Concerns
 
@@ -61,6 +62,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T08:53:33.383Z
-Stopped at: Phase 18 context gathered
-Resume file: .planning/phases/18-correlation-discovery/18-CONTEXT.md
+Last session: 2026-04-04T14:39:07.693Z
+Stopped at: Completed 18-02-PLAN.md
+Resume file: None

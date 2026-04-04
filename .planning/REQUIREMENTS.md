@@ -15,8 +15,8 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 
 - [ ] **COR-01**: System discovers entity pairs that co-occur within a configurable time window using PMI-based correlation strength
 - [ ] **COR-02**: Discovery is gated on minimum co-occurrence count to prevent premature correlations
-- [ ] **COR-03**: Discovered correlation groups are exposed as sensor attributes on entity_status_summary
-- [ ] **COR-04**: Correlation state is persisted to storage and restored on startup
+- [x] **COR-03**: Discovered correlation groups are exposed as sensor attributes on entity_status_summary
+- [x] **COR-04**: Correlation state is persisted to storage and restored on startup
 
 ### Correlation Alerting
 
@@ -69,8 +69,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RHY-01 | Phase 17 | Complete |
 | COR-01 | Phase 18 | Pending |
 | COR-02 | Phase 18 | Pending |
-| COR-03 | Phase 18 | Pending |
-| COR-04 | Phase 18 | Pending |
+| COR-03 | Phase 18 | Complete |
+| COR-04 | Phase 18 | Complete |
 | COR-05 | Phase 19 | Pending |
 | COR-06 | Phase 19 | Pending |
 | COR-07 | Phase 19 | Pending |

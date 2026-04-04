@@ -62,7 +62,7 @@
 **Milestone Goal:** Add cross-entity routine correlation to detect when normally co-occurring entities diverge, plus fix startup tier rehydration gap.
 
 - [x] **Phase 17: Foundation and Rehydration** - Constants, config migration v8->v9, config UI for correlation window, and startup tier rehydration fix (completed 2026-04-03)
-- [ ] **Phase 18: Correlation Discovery** - CorrelationDetector with PMI-based discovery, sensor attribute exposure, and persistence
+- [x] **Phase 18: Correlation Discovery** - CorrelationDetector with PMI-based discovery, sensor attribute exposure, and persistence (completed 2026-04-04)
 - [ ] **Phase 19: Break Detection and Alerting** - Alert on broken correlations with sustained evidence and group-level deduplication
 - [ ] **Phase 20: Correlation Lifecycle** - Stale pair decay and cleanup on entity removal
 
@@ -93,7 +93,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 18-01-PLAN.md — CorrelationDetector class with PMI-based discovery and tests
-- [ ] 18-02-PLAN.md — Coordinator wiring, sensor exposure, and persistence
+- [x] 18-02-PLAN.md — Coordinator wiring, sensor exposure, and persistence
 
 ### Phase 19: Break Detection and Alerting
 **Goal**: Users are alerted when learned correlations break, with noise suppression that prevents false or redundant alerts
@@ -135,6 +135,6 @@ Plans:
 | 15. Coordinator Integration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
-| 18. Correlation Discovery | v4.0 | 1/2 | In Progress|  |
+| 18. Correlation Discovery | v4.0 | 2/2 | Complete   | 2026-04-04 |
 | 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
