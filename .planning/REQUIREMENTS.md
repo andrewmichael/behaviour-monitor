@@ -20,9 +20,9 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 
 ### Correlation Alerting
 
-- [ ] **COR-05**: System alerts when a learned correlation breaks (entity A fires without expected companion B within the window)
-- [ ] **COR-06**: Break alerts require sustained evidence (multiple consecutive misses) before firing
-- [ ] **COR-07**: Alerts are deduplicated at the group level — one alert per broken group, not per pair
+- [x] **COR-05**: System alerts when a learned correlation breaks (entity A fires without expected companion B within the window)
+- [x] **COR-06**: Break alerts require sustained evidence (multiple consecutive misses) before firing
+- [x] **COR-07**: Alerts are deduplicated at the group level — one alert per broken group, not per pair
 
 ### Config & Lifecycle
 
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | COR-02 | Phase 18 | Pending |
 | COR-03 | Phase 18 | Complete |
 | COR-04 | Phase 18 | Complete |
-| COR-05 | Phase 19 | Pending |
-| COR-06 | Phase 19 | Pending |
-| COR-07 | Phase 19 | Pending |
+| COR-05 | Phase 19 | Complete |
+| COR-06 | Phase 19 | Complete |
+| COR-07 | Phase 19 | Complete |
 | CFG-01 | Phase 17 | Complete |
 | CFG-02 | Phase 17 | Complete |
 | COR-08 | Phase 20 | Pending |
