@@ -103,7 +103,10 @@ Plans:
   1. When entity A fires without its expected companion entity B within the correlation window, a correlation break alert is generated
   2. Break alerts only fire after multiple consecutive missed co-occurrences (sustained evidence gating), not on a single miss
   3. A multi-entity correlation group produces one alert per broken group, not one alert per missing pair
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 19-01-PLAN.md — check_breaks method on CorrelationDetector with sustained evidence and group dedup
+- [ ] 19-02-PLAN.md — Coordinator wiring, welfare exclusion, and suppression pipeline integration
 
 ### Phase 20: Correlation Lifecycle
 **Goal**: Correlation state stays clean over time without manual intervention
@@ -136,5 +139,5 @@ Plans:
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
 | 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
-| 19. Break Detection and Alerting | v4.0 | 0/0 | Not started | - |
+| 19. Break Detection and Alerting | v4.0 | 0/2 | Not started | - |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
