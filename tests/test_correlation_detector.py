@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from custom_components.behaviour_monitor.alert_result import AlertSeverity, AlertType
+from custom_components.behaviour_monitor.const import SUSTAINED_EVIDENCE_CYCLES
 from custom_components.behaviour_monitor.correlation_detector import (
     CorrelationDetector,
     CorrelationPair,
@@ -286,6 +288,173 @@ class TestSensorOutput:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# CorrelationDetector — break detection
+# ---------------------------------------------------------------------------
+
+
+class TestCheckBreaks:
+    """Tests for CorrelationDetector.check_breaks() method."""
+
+    @staticmethod
+    def _build_learned_detector(
+        *,
+        extra_pair: bool = False,
+    ) -> CorrelationDetector:
+        """Create a detector with one (or two) learned pairs involving sensor.a.
+
+        Pair 1: ("sensor.a", "sensor.b") — always present.
+        Pair 2: ("sensor.a", "sensor.c") — only when extra_pair=True.
+        """
+        det = CorrelationDetector(
+            co_occurrence_window_seconds=120,
+            min_observations=10,
+            pmi_threshold=1.0,
+        )
+        pair_ab = CorrelationPair(
+            entities=("sensor.a", "sensor.b"),
+            co_occurrences=47,
+            solo_counts={"sensor.a": 10, "sensor.b": 5},
+            first_observed="2026-01-01T00:00:00",
+        )
+        det._pairs[("sensor.a", "sensor.b")] = pair_ab
+        det._entity_event_counts["sensor.a"] = 57
+        det._entity_event_counts["sensor.b"] = 52
+        det._total_event_count = 262
+
+        if extra_pair:
+            pair_ac = CorrelationPair(
+                entities=("sensor.a", "sensor.c"),
+                co_occurrences=40,
+                solo_counts={"sensor.a": 8, "sensor.c": 4},
+                first_observed="2026-01-02T00:00:00",
+            )
+            det._pairs[("sensor.a", "sensor.c")] = pair_ac
+            det._entity_event_counts["sensor.a"] = 57 + 48
+            det._entity_event_counts["sensor.c"] = 44
+            det._total_event_count = 262 + 52 + 200
+
+        det.recompute()
+        return det
+
+    def test_no_learned_partners_returns_empty(self) -> None:
+        """Entity with no learned partners gets no break alerts."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen: dict[str, datetime] = {}
+        result = det.check_breaks("sensor.unknown", now, last_seen)
+        assert result == []
+
+    def test_all_partners_within_window_returns_empty(self) -> None:
+        """No break when all learned partners fired within window."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen = {"sensor.b": now - timedelta(seconds=60)}
+        result = det.check_breaks("sensor.a", now, last_seen)
+        assert result == []
+
+    def test_first_miss_returns_empty(self) -> None:
+        """First consecutive miss does not fire an alert (counter=1 < 3)."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        # sensor.b not seen within window
+        last_seen = {"sensor.b": now - timedelta(seconds=300)}
+        result = det.check_breaks("sensor.a", now, last_seen)
+        assert result == []
+        assert det._break_cycles.get("sensor.a", 0) == 1
+
+    def test_second_miss_returns_empty(self) -> None:
+        """Second consecutive miss still below threshold (counter=2 < 3)."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen = {"sensor.b": now - timedelta(seconds=300)}
+        det.check_breaks("sensor.a", now, last_seen)
+        det.check_breaks("sensor.a", now, last_seen)
+        assert det._break_cycles["sensor.a"] == 2
+
+    def test_third_miss_returns_alert(self) -> None:
+        """Third consecutive miss fires an AlertResult."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen = {"sensor.b": now - timedelta(seconds=300)}
+        # First two misses — no alert
+        det.check_breaks("sensor.a", now, last_seen)
+        det.check_breaks("sensor.a", now, last_seen)
+        # Third miss — alert fires
+        result = det.check_breaks("sensor.a", now, last_seen)
+        assert len(result) == 1
+        alert = result[0]
+        assert alert.entity_id == "sensor.a"
+        assert alert.alert_type == AlertType.CORRELATION_BREAK
+        assert alert.severity == AlertSeverity.LOW
+        assert "sensor.b" in alert.explanation
+        assert alert.details["consecutive_misses"] == SUSTAINED_EVIDENCE_CYCLES
+
+    def test_counter_resets_on_satisfied(self) -> None:
+        """Counter resets to 0 when correlation is satisfied after misses."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen_miss = {"sensor.b": now - timedelta(seconds=300)}
+        last_seen_ok = {"sensor.b": now - timedelta(seconds=60)}
+        # Two misses
+        det.check_breaks("sensor.a", now, last_seen_miss)
+        det.check_breaks("sensor.a", now, last_seen_miss)
+        assert det._break_cycles["sensor.a"] == 2
+        # Satisfied — counter resets
+        det.check_breaks("sensor.a", now, last_seen_ok)
+        assert det._break_cycles["sensor.a"] == 0
+
+    def test_multi_partner_group_dedup(self) -> None:
+        """Multiple missing partners produce ONE alert (group dedup)."""
+        det = self._build_learned_detector(extra_pair=True)
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        # Both sensor.b and sensor.c are missing (outside window)
+        last_seen = {
+            "sensor.b": now - timedelta(seconds=300),
+            "sensor.c": now - timedelta(seconds=300),
+        }
+        for _ in range(SUSTAINED_EVIDENCE_CYCLES):
+            result = det.check_breaks("sensor.a", now, last_seen)
+        # Exactly one alert for entity sensor.a
+        assert len(result) == 1
+        alert = result[0]
+        assert alert.entity_id == "sensor.a"
+        # Explanation should mention both missing partners
+        assert "sensor.b" in alert.explanation
+        assert "sensor.c" in alert.explanation
+        # Details should list both
+        assert sorted(alert.details["missing_partners"]) == [
+            "sensor.b",
+            "sensor.c",
+        ]
+
+    def test_alert_result_fields(self) -> None:
+        """Verify AlertResult fields match specification."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen = {"sensor.b": now - timedelta(seconds=300)}
+        for _ in range(SUSTAINED_EVIDENCE_CYCLES):
+            result = det.check_breaks("sensor.a", now, last_seen)
+        assert len(result) == 1
+        alert = result[0]
+        assert alert.alert_type == AlertType.CORRELATION_BREAK
+        assert alert.severity == AlertSeverity.LOW
+        assert alert.timestamp == now.isoformat()
+        assert "window_seconds" in alert.details
+        assert alert.details["window_seconds"] == 120
+        assert isinstance(alert.confidence, float)
+
+    def test_partner_not_in_last_seen_counts_as_miss(self) -> None:
+        """Partner absent from last_seen map entirely counts as a miss."""
+        det = self._build_learned_detector()
+        now = datetime(2026, 3, 1, 12, 0, 0)
+        last_seen: dict[str, datetime] = {}  # sensor.b not present at all
+        for _ in range(SUSTAINED_EVIDENCE_CYCLES):
+            result = det.check_breaks("sensor.a", now, last_seen)
+        assert len(result) == 1
+        assert "sensor.b" in result[0].details["missing_partners"]
+
+
 class TestPersistence:
     """Tests for to_dict() / from_dict() round-tripping."""
 
@@ -320,6 +489,15 @@ class TestPersistence:
 
         # Verify learned pairs preserved
         assert restored._learned_pairs == det._learned_pairs
+
+    def test_break_cycles_round_trip(self) -> None:
+        """_break_cycles dict survives to_dict/from_dict round trip."""
+        det = CorrelationDetector(co_occurrence_window_seconds=120)
+        det._break_cycles = {"sensor.a": 2, "sensor.b": 1}
+        data = det.to_dict()
+        assert "break_cycles" in data
+        restored = CorrelationDetector.from_dict(data)
+        assert restored._break_cycles == {"sensor.a": 2, "sensor.b": 1}
 
     def test_from_dict_empty(self) -> None:
         det = CorrelationDetector.from_dict({})
