@@ -13,10 +13,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     DEFAULT_CORRELATION_WINDOW,
     MIN_CO_OCCURRENCES,
     PMI_THRESHOLD,
+    SUSTAINED_EVIDENCE_CYCLES,
 )
 
 
@@ -120,6 +122,8 @@ class CorrelationDetector:
         # Global per-entity event counts for PMI marginal probabilities
         self._entity_event_counts: dict[str, int] = {}
         self._total_event_count: int = 0
+        # Per-entity consecutive-miss counters for sustained-evidence gating
+        self._break_cycles: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Event recording
@@ -271,6 +275,83 @@ class CorrelationDetector:
         return partners
 
     # ------------------------------------------------------------------
+    # Break detection
+    # ------------------------------------------------------------------
+
+    def check_breaks(
+        self,
+        entity_id: str,
+        now: datetime,
+        last_seen_map: dict[str, datetime],
+    ) -> list[AlertResult]:
+        """Check whether learned correlation partners are missing.
+
+        Returns an AlertResult list (0 or 1 element) when the triggering
+        entity's learned partners have not fired within the co-occurrence
+        window for SUSTAINED_EVIDENCE_CYCLES consecutive checks.
+
+        Multiple missing partners are grouped into a single alert (D-02).
+
+        Args:
+            entity_id:     The entity that just fired.
+            now:           Current datetime.
+            last_seen_map: Map of entity_id -> last event datetime for all
+                           currently tracked entities.
+        """
+        partners = self.get_correlated_entities(entity_id)
+        if not partners:
+            return []
+
+        missing_partners: list[str] = []
+        for partner in partners:
+            partner_ts = last_seen_map.get(partner)
+            if partner_ts is None:
+                missing_partners.append(partner)
+            elif abs((now - partner_ts).total_seconds()) > self._window_seconds:
+                missing_partners.append(partner)
+
+        if not missing_partners:
+            self._break_cycles[entity_id] = 0
+            return []
+
+        # Increment consecutive-miss counter
+        current = self._break_cycles.get(entity_id, 0) + 1
+        self._break_cycles[entity_id] = current
+
+        if current < SUSTAINED_EVIDENCE_CYCLES:
+            return []
+
+        # Find best confidence from the highest co_occurrence_rate among missing
+        best_rate = 0.0
+        for partner in missing_partners:
+            key = tuple(sorted((entity_id, partner)))
+            pair = self._pairs.get(key)  # type: ignore[arg-type]
+            if pair is not None:
+                best_rate = max(best_rate, pair.co_occurrence_rate)
+
+        sorted_missing = sorted(missing_partners)
+
+        return [
+            AlertResult(
+                entity_id=entity_id,
+                alert_type=AlertType.CORRELATION_BREAK,
+                severity=AlertSeverity.LOW,
+                confidence=best_rate,
+                explanation=(
+                    f"{entity_id}: correlation break — expected companion(s) "
+                    f"{', '.join(sorted_missing)} not seen within "
+                    f"{self._window_seconds}s window"
+                ),
+                timestamp=now.isoformat(),
+                details={
+                    "missing_partners": sorted_missing,
+                    "consecutive_misses": current,
+                    "window_seconds": self._window_seconds,
+                },
+            )
+        ]
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
@@ -289,6 +370,7 @@ class CorrelationDetector:
             "learned_pairs": ["|".join(k) for k in sorted(self._learned_pairs)],
             "entity_event_counts": dict(self._entity_event_counts),
             "total_event_count": self._total_event_count,
+            "break_cycles": dict(self._break_cycles),
         }
 
     @classmethod
@@ -322,6 +404,9 @@ class CorrelationDetector:
         detector._total_event_count = int(
             data.get("total_event_count", 0)
         )
+        detector._break_cycles = {
+            k: int(v) for k, v in data.get("break_cycles", {}).items()
+        }
 
         return detector
 
