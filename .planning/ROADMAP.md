@@ -115,7 +115,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Correlation pairs that stop co-occurring gradually decay and are eventually removed from the learned set
   2. When a monitored entity is removed from the integration, all correlation pairs involving that entity are cleaned up
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 20-01-PLAN.md — Stale pair decay and entity removal methods on CorrelationDetector
+- [ ] 20-02-PLAN.md — Coordinator wiring for entity removal cleanup on startup
 
 ## Progress
 
