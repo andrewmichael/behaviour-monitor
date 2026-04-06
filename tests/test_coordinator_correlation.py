@@ -341,3 +341,151 @@ class TestCorrelationSensorData:
 
         data = coord._build_sensor_data([], NOW)
         assert data["cross_sensor_patterns"] == []
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Break detection wiring in coordinator
+# ---------------------------------------------------------------------------
+
+
+class TestCorrelationBreakDetection:
+    """check_breaks is called in _run_detection; welfare excludes CORRELATION_BREAK."""
+
+    def test_run_detection_calls_check_breaks(self) -> None:
+        """_run_detection calls check_breaks for each monitored entity with a routine."""
+        from custom_components.behaviour_monitor.alert_result import (
+            AlertResult,
+            AlertSeverity,
+            AlertType,
+        )
+
+        coord, _ = _make_coordinator(monitored=["sensor.a", "sensor.b"])
+
+        # Give sensor.a a routine entry so it enters the acute/drift loop
+        mock_routine = MagicMock()
+        mock_routine.activity_tier = None
+        coord._routine_model._entities = {"sensor.a": mock_routine}
+
+        break_alert = AlertResult(
+            entity_id="sensor.a",
+            alert_type=AlertType.CORRELATION_BREAK,
+            severity=AlertSeverity.LOW,
+            confidence=0.8,
+            explanation="correlation break",
+            timestamp=NOW.isoformat(),
+        )
+
+        coord._correlation_detector = MagicMock()
+        coord._correlation_detector.check_breaks.return_value = [break_alert]
+
+        # Mock acute/drift to return nothing
+        coord._acute_detector = MagicMock()
+        coord._acute_detector.check_inactivity.return_value = None
+        coord._acute_detector.check_unusual_time.return_value = None
+        coord._drift_detector = MagicMock()
+        coord._drift_detector.check.return_value = None
+
+        alerts = coord._run_detection(NOW)
+
+        # check_breaks called for BOTH monitored entities (not just ones with routines)
+        assert coord._correlation_detector.check_breaks.call_count == 2
+        # The break alert should be in the output
+        assert break_alert in alerts
+
+    def test_run_detection_check_breaks_passes_last_seen(self) -> None:
+        """check_breaks receives self._last_seen as the last_seen_map argument."""
+        coord, _ = _make_coordinator(monitored=["sensor.a"])
+
+        coord._routine_model._entities = {}
+        coord._last_seen = {"sensor.a": NOW}
+
+        coord._correlation_detector = MagicMock()
+        coord._correlation_detector.check_breaks.return_value = []
+        coord._acute_detector = MagicMock()
+        coord._drift_detector = MagicMock()
+
+        coord._run_detection(NOW)
+
+        coord._correlation_detector.check_breaks.assert_called_once_with(
+            "sensor.a", NOW, coord._last_seen
+        )
+
+    def test_derive_welfare_excludes_correlation_breaks(self) -> None:
+        """Welfare with only CORRELATION_BREAK alerts returns status 'ok'."""
+        from custom_components.behaviour_monitor.alert_result import (
+            AlertResult,
+            AlertSeverity,
+            AlertType,
+        )
+
+        coord, _ = _make_coordinator()
+
+        break_alert = AlertResult(
+            entity_id="sensor.a",
+            alert_type=AlertType.CORRELATION_BREAK,
+            severity=AlertSeverity.LOW,
+            confidence=0.8,
+            explanation="correlation break",
+            timestamp=NOW.isoformat(),
+        )
+
+        result = coord._derive_welfare([break_alert])
+        assert result["status"] == "ok"
+
+    def test_derive_welfare_escalates_with_non_correlation_alerts(self) -> None:
+        """MEDIUM inactivity alert drives welfare to 'concern' even with correlation break."""
+        from custom_components.behaviour_monitor.alert_result import (
+            AlertResult,
+            AlertSeverity,
+            AlertType,
+        )
+
+        coord, _ = _make_coordinator()
+
+        break_alert = AlertResult(
+            entity_id="sensor.a",
+            alert_type=AlertType.CORRELATION_BREAK,
+            severity=AlertSeverity.LOW,
+            confidence=0.8,
+            explanation="correlation break",
+            timestamp=NOW.isoformat(),
+        )
+        inactivity_alert = AlertResult(
+            entity_id="sensor.b",
+            alert_type=AlertType.INACTIVITY,
+            severity=AlertSeverity.MEDIUM,
+            confidence=0.9,
+            explanation="inactivity alert",
+            timestamp=NOW.isoformat(),
+        )
+
+        result = coord._derive_welfare([break_alert, inactivity_alert])
+        assert result["status"] == "concern"
+
+    @pytest.mark.asyncio
+    async def test_correlation_break_suppression_key(self) -> None:
+        """_handle_alerts records suppression key '{entity_id}|correlation_break'."""
+        from custom_components.behaviour_monitor.alert_result import (
+            AlertResult,
+            AlertSeverity,
+            AlertType,
+        )
+
+        coord, _ = _make_coordinator()
+        # Enable notifications so _handle_alerts processes alerts
+        coord._enable_notifications = True
+        # Lower severity gate so LOW alerts pass through
+        coord._min_notification_severity = "minor"
+
+        break_alert = AlertResult(
+            entity_id="sensor.a",
+            alert_type=AlertType.CORRELATION_BREAK,
+            severity=AlertSeverity.LOW,
+            confidence=0.8,
+            explanation="correlation break",
+            timestamp=NOW.isoformat(),
+        )
+
+        await coord._handle_alerts([break_alert], NOW)
+
+        assert "sensor.a|correlation_break" in coord._alert_suppression
