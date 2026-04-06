@@ -224,6 +224,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._acute_detector.check_unusual_time(eid, r, now),
                 self._drift_detector.check(eid, r, d, now),
             ) if x is not None)
+        # Correlation break detection
+        for eid in self._monitored_entities:
+            alerts.extend(
+                self._correlation_detector.check_breaks(eid, now, self._last_seen)
+            )
         return alerts
 
     async def _handle_alerts(self, alerts: list[AlertResult], now: datetime) -> None:
@@ -279,7 +284,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _derive_welfare(self, alerts: list[AlertResult]) -> dict[str, Any]:
         if not alerts:
             return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
-        sevs = [a.severity for a in alerts]
+        # Exclude correlation breaks from welfare escalation (per D-03)
+        welfare_alerts = [a for a in alerts if a.alert_type != AlertType.CORRELATION_BREAK]
+        if not welfare_alerts:
+            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
+        sevs = [a.severity for a in welfare_alerts]
         if AlertSeverity.HIGH in sevs:
             st, rec = "alert", "Immediate welfare check recommended."
         elif AlertSeverity.MEDIUM in sevs:
@@ -287,10 +296,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             st, rec = "check_recommended", "Monitor closely."
         cnt: dict[str, int] = {}
-        for a in alerts:
+        for a in welfare_alerts:
             cnt[a.entity_id] = cnt.get(a.entity_id, 0) + 1
-        return {"status": st, "reasons": [a.explanation for a in alerts],
-                "summary": f"{len(alerts)} active alert(s): {st}", "recommendation": rec, "entity_count_by_status": cnt}
+        return {"status": st, "reasons": [a.explanation for a in welfare_alerts],
+                "summary": f"{len(welfare_alerts)} active alert(s): {st}", "recommendation": rec, "entity_count_by_status": cnt}
 
     def _build_sensor_data(self, alerts: list[AlertResult], now: datetime) -> dict[str, Any]:
         last_activity = max(self._last_seen.values()).isoformat() if self._last_seen else None
