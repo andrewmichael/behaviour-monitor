@@ -510,6 +510,154 @@ class TestPersistence:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# CorrelationDetector — decay and entity removal
+# ---------------------------------------------------------------------------
+
+
+class TestDecayAndRemoval:
+    """Tests for decay_stale_pairs() and remove_entity() methods."""
+
+    @staticmethod
+    def _build_detector_with_pairs() -> CorrelationDetector:
+        """Build a detector with multiple pairs in various states.
+
+        Pair ("sensor.a", "sensor.b"):
+            - 47 co-occurrences, learned (high PMI)
+        Pair ("sensor.a", "sensor.c"):
+            - 3 co-occurrences, NOT learned, below min_observations
+        Pair ("sensor.b", "sensor.c"):
+            - 15 co-occurrences, NOT learned (low PMI due to high solos)
+        """
+        det = CorrelationDetector(
+            co_occurrence_window_seconds=120,
+            min_observations=10,
+            pmi_threshold=1.0,
+        )
+        # Pair 1: high PMI, will be learned
+        pair_ab = CorrelationPair(
+            entities=("sensor.a", "sensor.b"),
+            co_occurrences=47,
+            solo_counts={"sensor.a": 10, "sensor.b": 5},
+            first_observed="2026-01-01T00:00:00",
+        )
+        det._pairs[("sensor.a", "sensor.b")] = pair_ab
+
+        # Pair 2: too few co-occurrences, noise pair
+        pair_ac = CorrelationPair(
+            entities=("sensor.a", "sensor.c"),
+            co_occurrences=3,
+            solo_counts={"sensor.a": 2, "sensor.c": 1},
+            first_observed="2026-01-02T00:00:00",
+        )
+        det._pairs[("sensor.a", "sensor.c")] = pair_ac
+
+        # Pair 3: enough co-occurrences but low PMI (lots of solos)
+        pair_bc = CorrelationPair(
+            entities=("sensor.b", "sensor.c"),
+            co_occurrences=15,
+            solo_counts={"sensor.b": 500, "sensor.c": 500},
+            first_observed="2026-01-03T00:00:00",
+        )
+        det._pairs[("sensor.b", "sensor.c")] = pair_bc
+
+        # Global event counts
+        det._entity_event_counts = {
+            "sensor.a": 62,
+            "sensor.b": 567,
+            "sensor.c": 519,
+        }
+        det._total_event_count = 62 + 567 + 519 + 200  # background events
+        det._break_cycles = {"sensor.a": 2, "sensor.c": 1}
+
+        det.recompute()
+        return det
+
+    def test_decay_removes_noise_pair(self) -> None:
+        """decay_stale_pairs removes pair with co_occurrences < min_observations
+        that is NOT in _learned_pairs."""
+        det = self._build_detector_with_pairs()
+        # Pair ("sensor.a", "sensor.c") has 3 co-occurrences < 10, not learned
+        assert ("sensor.a", "sensor.c") not in det._learned_pairs
+        det.decay_stale_pairs()
+        assert ("sensor.a", "sensor.c") not in det._pairs
+
+    def test_decay_keeps_learned_pair(self) -> None:
+        """decay_stale_pairs keeps pair that IS in _learned_pairs."""
+        det = self._build_detector_with_pairs()
+        assert ("sensor.a", "sensor.b") in det._learned_pairs
+        det.decay_stale_pairs()
+        assert ("sensor.a", "sensor.b") in det._pairs
+
+    def test_decay_keeps_pair_with_enough_observations(self) -> None:
+        """decay_stale_pairs keeps pair with co_occurrences >= min_observations
+        even if not learned (may become learned later)."""
+        det = self._build_detector_with_pairs()
+        # Pair ("sensor.b", "sensor.c") has 15 co-occurrences >= 10, but low PMI
+        assert ("sensor.b", "sensor.c") not in det._learned_pairs
+        det.decay_stale_pairs()
+        assert ("sensor.b", "sensor.c") in det._pairs
+
+    def test_recompute_calls_decay(self) -> None:
+        """recompute() calls decay_stale_pairs() automatically at the end."""
+        det = self._build_detector_with_pairs()
+        # Add a new noise pair that should be pruned
+        noise_pair = CorrelationPair(
+            entities=("sensor.x", "sensor.y"),
+            co_occurrences=2,
+            solo_counts={},
+            first_observed="2026-02-01T00:00:00",
+        )
+        det._pairs[("sensor.x", "sensor.y")] = noise_pair
+        assert ("sensor.x", "sensor.y") in det._pairs
+        # recompute should prune it
+        det.recompute()
+        assert ("sensor.x", "sensor.y") not in det._pairs
+
+    def test_remove_entity_purges_pairs(self) -> None:
+        """remove_entity purges all pairs containing that entity from _pairs."""
+        det = self._build_detector_with_pairs()
+        det.remove_entity("sensor.a")
+        for key in det._pairs:
+            assert "sensor.a" not in key
+
+    def test_remove_entity_purges_learned_pairs(self) -> None:
+        """remove_entity purges matching entries from _learned_pairs."""
+        det = self._build_detector_with_pairs()
+        assert ("sensor.a", "sensor.b") in det._learned_pairs
+        det.remove_entity("sensor.a")
+        for key in det._learned_pairs:
+            assert "sensor.a" not in key
+
+    def test_remove_entity_purges_event_counts(self) -> None:
+        """remove_entity purges entity from _entity_event_counts and
+        decrements _total_event_count by that entity's count."""
+        det = self._build_detector_with_pairs()
+        count_a = det._entity_event_counts["sensor.a"]
+        old_total = det._total_event_count
+        det.remove_entity("sensor.a")
+        assert "sensor.a" not in det._entity_event_counts
+        assert det._total_event_count == old_total - count_a
+
+    def test_remove_entity_purges_break_cycles(self) -> None:
+        """remove_entity purges entity from _break_cycles."""
+        det = self._build_detector_with_pairs()
+        assert "sensor.a" in det._break_cycles
+        det.remove_entity("sensor.a")
+        assert "sensor.a" not in det._break_cycles
+
+    def test_remove_entity_unknown_is_noop(self) -> None:
+        """remove_entity with unknown entity_id is a no-op (no error)."""
+        det = self._build_detector_with_pairs()
+        pairs_before = dict(det._pairs)
+        learned_before = set(det._learned_pairs)
+        total_before = det._total_event_count
+        det.remove_entity("sensor.nonexistent")
+        assert det._pairs == pairs_before
+        assert det._learned_pairs == learned_before
+        assert det._total_event_count == total_before
+
+
 class TestNoHAImports:
     """Ensure the module has no Home Assistant dependencies."""
 
