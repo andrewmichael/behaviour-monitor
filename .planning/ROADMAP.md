@@ -63,7 +63,7 @@
 
 - [x] **Phase 17: Foundation and Rehydration** - Constants, config migration v8->v9, config UI for correlation window, and startup tier rehydration fix (completed 2026-04-03)
 - [x] **Phase 18: Correlation Discovery** - CorrelationDetector with PMI-based discovery, sensor attribute exposure, and persistence (completed 2026-04-04)
-- [ ] **Phase 19: Break Detection and Alerting** - Alert on broken correlations with sustained evidence and group-level deduplication
+- [x] **Phase 19: Break Detection and Alerting** - Alert on broken correlations with sustained evidence and group-level deduplication (completed 2026-04-06)
 - [ ] **Phase 20: Correlation Lifecycle** - Stale pair decay and cleanup on entity removal
 
 ## Phase Details
@@ -106,7 +106,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 19-01-PLAN.md — check_breaks method on CorrelationDetector with sustained evidence and group dedup
-- [ ] 19-02-PLAN.md — Coordinator wiring, welfare exclusion, and suppression pipeline integration
+- [x] 19-02-PLAN.md — Coordinator wiring, welfare exclusion, and suppression pipeline integration
 
 ### Phase 20: Correlation Lifecycle
 **Goal**: Correlation state stays clean over time without manual intervention
@@ -139,5 +139,5 @@ Plans:
 | 16. Config UI and Migration | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
 | 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
-| 19. Break Detection and Alerting | v4.0 | 1/2 | In Progress|  |
+| 19. Break Detection and Alerting | v4.0 | 2/2 | Complete   | 2026-04-06 |
 | 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |

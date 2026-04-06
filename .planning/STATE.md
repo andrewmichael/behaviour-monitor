@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Cross-Entity Correlation
-status: executing
-stopped_at: Completed 19-01-PLAN.md
-last_updated: "2026-04-05T10:20:39.037Z"
-last_activity: 2026-04-05
+status: verifying
+stopped_at: Completed 19-02-PLAN.md
+last_updated: "2026-04-06T12:47:20.896Z"
+last_activity: 2026-04-06
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 Phase: 19 (Break Detection and Alerting) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
-Last activity: 2026-04-05
+Status: Phase complete — ready for verification
+Last activity: 2026-04-06
 
 Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
 
@@ -46,6 +46,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 17]: PMI_THRESHOLD=1.0 as medium-confidence tunable constant; correlation window 30-600s range in config UI
 - [Phase 18]: record_event placed after last_seen update so all_last_seen includes current entity timestamp
 - [Phase 19]: Confidence uses co_occurrence_rate of highest-rate missing partner
+- [Phase 19]: Correlation breaks excluded entirely from welfare derivation (reasons, counts, status) per D-03
 
 ### Blockers/Concerns
 
@@ -63,6 +64,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-05T10:20:39.033Z
-Stopped at: Completed 19-01-PLAN.md
+Last session: 2026-04-06T12:47:20.890Z
+Stopped at: Completed 19-02-PLAN.md
 Resume file: None
