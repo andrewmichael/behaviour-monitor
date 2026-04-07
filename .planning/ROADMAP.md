@@ -117,7 +117,7 @@ Plans:
   2. When a monitored entity is removed from the integration, all correlation pairs involving that entity are cleaned up
 **Plans**: 2 plans
 Plans:
-- [ ] 20-01-PLAN.md — Stale pair decay and entity removal methods on CorrelationDetector
+- [x] 20-01-PLAN.md — Stale pair decay and entity removal methods on CorrelationDetector
 - [ ] 20-02-PLAN.md — Coordinator wiring for entity removal cleanup on startup
 
 ## Progress
@@ -143,4 +143,4 @@ Plans:
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
 | 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
 | 19. Break Detection and Alerting | v4.0 | 2/2 | Complete    | 2026-04-06 |
-| 20. Correlation Lifecycle | v4.0 | 0/0 | Not started | - |
+| 20. Correlation Lifecycle | v4.0 | 1/2 | In Progress|  |
