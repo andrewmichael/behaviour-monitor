@@ -489,3 +489,123 @@ class TestCorrelationBreakDetection:
         await coord._handle_alerts([break_alert], NOW)
 
         assert "sensor.a|correlation_break" in coord._alert_suppression
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Entity removal cleanup during async_setup
+# ---------------------------------------------------------------------------
+
+
+class TestCorrelationEntityRemoval:
+    """async_setup purges stale entity correlation state on startup."""
+
+    @pytest.mark.asyncio
+    async def test_removes_stale_entities_on_setup(self) -> None:
+        """Entities in restored detector state but NOT in _monitored_entities are removed."""
+        from custom_components.behaviour_monitor.correlation_detector import (
+            CorrelationDetector,
+        )
+
+        # Coordinator monitors only sensor.a — sensor.removed is gone from config
+        coord, _ = _make_coordinator(monitored=["sensor.a"])
+
+        # Build stored state that includes sensor.removed
+        detector = CorrelationDetector(co_occurrence_window_seconds=180)
+        detector._entity_event_counts = {"sensor.a": 50, "sensor.removed": 30}
+        detector._total_event_count = 80
+        detector._pairs[("sensor.a", "sensor.removed")] = MagicMock()
+        detector._learned_pairs = {("sensor.a", "sensor.removed")}
+        detector._break_cycles = {"sensor.removed": 2}
+
+        stored_data = {
+            "correlation_state": detector.to_dict(),
+        }
+        coord._store.async_load = AsyncMock(return_value=stored_data)
+
+        await coord.async_setup()
+
+        # sensor.removed should be purged from the restored detector
+        assert "sensor.removed" not in coord._correlation_detector._entity_event_counts
+        assert not any(
+            "sensor.removed" in key for key in coord._correlation_detector._pairs
+        )
+        assert not any(
+            "sensor.removed" in key
+            for key in coord._correlation_detector._learned_pairs
+        )
+        assert "sensor.removed" not in coord._correlation_detector._break_cycles
+
+    @pytest.mark.asyncio
+    async def test_does_not_remove_monitored_entities(self) -> None:
+        """Entities still in _monitored_entities are NOT removed."""
+        coord, _ = _make_coordinator(monitored=["sensor.a", "sensor.b"])
+
+        stored_data = {
+            "correlation_state": {
+                "co_occurrence_window_seconds": 180,
+                "min_observations": 10,
+                "pmi_threshold": 1.0,
+                "pairs": {},
+                "learned_pairs": [],
+                "entity_event_counts": {"sensor.a": 50, "sensor.b": 30},
+                "total_event_count": 80,
+                "break_cycles": {},
+            },
+        }
+        coord._store.async_load = AsyncMock(return_value=stored_data)
+
+        await coord.async_setup()
+
+        # Both entities should still be present
+        assert "sensor.a" in coord._correlation_detector._entity_event_counts
+        assert "sensor.b" in coord._correlation_detector._entity_event_counts
+
+    @pytest.mark.asyncio
+    async def test_no_stored_correlation_state_no_removal(self) -> None:
+        """No correlation_state in stored data means no remove_entity calls."""
+        from custom_components.behaviour_monitor.correlation_detector import (
+            CorrelationDetector,
+        )
+
+        coord, _ = _make_coordinator(monitored=["sensor.a"])
+        original_detector = coord._correlation_detector
+
+        stored_data = {
+            "routine_model": coord._routine_model.to_dict(),
+        }
+        coord._store.async_load = AsyncMock(return_value=stored_data)
+
+        with patch.object(
+            CorrelationDetector, "remove_entity"
+        ) as mock_remove:
+            await coord.async_setup()
+            mock_remove.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_event_counts_no_removal(self) -> None:
+        """Empty _entity_event_counts means no stale entities to remove."""
+        from custom_components.behaviour_monitor.correlation_detector import (
+            CorrelationDetector,
+        )
+
+        coord, _ = _make_coordinator(monitored=["sensor.a"])
+
+        stored_data = {
+            "correlation_state": {
+                "co_occurrence_window_seconds": 180,
+                "min_observations": 10,
+                "pmi_threshold": 1.0,
+                "pairs": {},
+                "learned_pairs": [],
+                "entity_event_counts": {},
+                "total_event_count": 0,
+                "break_cycles": {},
+            },
+        }
+        coord._store.async_load = AsyncMock(return_value=stored_data)
+
+        with patch.object(
+            CorrelationDetector, "remove_entity"
+        ) as mock_remove:
+            await coord.async_setup()
+            mock_remove.assert_not_called()
