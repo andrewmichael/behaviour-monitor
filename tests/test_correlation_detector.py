@@ -561,13 +561,14 @@ class TestDecayAndRemoval:
         )
         det._pairs[("sensor.b", "sensor.c")] = pair_bc
 
-        # Global event counts
+        # Global event counts: sensor.a and sensor.b kept low enough
+        # relative to total so that pair_ab's PMI exceeds 1.0
         det._entity_event_counts = {
             "sensor.a": 62,
-            "sensor.b": 567,
+            "sensor.b": 57,
             "sensor.c": 519,
         }
-        det._total_event_count = 62 + 567 + 519 + 200  # background events
+        det._total_event_count = 62 + 57 + 519 + 500  # background events
         det._break_cycles = {"sensor.a": 2, "sensor.c": 1}
 
         det.recompute()

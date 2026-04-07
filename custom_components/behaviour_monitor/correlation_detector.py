@@ -234,6 +234,64 @@ class CorrelationDetector:
                 new_learned.add(key)
 
         self._learned_pairs = new_learned
+        self.decay_stale_pairs()
+
+    # ------------------------------------------------------------------
+    # Stale pair decay
+    # ------------------------------------------------------------------
+
+    def decay_stale_pairs(self) -> None:
+        """Remove noise pairs that never accumulated enough evidence.
+
+        A pair is pruned when:
+        - It is NOT in ``_learned_pairs``, AND
+        - Its ``co_occurrences`` is below ``_min_observations``.
+
+        Pairs with enough observations but low PMI are kept because their
+        statistics remain meaningful for future recomputation if behavior
+        changes.  Called automatically at the end of :meth:`recompute`.
+        """
+        to_remove: list[tuple[str, str]] = []
+        for key, pair in self._pairs.items():
+            if key in self._learned_pairs:
+                continue
+            if pair.co_occurrences < self._min_observations:
+                to_remove.append(key)
+        for key in to_remove:
+            del self._pairs[key]
+
+    # ------------------------------------------------------------------
+    # Entity removal
+    # ------------------------------------------------------------------
+
+    def remove_entity(self, entity_id: str) -> None:
+        """Purge all correlation state for a specific entity.
+
+        Removes:
+        - All pairs from ``_pairs`` where *entity_id* appears.
+        - Matching entries from ``_learned_pairs``.
+        - The entity's entry from ``_entity_event_counts`` (and decrements
+          ``_total_event_count`` accordingly).
+        - The entity's entry from ``_break_cycles``.
+
+        If *entity_id* is unknown, this is a no-op.
+        """
+        # Remove pairs containing this entity
+        keys_to_remove = [key for key in self._pairs if entity_id in key]
+        for key in keys_to_remove:
+            del self._pairs[key]
+
+        # Remove from learned pairs
+        self._learned_pairs = {
+            key for key in self._learned_pairs if entity_id not in key
+        }
+
+        # Remove from entity event counts and adjust total
+        count = self._entity_event_counts.pop(entity_id, 0)
+        self._total_event_count -= count
+
+        # Remove from break cycles
+        self._break_cycles.pop(entity_id, None)
 
     # ------------------------------------------------------------------
     # Sensor attribute output
