@@ -13,8 +13,8 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 
 ### Correlation Discovery
 
-- [ ] **COR-01**: System discovers entity pairs that co-occur within a configurable time window using PMI-based correlation strength
-- [ ] **COR-02**: Discovery is gated on minimum co-occurrence count to prevent premature correlations
+- [x] **COR-01**: System discovers entity pairs that co-occur within a configurable time window using PMI-based correlation strength
+- [x] **COR-02**: Discovery is gated on minimum co-occurrence count to prevent premature correlations
 - [x] **COR-03**: Discovered correlation groups are exposed as sensor attributes on entity_status_summary
 - [x] **COR-04**: Correlation state is persisted to storage and restored on startup
 
@@ -28,7 +28,7 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 
 - [x] **CFG-01**: User can configure the correlation time window via the HA config UI
 - [x] **CFG-02**: Config migration v8 to v9 preserves existing values and injects correlation defaults
-- [ ] **COR-08**: Stale correlation pairs decay automatically when entities stop co-occurring
+- [x] **COR-08**: Stale correlation pairs decay automatically when entities stop co-occurring
 - [x] **COR-09**: Correlation state is cleaned up when monitored entities are removed
 
 ## Future Requirements
