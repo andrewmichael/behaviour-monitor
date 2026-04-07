@@ -143,4 +143,4 @@ Plans:
 | 17. Foundation and Rehydration | v4.0 | 2/2 | Complete    | 2026-04-03 |
 | 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
 | 19. Break Detection and Alerting | v4.0 | 2/2 | Complete    | 2026-04-06 |
-| 20. Correlation Lifecycle | v4.0 | 2/2 | Complete   | 2026-04-07 |
+| 20. Correlation Lifecycle | v4.0 | 2/2 | Complete    | 2026-04-07 |
