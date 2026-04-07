@@ -7,6 +7,7 @@ A Home Assistant custom integration that learns entity behavior patterns and det
 - **Routine Learning**: Learns per-entity behavior baselines using 168 hour-of-day x day-of-week slots from configurable rolling history (default 4 weeks)
 - **Activity-Rate Classification**: Auto-classifies entities into HIGH/MEDIUM/LOW frequency tiers based on observed event rates — applies tier-appropriate detection thresholds so motion sensors and door locks aren't treated the same
 - **Acute Detection**: Alerts when expected activity is missing (inactivity) or activity occurs at unusual times — requires sustained evidence across multiple polling cycles before firing, with tier-aware boost and absolute minimum floor for high-frequency entities
+- **Cross-Entity Correlation**: Automatically discovers which entities fire together (e.g., kitchen motion + kettle) using PMI-based co-occurrence scoring, and alerts when learned correlations break — with sustained evidence gating and group-level deduplication
 - **Drift Detection**: Detects persistent behavior changes over days/weeks using CUSUM change-point analysis with configurable sensitivity
 - **Elder Care Monitoring**: Welfare status, routine progress tracking, and severity-graded alerts
 - **Recorder Bootstrap**: Bootstraps baselines from existing HA recorder history on first load — no cold start for existing installations
@@ -83,12 +84,13 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Min inactivity multiplier | Lower bound for adaptive inactivity scalar (1.0–5.0) | 1.5 |
 | Max inactivity multiplier | Upper bound for adaptive inactivity scalar (2.0–20.0) | 10.0 |
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
+| Correlation window | Time window in seconds for co-occurrence detection (30–600) | 120 (2 min) |
 | Activity tier override | Override auto-classified frequency tier for all entities (Auto/High/Medium/Low) | Auto |
 | Track attributes | Also track attribute changes, not just state changes | Yes |
 
 ### Upgrading
 
-Existing config entries migrate automatically through the full migration chain (v2 through v8). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
+Existing config entries migrate automatically through the full migration chain (v2 through v9). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
 
 Notable migrations:
 - **v2→v4**: Removed ML-related options, added detection controls
@@ -96,6 +98,7 @@ Notable migrations:
 - **v6**: Added alert repeat interval
 - **v7**: Added adaptive inactivity multiplier bounds
 - **v8**: Added activity tier override (defaults to "Auto")
+- **v9**: Added correlation window (defaults to 120 seconds)
 
 ## Holiday Mode and Visitor Snooze
 
@@ -265,7 +268,7 @@ The integration creates the following sensors and control entities:
 | `sensor.behaviour_monitor_welfare_status` | Overall welfare status: `ok`, `check_recommended`, `concern`, or `alert` |
 | `sensor.behaviour_monitor_routine_progress` | Daily routine completion percentage (0-100%) |
 | `sensor.behaviour_monitor_time_since_activity` | Human-readable time since last activity with context |
-| `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention"). Each entity includes an `activity_tier` attribute showing its classified frequency tier (high/medium/low or null if unclassified) |
+| `sensor.behaviour_monitor_entity_status_summary` | Summary of entity statuses (e.g., "5 OK, 2 Need Attention"). Each entity includes `activity_tier` (high/medium/low/null) and `correlated_with` (list of correlated entity IDs). Also includes `cross_sensor_patterns` with discovered correlation groups. |
 
 ### Deprecated Sensors (preserved for backward compatibility)
 
@@ -338,6 +341,21 @@ Sensitivity tiers control how quickly drift is detected:
 | Low | k=1.0, h=6.0 | Slowest — only large sustained shifts |
 
 The `routine_reset` service clears the drift accumulator for an entity when a routine change is intentional (e.g., started working from home).
+
+### Cross-Entity Correlation
+
+Automatically discovers which entities tend to fire together within a configurable time window using **Pointwise Mutual Information (PMI)** scoring. PMI normalizes for entity base rates — a motion sensor firing 50 times/day and a door sensor firing 4 times/day can still be identified as correlated if they co-occur more than chance would predict.
+
+**How it works:**
+1. Events are recorded as they happen. When two entities fire within the correlation window (default: 2 minutes), a co-occurrence is counted.
+2. Once per day, PMI scores are recomputed for all observed pairs. Pairs exceeding the PMI threshold with enough observations (minimum 10 co-occurrences) are promoted to "learned correlations."
+3. Learned correlations are exposed in the `cross_sensor_patterns` sensor attribute and per-entity `correlated_with` fields.
+
+**Break detection:** When entity A fires but its correlated companion B does not fire within the window, that counts as a "miss." After 3 consecutive misses, a correlation break alert fires at LOW severity. Alerts are deduplicated per triggering entity — if A correlates with both B and C, and both miss, you get one alert listing both missing companions.
+
+**Lifecycle management:** Stale pairs that fail to maintain their PMI score are automatically pruned during daily recompute. When an entity is removed from monitoring, all its correlation data is cleaned up on the next restart.
+
+Correlation break alerts do **not** escalate welfare status — they are informational only (LOW severity).
 
 ### Suppression Logic
 

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-04-07
+
+### Added
+- Cross-entity correlation discovery via PMI-based co-occurrence scoring
+- Configurable correlation time window (30-600 seconds, default 120)
+- Correlation break alerting with 3-cycle sustained evidence gating
+- Group-level alert deduplication (one alert per triggering entity)
+- Correlation groups exposed as `cross_sensor_patterns` sensor attribute
+- Per-entity `correlated_with` in entity_status sensor data
+- Stale correlation pair decay during daily recompute
+- Entity removal cleanup for correlation state
+- Config migration v8→v9 for correlation window setting
+
+### Fixed
+- Tier classification now retries on subsequent update cycles when startup confidence is low (rehydration fix)
+
+## [3.1.0] - 2026-04-03
+
+### Added
+- Activity-rate classification: entities auto-classified into HIGH/MEDIUM/LOW frequency tiers
+- Tier-aware inactivity detection with multiplier boost and absolute minimum floor
+- Human-readable duration formatting (`45m` instead of `0.0h`) in alert explanations
+- Activity tier exposed as sensor attribute on entity_status_summary
+- Global tier override setting in config UI (Auto/High/Medium/Low)
+- Config migration v7→v8 for tier override setting
+
 ## [3.0.1] - 2026-03-15
 
 ### Changed
