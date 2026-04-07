@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Cross-Entity Correlation
 status: executing
-stopped_at: Phase 20 context gathered
-last_updated: "2026-04-06T18:33:08.356Z"
-last_activity: 2026-04-06 -- Phase 20 execution started
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-04-07T10:25:23.041Z"
+last_activity: 2026-04-07
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 8
   percent: 0
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 ## Current Position
 
 Phase: 20 (Correlation Lifecycle) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 20
-Last activity: 2026-04-06 -- Phase 20 execution started
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-04-07
 
 Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
 
@@ -47,6 +47,7 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 18]: record_event placed after last_seen update so all_last_seen includes current entity timestamp
 - [Phase 19]: Confidence uses co_occurrence_rate of highest-rate missing partner
 - [Phase 19]: Correlation breaks excluded entirely from welfare derivation (reasons, counts, status) per D-03
+- [Phase 20]: Cleanup runs inside existing correlation_state restore block, only after from_dict
 
 ### Blockers/Concerns
 
@@ -64,6 +65,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-06T17:49:01.604Z
-Stopped at: Phase 20 context gathered
-Resume file: .planning/phases/20-correlation-lifecycle/20-CONTEXT.md
+Last session: 2026-04-07T10:25:23.027Z
+Stopped at: Completed 20-02-PLAN.md
+Resume file: None

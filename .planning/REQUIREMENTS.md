@@ -29,7 +29,7 @@ Requirements for Cross-Entity Correlation milestone. Each maps to roadmap phases
 - [x] **CFG-01**: User can configure the correlation time window via the HA config UI
 - [x] **CFG-02**: Config migration v8 to v9 preserves existing values and injects correlation defaults
 - [ ] **COR-08**: Stale correlation pairs decay automatically when entities stop co-occurring
-- [ ] **COR-09**: Correlation state is cleaned up when monitored entities are removed
+- [x] **COR-09**: Correlation state is cleaned up when monitored entities are removed
 
 ## Future Requirements
 
@@ -77,7 +77,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CFG-01 | Phase 17 | Complete |
 | CFG-02 | Phase 17 | Complete |
 | COR-08 | Phase 20 | Pending |
-| COR-09 | Phase 20 | Pending |
+| COR-09 | Phase 20 | Complete |
 
 **Coverage:**
 - v4.0 requirements: 12 total
