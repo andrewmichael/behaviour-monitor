@@ -134,6 +134,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._correlation_detector = CorrelationDetector.from_dict(
                     stored["correlation_state"]
                 )
+                # Purge correlation state for entities no longer monitored
+                monitored_set = set(self._monitored_entities)
+                stale_entities = [
+                    eid for eid in list(self._correlation_detector._entity_event_counts)
+                    if eid not in monitored_set
+                ]
+                for eid in stale_entities:
+                    self._correlation_detector.remove_entity(eid)
             c = stored.get("coordinator", {})
             self._holiday_mode = c.get("holiday_mode", False)
             if (sn := c.get("snooze_until")) and (sdt := _parse_dt(sn)):
