@@ -45,17 +45,16 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Activity tier exposed as sensor attribute on entity_status_summary — v3.1
 - ✓ Global tier override in config UI (Auto/High/Medium/Low) with config migration v7→v8 — v3.1
 
+- ✓ Startup tier rehydration — classify_tier() retries when confidence is low instead of blocking until midnight — v4.0
+- ✓ Cross-entity correlation discovery via PMI-based co-occurrence scoring with configurable time window — v4.0
+- ✓ Correlation break alerting with sustained evidence gating and group-level deduplication — v4.0
+- ✓ Correlation groups exposed as sensor attributes on entity_status_summary — v4.0
+- ✓ Correlation state persistence and automatic lifecycle management (stale pair decay, entity removal cleanup) — v4.0
+- ✓ Config migration v8→v9 with correlation window setting in UI — v4.0
+
 ### Active
 
-**Current Milestone: v4.0 Cross-Entity Correlation**
-
-**Goal:** Add cross-entity routine correlation to detect when normally co-occurring entities diverge, plus fix startup tier rehydration gap.
-
-**Target features:**
-- Automatically discover entity groups that correlate (fire within a time window of each other)
-- Expose discovered correlation groups as sensor attributes for user visibility
-- Alert when learned correlations break (entity A fires without expected companion entity B)
-- Fix startup tier rehydration — classify tiers on first update cycle, not just at midnight
+*No active milestone. Ready for next milestone planning.*
 
 ### Out of Scope
 
@@ -68,9 +67,9 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v3.1 with ~10,900 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 449 tests passing.
+Shipped v4.0 with ~13,000 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 522 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v8.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v9.
 
 Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
@@ -78,8 +77,9 @@ Architecture:
 - `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
 - `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
 - `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
-- `config_flow.py` — v8 config with tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7)
+- `correlation_detector.py` — PMI-based co-occurrence discovery; check_breaks() with sustained evidence; decay_stale_pairs() and remove_entity() lifecycle management
+- `config_flow.py` — v9 config with correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9)
 - `translations/en.json` — user-friendly labels for all config fields
 
 Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
@@ -132,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after v4.0 milestone started*
+*Last updated: 2026-04-07 after v4.0 milestone shipped*

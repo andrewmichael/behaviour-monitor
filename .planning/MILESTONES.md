@@ -1,5 +1,22 @@
 # Milestones
 
+## v4.0 Cross-Entity Correlation (Shipped: 2026-04-07)
+
+**Phases completed:** 4 phases, 8 plans, 9 tasks
+
+**Key accomplishments:**
+
+- Fixed classify_tier() to retry on subsequent update cycles when startup confidence is low or median data is unavailable, instead of blocking until midnight
+- Correlation constants, AlertType.CORRELATION_BREAK, config UI NumberSelector (30-600s), and v8->v9 migration chain with 459 tests passing
+- CorrelationDetector with PMI-based co-occurrence discovery, minimum co-occurrence gating, and to_dict/from_dict persistence
+- CorrelationDetector wired into coordinator for event recording, daily PMI recomputation, persistence, and sensor attribute exposure
+- check_breaks method on CorrelationDetector with 3-cycle sustained evidence gating and group-level dedup for CORRELATION_BREAK alerts
+- check_breaks wired into coordinator _run_detection with welfare exclusion filter for CORRELATION_BREAK alerts
+- decay_stale_pairs() and remove_entity() methods on CorrelationDetector for automatic lifecycle management
+- Coordinator async_setup wires remove_entity() to purge stale correlation data when entities leave monitored list
+
+---
+
 ## v3.1 Activity-Rate Classification (Shipped: 2026-04-03)
 
 **Phases completed:** 5 phases, 5 plans, 10 tasks
