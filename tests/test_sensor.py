@@ -459,5 +459,3 @@ class TestAsyncSetupEntry:
         entities = async_add_entities.call_args[0][0]
         # Verify the coordinator is passed to all sensors
         assert all(entity.coordinator == mock_coordinator for entity in entities)
-
-

@@ -1,0 +1,10 @@
+**/__pycache__/**
+**/*.pyc
+**/*.png
+**/*.jpg
+**/*.svg
+venv/**
+.venv/**
+.git/**
+**/.storage/**
+**/node_modules/**
