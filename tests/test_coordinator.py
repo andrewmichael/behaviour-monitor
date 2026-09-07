@@ -85,15 +85,15 @@ class TestBehaviourMonitorCoordinator:
         from custom_components.behaviour_monitor.const import CONF_TRACK_ATTRIBUTES
         mock_config_entry.data = {
             **mock_config_entry.data,
-            CONF_TRACK_ATTRIBUTES: False,
+            CONF_TRACK_ATTRIBUTES: True,
         }
         coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        assert coordinator._track_attributes is False
-
-    def test_coordinator_track_attributes_defaults_true(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        """Coordinator defaults track_attributes to True when not in config."""
-        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
         assert coordinator._track_attributes is True
+
+    def test_coordinator_track_attributes_defaults_false(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        """Coordinator defaults track_attributes to False when not in config."""
+        coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert coordinator._track_attributes is False
 
     def test_coordinator_learning_period_defaults_to_7(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         """Coordinator defaults learning_period_days to 7 when not in config."""

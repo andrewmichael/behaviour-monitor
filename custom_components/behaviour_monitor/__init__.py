@@ -70,7 +70,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     v2 -> v3: Remove ML config keys, add history_window_days.
     v3 -> v4: Remove remaining old sigma/ML keys, add inactivity_multiplier and
               drift_sensitivity defaults.
-    v4 -> v5: Add learning_period (default 7) and track_attributes (default True).
+    v4 -> v5: Add learning_period (default 7) and track_attributes (default False).
     """
     if config_entry.version < 3:
         new_data = dict(config_entry.data)

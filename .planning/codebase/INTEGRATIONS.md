@@ -79,7 +79,7 @@
 - `ml_learning_period` - Days before ML notifications send (default: 7)
 - `retrain_period` - How often to replay historical data for model warmup (default: 14)
 - `cross_sensor_window` - Time window for detecting sensor correlations (default: 300 seconds)
-- `track_attributes` - Track attribute changes in addition to state (default: True)
+- `track_attributes` - Track attribute changes in addition to state (default: False)
 - `notify_services` - Mobile notification service targets (default: empty, persistent_notification only)
 
 **Optional Runtime Installation:**

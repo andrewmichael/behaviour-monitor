@@ -86,7 +86,7 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Mobile notification services | Services to send mobile notifications (e.g., `notify.mobile_app_iphone`) | Empty |
 | Correlation window | Time window in seconds for co-occurrence detection (30–600) | 120 (2 min) |
 | Activity tier override | Override auto-classified frequency tier for all entities (Auto/High/Medium/Low) | Auto |
-| Track attributes | Also track attribute changes, not just state changes | Yes |
+| Track attributes | Also track attribute changes, not just state changes | No |
 
 ### Upgrading
 
