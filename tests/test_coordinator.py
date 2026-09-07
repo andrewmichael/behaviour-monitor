@@ -1258,3 +1258,123 @@ class TestTierOverride:
 
         for r in coordinator._routine_model._entities.values():
             assert r._activity_tier == ActivityTier.HIGH
+
+
+class TestTrackAttributesPerEntityOverrides:
+    """Per-entity include/exclude overrides for track_attributes."""
+
+    def _make_coordinator(
+        self,
+        mock_hass: MagicMock,
+        mock_config_entry: MagicMock,
+        *,
+        global_flag: bool,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+    ) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES,
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        data = {**mock_config_entry.data, CONF_TRACK_ATTRIBUTES: global_flag}
+        if include is not None:
+            data[CONF_TRACK_ATTRIBUTES_INCLUDE] = include
+        if exclude is not None:
+            data[CONF_TRACK_ATTRIBUTES_EXCLUDE] = exclude
+        mock_config_entry.data = data
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    @staticmethod
+    def _attribute_only_event(entity_id: str) -> MagicMock:
+        """Build a state_changed event where only attributes changed."""
+        event = MagicMock()
+        event.data = {
+            "entity_id": entity_id,
+            "old_state": MagicMock(state="off"),
+            "new_state": MagicMock(state="off"),
+        }
+        return event
+
+    def test_override_lists_default_empty(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(mock_hass, mock_config_entry, global_flag=False)
+        assert coordinator._track_attributes_include == frozenset()
+        assert coordinator._track_attributes_exclude == frozenset()
+
+    def test_falls_back_to_global_when_not_overridden(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        on = self._make_coordinator(mock_hass, mock_config_entry, global_flag=True)
+        assert on._tracks_attributes("sensor.test1") is True
+        off = self._make_coordinator(mock_hass, mock_config_entry, global_flag=False)
+        assert off._tracks_attributes("sensor.test1") is False
+
+    def test_include_opts_in_when_global_off(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass, mock_config_entry, global_flag=False, include=["sensor.test1"]
+        )
+        assert coordinator._tracks_attributes("sensor.test1") is True
+        assert coordinator._tracks_attributes("sensor.test2") is False
+
+    def test_exclude_opts_out_when_global_on(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass, mock_config_entry, global_flag=True, exclude=["sensor.test1"]
+        )
+        assert coordinator._tracks_attributes("sensor.test1") is False
+        assert coordinator._tracks_attributes("sensor.test2") is True
+
+    def test_exclude_wins_over_include(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass,
+            mock_config_entry,
+            global_flag=False,
+            include=["sensor.test1"],
+            exclude=["sensor.test1"],
+        )
+        assert coordinator._tracks_attributes("sensor.test1") is False
+
+    def test_attribute_only_event_recorded_for_included_entity(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass, mock_config_entry, global_flag=False, include=["sensor.test1"]
+        )
+        coordinator._handle_state_changed(self._attribute_only_event("sensor.test1"))
+        assert "sensor.test1" in coordinator._last_seen
+        coordinator._handle_state_changed(self._attribute_only_event("sensor.test2"))
+        assert "sensor.test2" not in coordinator._last_seen
+
+    def test_attribute_only_event_skipped_for_excluded_entity(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass, mock_config_entry, global_flag=True, exclude=["sensor.test1"]
+        )
+        coordinator._handle_state_changed(self._attribute_only_event("sensor.test1"))
+        assert "sensor.test1" not in coordinator._last_seen
+        coordinator._handle_state_changed(self._attribute_only_event("sensor.test2"))
+        assert "sensor.test2" in coordinator._last_seen
+
+    def test_real_state_change_always_recorded_for_excluded_entity(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        coordinator = self._make_coordinator(
+            mock_hass, mock_config_entry, global_flag=True, exclude=["sensor.test1"]
+        )
+        event = MagicMock()
+        event.data = {
+            "entity_id": "sensor.test1",
+            "old_state": MagicMock(state="off"),
+            "new_state": MagicMock(state="on"),
+        }
+        coordinator._handle_state_changed(event)
+        assert "sensor.test1" in coordinator._last_seen

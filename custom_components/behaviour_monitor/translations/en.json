@@ -17,7 +17,9 @@
           "notify_services": "Mobile notification services",
           "inactivity_multiplier": "Inactivity sensitivity scaling",
           "min_inactivity_multiplier": "Min inactivity multiplier",
-          "max_inactivity_multiplier": "Max inactivity multiplier"
+          "max_inactivity_multiplier": "Max inactivity multiplier",
+          "track_attributes_include": "Always track attribute changes for",
+          "track_attributes_exclude": "Never track attribute changes for"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -32,12 +34,15 @@
           "notify_services": "Services to send mobile notifications (e.g., notify.mobile_app_iphone). Add multiple services to notify multiple devices. Leave empty to only use persistent notifications in the HA UI.",
           "inactivity_multiplier": "Scales the auto-learned per-entity threshold. 1.0 = use learned threshold as-is; higher = more tolerant.",
           "min_inactivity_multiplier": "Lower bound on the adaptive threshold multiplier (default 1.5). Prevents thresholds from becoming too tight on highly regular entities.",
-          "max_inactivity_multiplier": "Upper bound on the adaptive threshold multiplier (default 10.0). Prevents thresholds from becoming too loose on erratic entities."
+          "max_inactivity_multiplier": "Upper bound on the adaptive threshold multiplier (default 10.0). Prevents thresholds from becoming too loose on erratic entities.",
+          "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
+          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
         }
       }
     },
     "error": {
-      "no_entities_selected": "Please select at least one entity to monitor."
+      "no_entities_selected": "Please select at least one entity to monitor.",
+      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
     },
     "abort": {
       "already_configured": "This combination of entities is already being monitored."
@@ -60,12 +65,20 @@
           "track_attributes": "Track attribute changes",
           "inactivity_multiplier": "Inactivity sensitivity scaling",
           "min_inactivity_multiplier": "Min inactivity multiplier",
-          "max_inactivity_multiplier": "Max inactivity multiplier"
+          "max_inactivity_multiplier": "Max inactivity multiplier",
+          "track_attributes_include": "Always track attribute changes for",
+          "track_attributes_exclude": "Never track attribute changes for"
+        },
+        "data_description": {
+          "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
+          "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
+          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
         }
       }
     },
     "error": {
-      "no_entities_selected": "Please select at least one entity to monitor."
+      "no_entities_selected": "Please select at least one entity to monitor.",
+      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
     }
   },
   "entity": {

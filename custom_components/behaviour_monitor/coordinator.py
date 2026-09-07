@@ -22,7 +22,8 @@ from .const import (
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES,
+    CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_CORRELATION_WINDOW,
@@ -81,6 +82,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._min_notification_severity: str = d.get(CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY)
         self._learning_period_days: int = int(d.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS))
         self._track_attributes: bool = bool(d.get(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES))
+        self._track_attributes_include: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
+        self._track_attributes_exclude: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
         self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(
             float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
@@ -178,6 +181,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         })
 
+    def _tracks_attributes(self, entity_id: str) -> bool:
+        """Return whether attribute-only changes count as activity for this entity.
+
+        Per-entity overrides take precedence over the global setting: an entity in
+        the exclude list never tracks attributes, one in the include list always
+        does, and everything else follows the global track_attributes toggle.
+        """
+        if entity_id in self._track_attributes_exclude:
+            return False
+        if entity_id in self._track_attributes_include:
+            return True
+        return self._track_attributes
+
     @callback
     def _handle_state_changed(self, event: Event) -> None:
         eid: str = event.data.get("entity_id", "")
@@ -186,7 +202,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ns = event.data.get("new_state")
         if ns is None:
             return
-        if not self._track_attributes:
+        if not self._tracks_attributes(eid):
             old_state = event.data.get("old_state")
             if old_state is not None and old_state.state == ns.state:
                 return
