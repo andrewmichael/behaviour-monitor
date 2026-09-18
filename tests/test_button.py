@@ -20,6 +20,7 @@ class TestAcknowledgePanicButton:
         coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
         coordinator.panic_active = ["binary_sensor.sos"]
         coordinator.panic_unacknowledged = ["binary_sensor.sos"]
+        coordinator.panic_devices = {"binary_sensor.sos": {"available": True, "battery": 50, "last_reported": None, "last_test": None}}
         coordinator.async_acknowledge_panic = AsyncMock()
         return coordinator
 
@@ -46,6 +47,7 @@ class TestAcknowledgePanicButton:
         attrs = button.extra_state_attributes
         assert attrs["active_panics"] == ["binary_sensor.sos"]
         assert attrs["unacknowledged"] == 1
+        assert attrs["devices"] == mock_coordinator.panic_devices
 
     @pytest.mark.asyncio
     async def test_press_acknowledges_all(

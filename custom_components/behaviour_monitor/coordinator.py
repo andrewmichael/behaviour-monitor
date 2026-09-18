@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -25,7 +26,8 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_PANIC_RENOTIFY_MINUTES, CONF_REBOOTSTRAP_MOTION, CONF_STARTUP_GRACE_SECONDS,
+    CONF_NOTIFY_SERVICES, CONF_PANIC_HEARTBEAT_HOURS, CONF_PANIC_RENOTIFY_MINUTES, CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_REBOOTSTRAP_MOTION, CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
@@ -36,9 +38,11 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
-    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_HEARTBEAT_HOURS,
+    DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_TEST_REMINDER_DAYS,
     DEFAULT_STARTUP_GRACE_SECONDS, DEFAULT_TRACK_ATTRIBUTES,
-    DOMAIN, EntityCategory, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, SENSITIVITY_MEDIUM,
+    DOMAIN, EntityCategory, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, PANIC_LOW_BATTERY_PERCENT,
+    PANIC_TEST_WINDOW_SECONDS, SENSITIVITY_MEDIUM,
     SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
     STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_BLIND, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
 )
@@ -127,6 +131,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._categories: dict[str, EntityCategory] = {}
         self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
         self._panic_renotify_minutes: int = int(d.get(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES))
+        self._panic_heartbeat_hours: int = int(d.get(CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS))
+        self._panic_test_reminder_days: int = int(d.get(CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS))
         self._panic_monitor = PanicMonitor()
         self._entity_health: dict[str, str] = {}
         self._open_issues: set[str] = set()
@@ -185,6 +191,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def panic_unacknowledged(self) -> list[str]:
         return self._panic_monitor.unacknowledged()
+
+    @property
+    def panic_devices(self) -> dict[str, dict[str, Any]]:
+        return {eid: self._panic_monitor.device_status(eid) for eid in self._panic_monitor.known_devices()}
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
@@ -331,6 +341,53 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for issue_id in self._open_issues - wanted:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         self._open_issues = wanted
+        self._refresh_panic_devices()
+
+    def _refresh_panic_devices(self) -> None:
+        """Feed availability, last-report time and battery of each panic entity to the monitor."""
+        for eid in self._monitored_entities:
+            if self._categories.get(eid) is not EntityCategory.PANIC:
+                continue
+            st = self.hass.states.get(eid)
+            reported = None
+            battery: float | None = None
+            if st is not None:
+                for attr in ("last_reported", "last_updated"):
+                    val = getattr(st, attr, None)
+                    if isinstance(val, datetime):
+                        reported = val
+                        break
+                attrs = getattr(st, "attributes", None)
+                if isinstance(attrs, Mapping):
+                    raw = attrs.get("battery_level", attrs.get("battery"))
+                    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                        battery = float(raw)
+            self._panic_monitor.update_device(
+                eid,
+                available=self._entity_health.get(eid) == HEALTH_PRESENT,
+                last_reported=reported,
+                battery=battery,
+            )
+
+    def _device_alerts(self, now: datetime) -> list[AlertResult]:
+        heartbeat = timedelta(hours=self._panic_heartbeat_hours) if self._panic_heartbeat_hours > 0 else None
+        reminder = timedelta(days=self._panic_test_reminder_days) if self._panic_test_reminder_days > 0 else None
+        sev = {"low": AlertSeverity.LOW, "medium": AlertSeverity.MEDIUM, "high": AlertSeverity.HIGH}
+        return [
+            AlertResult(
+                entity_id=eid, alert_type=AlertType.DEVICE_HEALTH, severity=sev[severity], confidence=1.0,
+                explanation=message, timestamp=now.isoformat(), details={"kind": kind},
+            )
+            for eid, kind, severity, message in self._panic_monitor.device_alerts(now, heartbeat, reminder, PANIC_LOW_BATTERY_PERCENT)
+        ]
+
+    async def async_panic_test(self, entity_id: str | None = None) -> list[str]:
+        """Open a test-press window; a press inside it is recorded, not alerted."""
+        now = dt_util.now()
+        opened = self._panic_monitor.open_test_window(now, now + timedelta(seconds=PANIC_TEST_WINDOW_SECONDS), entity_id)
+        if opened:
+            self.hass.bus.async_fire(f"{DOMAIN}_panic_test_window", {"entity_ids": opened})
+        return opened
 
     def _expected_entities(self) -> list[str]:
         return [e for e in self._monitored_entities if self._categories.get(e) is not EntityCategory.PANIC]
@@ -420,6 +477,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         old_sv = None if old_state is None else str(old_state.state).lower()
         now = dt_util.now()
         if sv == "on" and old_sv != "on":
+            if self._panic_monitor.in_test_window(eid, now):
+                self._panic_monitor.record_test(eid, now)
+                self.hass.async_create_task(self._save_fire_refresh(f"{DOMAIN}_panic_tested", {"entity_id": eid}))
+                return
             if self._panic_monitor.press(eid, now):
                 self.hass.async_create_task(self._async_panic_pressed([eid], now))
         elif sv == "off" and self._panic_monitor.is_active(eid):
@@ -509,6 +570,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     r._activity_tier = override_tier
             self._correlation_detector.recompute()
         panic_alerts = self._panic_alerts(now)
+        device_alerts = self._device_alerts(now)
         if panic_alerts:
             try:
                 await self._renotify_panic(now)
@@ -516,9 +578,16 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.exception("Panic re-notification failed")
             self._current_welfare_status = "alert"
         if self._holiday_mode or self.is_snoozed():
-            return await self._finish_update(self._with_panic(self._build_safe_defaults(), panic_alerts), now)
+            if device_alerts:
+                await self._handle_alerts(device_alerts, now)
+            data = self._with_panic(self._build_safe_defaults(), panic_alerts)
+            if device_alerts:
+                data["anomaly_detected"] = True
+                data["anomalies"] = data.get("anomalies", []) + [a.to_dict() for a in device_alerts]
+                data["welfare"] = self._finalize_welfare(self._derive_welfare(panic_alerts + device_alerts), panic_alerts + device_alerts)
+            return await self._finish_update(data, now)
         try:
-            alerts = self._run_detection(now) + panic_alerts
+            alerts = self._run_detection(now) + panic_alerts + device_alerts
             await self._handle_alerts(alerts, now)
             return await self._finish_update(self._build_sensor_data(alerts, now), now)
         except Exception:  # noqa: BLE001

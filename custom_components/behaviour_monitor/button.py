@@ -54,6 +54,7 @@ class AcknowledgePanicButton(
         return {
             "active_panics": list(self.coordinator.panic_active),
             "unacknowledged": len(self.coordinator.panic_unacknowledged),
+            "devices": dict(self.coordinator.panic_devices),
         }
 
     async def async_press(self) -> None:

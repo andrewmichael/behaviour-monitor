@@ -54,6 +54,7 @@ from .const import (
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_ENABLE_HOLIDAY_MODE,
+    SERVICE_PANIC_TEST,
     SERVICE_ROUTINE_RESET,
     SERVICE_SNOOZE,
     SNOOZE_DURATIONS,
@@ -275,6 +276,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle acknowledge panic service call."""
         await coordinator.async_acknowledge_panic(call.data.get("entity_id"))
 
+    async def handle_panic_test(call: ServiceCall) -> None:
+        """Handle panic test service call."""
+        await coordinator.async_panic_test(call.data.get("entity_id"))
+
     # Register services for this instance
     hass.services.async_register(
         DOMAIN,
@@ -317,6 +322,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({vol.Optional("entity_id"): str}),
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PANIC_TEST,
+        handle_panic_test,
+        schema=vol.Schema({vol.Optional("entity_id"): str}),
+    )
+
     # Register update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -345,6 +357,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_ROUTINE_RESET)
         hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_PANIC)
+        hass.services.async_remove(DOMAIN, SERVICE_PANIC_TEST)
 
         # Remove from hass data
         hass.data[DOMAIN].pop(entry.entry_id)
