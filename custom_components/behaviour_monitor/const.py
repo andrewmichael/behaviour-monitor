@@ -89,7 +89,7 @@ DEFAULT_PANIC_RENOTIFY_MINUTES: Final = 5  # minutes between re-notifications un
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 11
+STORAGE_VERSION: Final = 12
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60

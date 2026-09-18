@@ -15,6 +15,7 @@ from .const import (
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PANIC,
     CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
@@ -24,6 +25,7 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_PANIC_RENOTIFY_MINUTES,
     CONF_REBOOTSTRAP_MOTION,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
@@ -33,6 +35,7 @@ from .const import (
     DEFAULT_CATEGORY_CONTACT,
     DEFAULT_CATEGORY_LIGHT,
     DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PANIC,
     DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_HISTORY_WINDOW_DAYS,
@@ -41,6 +44,7 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    DEFAULT_PANIC_RENOTIFY_MINUTES,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -213,6 +217,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v11 — "
             "entity categories and motion debounce added"
+        )
+
+    if config_entry.version < 12:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_CATEGORY_PANIC, list(DEFAULT_CATEGORY_PANIC))
+        new_data.setdefault(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=12)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v12 — panic button category added"
         )
 
     return True
