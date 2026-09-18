@@ -3,6 +3,8 @@
 from enum import Enum
 from typing import Final
 
+from .alert_result import AlertSeverity
+
 DOMAIN: Final = "behaviour_monitor"
 
 # Configuration keys
@@ -61,6 +63,23 @@ DEFAULT_TRACK_ATTRIBUTES: Final = False
 # New v4.1 defaults
 DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
 DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
+
+# New v5.0 config keys (entity categories + motion debounce)
+CONF_CATEGORY_MOTION: Final = "category_motion"
+CONF_CATEGORY_CONTACT: Final = "category_contact"
+CONF_CATEGORY_PLUG: Final = "category_plug"
+CONF_CATEGORY_LIGHT: Final = "category_light"
+CONF_MOTION_DEBOUNCE_SECONDS: Final = "motion_debounce_seconds"
+# One-shot flag written by the v11 migration; cleared by the coordinator
+# after it re-bootstraps motion entities from recorder history.
+CONF_REBOOTSTRAP_MOTION: Final = "rebootstrap_motion"
+
+# New v5.0 defaults
+DEFAULT_CATEGORY_MOTION: Final[list[str]] = []
+DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
+DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
+DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
+DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
@@ -221,3 +240,43 @@ MIN_CO_OCCURRENCES: Final = 10
 # PMI threshold — pairs with PMI > this are considered correlated
 # PMI > 1.0 means 2x more likely than chance (medium-confidence, tunable)
 PMI_THRESHOLD: Final[float] = 1.0
+
+# ---------------------------------------------------------------------------
+# Entity categories, motion debounce and weighted welfare (v5.0)
+# ---------------------------------------------------------------------------
+
+
+class EntityCategory(Enum):
+    """Kind of device an entity represents, for debounce and welfare weighting."""
+
+    MOTION = "motion"
+    CONTACT = "contact"
+    PLUG = "plug"
+    LIGHT = "light"
+    OTHER = "other"
+
+
+# Entity-registry device classes that map to each category
+MOTION_DEVICE_CLASSES: Final = frozenset({"motion", "occupancy", "presence"})
+CONTACT_DEVICE_CLASSES: Final = frozenset({"door", "window", "opening", "garage_door"})
+PLUG_DEVICE_CLASSES: Final = frozenset({"outlet", "plug"})
+
+# Welfare weight per category — how strongly an alert from this kind of
+# device evidences something about the person, not the device.
+CATEGORY_WEIGHT: Final = {
+    EntityCategory.MOTION: 1.0,
+    EntityCategory.CONTACT: 0.8,
+    EntityCategory.OTHER: 1.0,
+    EntityCategory.PLUG: 0.5,
+    EntityCategory.LIGHT: 0.5,
+}
+
+# Severity points multiplied by CATEGORY_WEIGHT to score an alert.
+SEVERITY_POINTS: Final = {
+    AlertSeverity.LOW: 1,
+    AlertSeverity.MEDIUM: 2,
+    AlertSeverity.HIGH: 3,
+}
+
+WELFARE_ALERT_SCORE: Final[float] = 2.25
+WELFARE_CONCERN_SCORE: Final[float] = 1.25
