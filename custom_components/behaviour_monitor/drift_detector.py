@@ -163,17 +163,17 @@ class DriftDetector:
             baseline_rates_for_stdev = list(day_type_counts.values())
             baseline_mean = self._compute_weighted_mean(day_type_counts, today)
         else:
-            # Fallback: combined pool (all day types)
-            all_counts = self._compute_baseline_rates(routine, exclude_today=today)
-            if len(all_counts) < MIN_EVIDENCE_DAYS:
-                return None
-            combined_counts: dict[date, int] = {}
-            for dt_type in ("weekday", "weekend"):
-                combined_counts.update(
-                    self._compute_baseline_rates_for_day_type(
-                        routine, exclude_today=today, day_type=dt_type
-                    )
+            # Fallback: combined pool (all day types). Reuse the day-type counts
+            # already computed and add the other day type with a single scan.
+            other_day_type = "weekday" if day_type == "weekend" else "weekend"
+            combined_counts: dict[date, int] = dict(day_type_counts)
+            combined_counts.update(
+                self._compute_baseline_rates_for_day_type(
+                    routine, exclude_today=today, day_type=other_day_type
                 )
+            )
+            if len(combined_counts) < MIN_EVIDENCE_DAYS:
+                return None
             baseline_rates_for_stdev = list(combined_counts.values())
             baseline_mean = self._compute_weighted_mean(combined_counts, today)
 
@@ -317,38 +317,6 @@ class DriftDetector:
         if total_weight == 0.0:
             return 0.0
         return weighted_sum / total_weight
-
-    def _compute_baseline_rates(
-        self, routine: EntityRoutine, exclude_today: date
-    ) -> list[int]:
-        """Compute daily event counts from routine event_times, excluding today.
-
-        Scans all slots' event_times deques and groups events by calendar date.
-        Returns a list of daily counts (one integer per unique date found).
-
-        Args:
-            routine:      EntityRoutine with populated event_times.
-            exclude_today: Calendar date to exclude from baseline (today's data).
-
-        Returns:
-            List of integer daily event counts; may be empty.
-        """
-        date_counts: dict[date, int] = {}
-
-        for slot in routine.slots:
-            for ts_str in slot.event_times:
-                try:
-                    dt = datetime.fromisoformat(ts_str)
-                    event_date = dt.date()
-                except (ValueError, TypeError):
-                    continue
-
-                if event_date == exclude_today:
-                    continue
-
-                date_counts[event_date] = date_counts.get(event_date, 0) + 1
-
-        return list(date_counts.values())
 
     @staticmethod
     def _drift_severity(days: int) -> AlertSeverity:

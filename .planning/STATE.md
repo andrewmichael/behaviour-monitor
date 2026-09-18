@@ -55,7 +55,7 @@ None.
 
 ### Known Tech Debt
 
-- Phase 10 fallback path derives baseline data twice (informational, not a defect)
+None.
 
 ### Quick Tasks Completed
 

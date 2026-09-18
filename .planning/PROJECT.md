@@ -52,6 +52,9 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Correlation state persistence and automatic lifecycle management (stale pair decay, entity removal cleanup) — v4.0
 - ✓ Config migration v8→v9 with correlation window setting in UI — v4.0
 
+- ✓ track_attributes defaults to off so attribute-only updates (e.g. PIR sensors) are not counted as activity — v4.1
+- ✓ Per-entity track_attributes include/exclude override lists with config migration v9→v10 — v4.2
+
 ### Active
 
 *No active milestone. Ready for next milestone planning.*
@@ -67,9 +70,9 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v4.0 with ~13,000 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 522 tests passing.
+Shipped v4.2 with ~13,400 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 542 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v9.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v10.
 
 Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
@@ -78,8 +81,8 @@ Architecture:
 - `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
 - `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
 - `correlation_detector.py` — PMI-based co-occurrence discovery; check_breaks() with sustained evidence; decay_stale_pairs() and remove_entity() lifecycle management
-- `config_flow.py` — v9 config with correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9)
+- `config_flow.py` — v10 config with per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10)
 - `translations/en.json` — user-friendly labels for all config fields
 
 Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
@@ -132,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-07 after v4.0 milestone shipped*
+*Last updated: 2026-09-18 after v4.2.0 release*
