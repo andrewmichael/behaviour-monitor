@@ -187,6 +187,7 @@ Surfaces:
 `_save_data` writes `"panic_state": self._panic_monitor.to_dict()`;
 `async_setup` restores it when present. On restart with a button still
 held, the alert and re-notification loop resume from the stored timestamps.
+On setup, restored panic entries whose live entity state is not `on` are released.
 
 ### Sensor data
 
@@ -259,3 +260,5 @@ release 5.1.0 (on top of the pending 5.0.0 from PR #2).
 | Welfare | Any active panic forces `alert` ahead of weighted scoring |
 | Where state lives | `panic_monitor.py` pure module; coordinator holds one instance and persists it |
 | Version | v5.1 minor; config entry and storage version 12 |
+| Restart reconciliation | On setup, a restored panic whose live state is not "on" is released (button released while HA was down) |
+| Monitored entities | Panic override entities are unioned into monitored entities by the coordinator; no separate listing required |

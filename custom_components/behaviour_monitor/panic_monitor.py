@@ -100,7 +100,11 @@ class PanicMonitor:
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> PanicMonitor:
         monitor = cls()
-        for eid, raw in (data or {}).items():
+        if not isinstance(data, dict):
+            return monitor
+        for eid, raw in data.items():
+            if not isinstance(raw, dict):
+                continue
             try:
                 since = datetime.fromisoformat(raw["active_since"])
                 notified = datetime.fromisoformat(raw["last_notified"])

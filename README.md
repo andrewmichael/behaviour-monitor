@@ -347,7 +347,7 @@ Severity points are LOW 1, MEDIUM 2, HIGH 3. A score of 2.25 or more gives `aler
 
 #### Panic Button
 
-Add a binary sensor to the **Panic buttons** list to treat it as a panic button. Panic is never inferred from a device class; it must be listed explicitly.
+Add a binary sensor to the **Panic buttons** list to treat it as a panic button. Panic is never inferred from a device class; it must be listed explicitly. Panic buttons do not need to be in the **Entities to monitor** list; they are monitored automatically.
 
 - **Instant alert.** The moment the sensor turns `on`, a notification titled "Behaviour Monitor: PANIC" is sent to the persistent notification area and every configured mobile service. This ignores the notification toggle, holiday mode, snooze, the minimum severity and the repeat interval.
 - **Re-notification.** While the panic is active and unacknowledged, the notification repeats every *Panic re-notify interval* minutes (checked on the 60-second poll).

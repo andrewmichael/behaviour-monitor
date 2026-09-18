@@ -1944,6 +1944,36 @@ class TestPanicPressRelease:
         assert c2.panic_active == ["binary_sensor.sos"]
         assert c2.panic_unacknowledged == []
 
+    @pytest.mark.asyncio
+    async def test_press_persists_even_if_notification_fails(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        mock_hass.services.async_call = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(c._store, "async_save", new_callable=AsyncMock) as save:
+            c._handle_state_changed(self._event("binary_sensor.sos", "off", "on"))
+            await self._drain(mock_hass)
+        save.assert_awaited()
+        mock_hass.bus.async_fire.assert_any_call("behaviour_monitor_panic_pressed", {"entity_ids": ["binary_sensor.sos"]})
+
+    @pytest.mark.asyncio
+    async def test_setup_releases_panic_whose_live_state_is_off(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._panic_monitor.press("binary_sensor.sos", datetime.now())
+        stored = {"routine_model": c._routine_model.to_dict(), "panic_state": c._panic_monitor.to_dict(), "coordinator": {}}
+        c2 = self._make(mock_hass, mock_config_entry)
+        mock_hass.states.get = lambda eid: MagicMock(state="off") if eid == "binary_sensor.sos" else None
+        with patch.object(c2._store, "async_load", new_callable=AsyncMock, return_value=stored), \
+             patch.object(c2, "_registry_device_classes", return_value={}):
+            await c2.async_setup()
+        assert c2.panic_active == []
+
+    def test_panic_override_is_monitored_automatically(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: ["binary_sensor.door"], CONF_CATEGORY_PANIC: ["binary_sensor.sos"]}
+        c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert "binary_sensor.sos" in c.monitored_entities
+        assert c.monitored_entities.count("binary_sensor.sos") == 1
+
 
 class TestPanicPoll:
     # Uses naive datetime.now() to match the mocked dt_util.now (real HA is tz-aware end to end).
@@ -2045,3 +2075,51 @@ class TestPanicPoll:
         c._holiday_mode = True
         data = await c._async_update_data()
         assert data["panic"] == {"active": [], "unacknowledged": []}
+
+    @pytest.mark.asyncio
+    async def test_failing_notify_service_does_not_break_renotify(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_NOTIFY_SERVICES
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_NOTIFY_SERVICES: ["notify.dead", "notify.alive"]})
+        t0 = datetime.now()
+        c._panic_monitor.press("binary_sensor.sos", t0 - timedelta(minutes=6))
+
+        async def _call(domain, service, data):
+            if service == "dead":
+                raise RuntimeError("ServiceNotFound")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_call)
+        with patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()  # must not raise
+        called = [(call[0][0], call[0][1]) for call in mock_hass.services.async_call.call_args_list]
+        assert ("notify", "alive") in called
+        assert data["welfare"]["status"] == "alert"
+
+    @pytest.mark.asyncio
+    async def test_detection_exception_keeps_panic_in_payload(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._panic_monitor.press("binary_sensor.sos", datetime.now())
+        with patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_run_detection", side_effect=RuntimeError("boom")):
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "alert"
+        assert data["anomaly_detected"] is True
+        assert data["panic"]["active"] == ["binary_sensor.sos"]
+
+    def test_stale_routine_for_panic_entity_is_purged_and_skipped(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry)
+        c._routine_model.get_or_create("binary_sensor.sos", is_binary=True)
+        c._correlation_detector._entity_event_counts["binary_sensor.sos"] = 3
+        with patch.object(c, "_registry_device_classes", return_value={}):
+            c._refresh_categories()
+        assert c._categories["binary_sensor.sos"] is EntityCategory.PANIC
+        assert "binary_sensor.sos" not in c._routine_model._entities
+        assert "binary_sensor.sos" not in c._correlation_detector._entity_event_counts
+        # even if a record sneaks back in, detection skips panic entities
+        c._routine_model.get_or_create("binary_sensor.sos", is_binary=True)
+        c._last_seen["binary_sensor.sos"] = datetime.now() - timedelta(days=1)
+        with patch.object(c._acute_detector, "check_inactivity") as inact:
+            c._run_detection(datetime.now())
+        assert all(call[0][0] != "binary_sensor.sos" for call in inact.call_args_list)

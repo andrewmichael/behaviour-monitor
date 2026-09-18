@@ -49,7 +49,7 @@
           "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
           "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
-          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert.",
+          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert. They do not need to be in the monitored entities list.",
           "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
         }
       }
@@ -100,7 +100,7 @@
           "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
           "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
-          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert.",
+          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert. They do not need to be in the monitored entities list.",
           "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
         }
       }

@@ -160,3 +160,7 @@ class TestSerialization:
     def test_from_dict_empty(self) -> None:
         assert PanicMonitor.from_dict({}).active() == []
         assert PanicMonitor.from_dict(None).active() == []  # type: ignore[arg-type]
+
+    def test_from_dict_rejects_non_dict_payload(self) -> None:
+        assert PanicMonitor.from_dict(["nonsense"]).active() == []  # type: ignore[arg-type]
+        assert PanicMonitor.from_dict({"x": "bad"}).active() == []

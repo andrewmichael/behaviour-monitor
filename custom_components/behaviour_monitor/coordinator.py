@@ -73,6 +73,10 @@ def _parse_dt(ts: str) -> datetime | None:
         return None
 
 
+def _since_text(elapsed: float) -> str:
+    return "just now" if elapsed < 60 else f"{format_duration(elapsed)} ago"
+
+
 class BehaviourMonitorStore(Store):  # type: ignore[type-arg]
     """Store whose persisted schema is version-tolerant.
 
@@ -111,6 +115,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             EntityCategory.LIGHT: list(d.get(CONF_CATEGORY_LIGHT) or []),
             EntityCategory.PANIC: list(d.get(CONF_CATEGORY_PANIC) or []),
         }
+        for eid in self._category_overrides[EntityCategory.PANIC]:
+            if eid not in self._monitored_entities:
+                self._monitored_entities.append(eid)
         self._motion_debounce_seconds: int = int(d.get(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS))
         self._categories: dict[str, EntityCategory] = {}
         self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
@@ -199,6 +206,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
         # Categories must be inferred from restored data before either bootstrap path.
         self._refresh_categories()
+        # A panic released while HA was down never sends an `off` event; drop it.
+        for eid in self.panic_active:
+            state = self.hass.states.get(eid)
+            sv = getattr(state, "state", None)
+            if isinstance(sv, str) and sv.lower() != "on":
+                self._panic_monitor.release(eid)
         if stored:
             if self._entry.data.get(CONF_REBOOTSTRAP_MOTION, False):
                 await self._rebootstrap_motion_entities()
@@ -263,6 +276,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._registry_device_classes(),
             numeric,
         )
+        for eid, cat in self._categories.items():
+            if cat is EntityCategory.PANIC:
+                self._routine_model._entities.pop(eid, None)
+                self._correlation_detector.remove_entity(eid)
 
     def _tracks_attributes(self, entity_id: str) -> bool:
         """Return whether attribute-only changes count as activity for this entity.
@@ -320,8 +337,26 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     async def _async_panic_pressed(self, entity_ids: list[str], now: datetime) -> None:
-        await self._send_panic_notification(entity_ids, now)
+        await self._send_panic_notification(self.panic_unacknowledged or entity_ids, now)
         await self._save_fire_refresh(f"{DOMAIN}_panic_pressed", {"entity_ids": entity_ids})
+
+    async def _deliver_notification(self, title: str, msg: str, notification_id: str) -> None:
+        """Deliver to the persistent notification area and every notify service; never raises."""
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {"title": title, "message": msg, "notification_id": notification_id},
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("Persistent notification %s failed", notification_id, exc_info=True)
+        for svc in self._notify_services:
+            parts = svc.split(".", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                await self.hass.services.async_call(parts[0], parts[1], {"title": title, "message": msg})
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Notification to %s failed", svc, exc_info=True)
 
     async def _send_panic_notification(self, entity_ids: list[str], now: datetime) -> None:
         """Send a panic notification. Ignores every suppression on purpose."""
@@ -329,17 +364,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for eid in entity_ids:
             since = self._panic_monitor.active_since(eid)
             elapsed = (now - since).total_seconds() if since is not None else 0.0
-            when = "just now" if elapsed < 60 else f"{format_duration(elapsed)} ago"
-            lines.append(f"- PANIC: {eid} pressed {when}")
+            lines.append(f"- PANIC: {eid} pressed {_since_text(elapsed)}")
         title, msg = "Behaviour Monitor: PANIC", "\n".join(lines)
-        await self.hass.services.async_call(
-            "persistent_notification", "create",
-            {"title": title, "message": msg, "notification_id": "behaviour_monitor_panic"},
-        )
-        for svc in self._notify_services:
-            parts = svc.split(".", 1)
-            if len(parts) == 2:
-                await self.hass.services.async_call(parts[0], parts[1], {"title": title, "message": msg})
+        await self._deliver_notification(title, msg, "behaviour_monitor_panic")
         self._last_notification_info = {"timestamp": now.isoformat(), "type": "panic"}
 
     async def async_acknowledge_panic(self, entity_id: str | None = None) -> None:
@@ -354,7 +381,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elapsed = max(0.0, (now - since).total_seconds())
             alerts.append(AlertResult(
                 entity_id=eid, alert_type=AlertType.PANIC, severity=AlertSeverity.HIGH, confidence=1.0,
-                explanation=f"{eid}: PANIC button pressed {format_duration(elapsed)} ago",
+                explanation=f"{eid}: PANIC button pressed {_since_text(elapsed)}",
                 timestamp=now.isoformat(),
                 details={"acknowledged": acked, "active_since": since.isoformat()},
             ))
@@ -368,6 +395,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _panic_payload(self) -> dict[str, list[str]]:
         return {"active": self.panic_active, "unacknowledged": self.panic_unacknowledged}
+
+    def _with_panic(self, data: dict[str, Any], panic_alerts: list[AlertResult]) -> dict[str, Any]:
+        if panic_alerts:
+            data["anomaly_detected"] = True
+            data["anomalies"] = [a.to_dict() for a in panic_alerts]
+            data["welfare"] = self._derive_welfare(panic_alerts)
+        return data
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
@@ -383,27 +417,27 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._correlation_detector.recompute()
         panic_alerts = self._panic_alerts(now)
         if panic_alerts:
-            await self._renotify_panic(now)
+            try:
+                await self._renotify_panic(now)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Panic re-notification failed")
             self._current_welfare_status = "alert"
         if self._holiday_mode or self.is_snoozed():
-            data = self._build_safe_defaults()
-            if panic_alerts:
-                data["anomaly_detected"] = True
-                data["anomalies"] = [a.to_dict() for a in panic_alerts]
-                data["welfare"] = self._derive_welfare(panic_alerts)
-            return data
+            return self._with_panic(self._build_safe_defaults(), panic_alerts)
         try:
             alerts = self._run_detection(now) + panic_alerts
             await self._handle_alerts(alerts, now)
             return self._build_sensor_data(alerts, now)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Coordinator update error — returning safe defaults")
-            return self._build_safe_defaults()
+            return self._with_panic(self._build_safe_defaults(), panic_alerts)
 
     def _run_detection(self, now: datetime) -> list[AlertResult]:
         alerts: list[AlertResult] = []
         d = now.date()
         for eid in self._monitored_entities:
+            if self._categories.get(eid) is EntityCategory.PANIC:
+                continue
             if (r := self._routine_model._entities.get(eid)) is None:
                 continue
             alerts.extend(x for x in (
@@ -413,6 +447,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) if x is not None)
         # Correlation break detection
         for eid in self._monitored_entities:
+            if self._categories.get(eid) is EntityCategory.PANIC:
+                continue
             alerts.extend(
                 self._correlation_detector.check_breaks(eid, now, self._last_seen)
             )
@@ -459,14 +495,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _send_notification(self, alerts: list[AlertResult]) -> None:
         title = f"Behaviour Monitor: {len(alerts)} alert(s)"
         msg = "\n".join(f"- [{a.severity.value.upper()}] {a.explanation}" for a in alerts)
-        await self.hass.services.async_call(
-            "persistent_notification", "create",
-            {"title": title, "message": msg, "notification_id": "behaviour_monitor"},
-        )
-        for svc in self._notify_services:
-            parts = svc.split(".", 1)
-            if len(parts) == 2:
-                await self.hass.services.async_call(parts[0], parts[1], {"title": title, "message": msg})
+        await self._deliver_notification(title, msg, "behaviour_monitor")
 
     def _derive_welfare(self, alerts: list[AlertResult]) -> dict[str, Any]:
         if not alerts:
