@@ -469,9 +469,11 @@ Each poll, every monitored entity is classified as `present`, `unavailable` (exi
 
 If no monitored entity is reporting at all, the welfare status becomes `blind` instead of a false "ok", and a one-off "Behaviour Monitor: no data" persistent notification fires (it does not repeat until the monitor recovers and goes blind again). If some but not all entities are reporting — or a panic device has a health problem — the status becomes `degraded`. The welfare sensor always exposes `contributing_entities`, `expected_entities`, `missing_entities`, and `unavailable_entities`, and lost inputs count as zero rather than being averaged away, so `baseline_confidence` and `activity_score` drop when sensors go dark instead of holding steady on stale data.
 
+Precedence when more than one condition applies: a panic alert always outranks `blind`; `blind` outranks an ordinary alert because there is no live evidence behind it once nothing is reporting; an ordinary alert outranks `degraded`; and `degraded` outranks `ok`.
+
 ### Status Summary
 
-`entity_status_summary` reads `"X OK, Y Need Attention"`, with `", Z Missing"` appended when entities have been removed from Home Assistant and `", W Unavailable"` appended when entities exist but have no usable state.
+`entity_status_summary` reads `"X OK, Y Need Attention"`, with `", Z Missing"` appended when entities have been removed from Home Assistant and `", W Unavailable"` appended when entities exist but have no usable state. Panic buttons are excluded from the OK/Need Attention/Unavailable counts, but a missing panic button is still counted under Missing — so the four counts need not sum to the total number of monitored entities.
 
 ### Panic Device Liveness
 

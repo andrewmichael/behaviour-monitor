@@ -96,10 +96,15 @@ entities and becomes the health value for the other two.
 
 `qualify_welfare(welfare, contributing, expected, missing, unavailable) -> welfare`:
 
-1. If the computed status is `alert` **and** came from a panic alert: unchanged (panic outranks everything).
+Corrected precedence (panic > blind > ordinary alert > degraded > ok; supersedes
+the step order below, which is retained only where it does not conflict):
+
+1. If the computed status is `alert` **and** came from a panic alert: unchanged (panic outranks everything, including blind).
 2. Else if `expected > 0 and contributing == 0`: status `blind`, recommendation
    "No monitored entities are reporting. Check sensors and the integration options.",
    summary `"blind: 0 of {expected} entities reporting"`. Reasons are kept.
+   `blind` outranks an ordinary (non-panic) alert, because once nothing is
+   reporting there is no live evidence behind any alert still being carried.
 3. Else if `contributing < expected` and status is `ok`: status `degraded`,
    recommendation "Some monitored entities are not reporting.", summary
    `"degraded: {contributing} of {expected} entities reporting"`.
@@ -198,10 +203,16 @@ status `degraded` when it would otherwise be `ok`.
 Coordinator wiring: `_handle_state_changed` still runs the monitored /
 panic / track_attributes filters, then calls `gate.submit(...)` and schedules
 a flush with `self.hass.loop.call_later(1.0, self._flush_gate)` if none is
-pending. `_flush_gate` processes each returned event through the existing
+pending. `_flush_gate` processes each kept event through the existing
 path (last-seen update, debounce, record, correlation, daily count) using the
 event's original timestamp, then requests one refresh. Panic events bypass
 the gate entirely. The gate is HA-free and unit-tested on its own.
+
+Events in a discarded bucket still update last-seen; only learning,
+correlation and the daily count skip them. `flush` returns `(kept, dropped)`,
+and `_flush_gate` applies `self._last_seen[eid] = ev.timestamp` for each
+dropped event without running debounce, `RoutineModel.record`, correlation or
+the daily count.
 
 Configuration: `startup_grace_seconds` (0–300, default 90; 0 disables),
 `burst_discard_threshold` (0–10, default 3; 0 disables).
@@ -256,10 +267,10 @@ PROJECT/ROADMAP/STATE for v5.2.
 | Decision | Choice |
 |---|---|
 | Blind reporting | Distinct `blind` status; `degraded` for partial loss or device-health alerts |
-| Panic vs blind precedence | Panic alert outranks blind; blind outranks everything else |
+| Panic vs blind precedence | Panic alert outranks blind; blind outranks an ordinary alert (stale evidence once nothing reports); an ordinary alert outranks degraded; degraded outranks ok |
 | Score under input loss | Mean over expected entities with absent = 0 (no renormalisation) |
-| Repair issues | One per missing entity, created/deleted on transitions only |
-| Burst discard | One-second buffer keyed by wall-clock second, threshold 3 distinct entities, panic bypasses |
+| Repair issues | One per missing entity, created/deleted on transitions only; `_open_issues` is seeded from the issue registry on the coordinator's first health refresh so a reload does not orphan an issue |
+| Burst discard | One-second buffer keyed by wall-clock second, threshold 3 distinct entities, panic bypasses; a discarded bucket still updates last-seen for its entities (learning, correlation and the daily count still skip it) |
 | Grace period | Armed at coordinator setup (covers HA start and reload), default 90 s |
 | Device-health alerts | Own alert type; ordinary notification path minus snooze/holiday; excluded from welfare scoring; force `degraded` |
 | Test press | `panic_test` service opens a 120 s window; press inside is recorded, not alerted |

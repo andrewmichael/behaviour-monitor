@@ -136,6 +136,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._panic_monitor = PanicMonitor()
         self._entity_health: dict[str, str] = {}
         self._open_issues: set[str] = set()
+        self._issues_seeded = False
         self._blind_notified = False
         self._gate = EventGate(
             int(d.get(CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS)),
@@ -328,18 +329,34 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _refresh_health(self) -> None:
         """Classify entity health and raise/clear repair issues on transitions only."""
+        if not self._issues_seeded:
+            self._issues_seeded = True
+            try:
+                registry = ir.async_get(self.hass)
+                self._open_issues = {
+                    iid for (dom, iid) in registry.issues
+                    if dom == DOMAIN and isinstance(iid, str) and iid.startswith("missing_entity_")
+                }
+            except Exception:  # noqa: BLE001
+                self._open_issues = set()
         states, in_registry = self._entity_facts()
         self._entity_health = resolve_entity_health(self._monitored_entities, states, in_registry)
         wanted = {f"missing_entity_{eid}" for eid, h in self._entity_health.items() if h == HEALTH_MISSING}
         for issue_id in wanted - self._open_issues:
-            ir.async_create_issue(
-                self.hass, DOMAIN, issue_id,
-                is_fixable=False, severity=ir.IssueSeverity.ERROR,
-                translation_key="missing_entity",
-                translation_placeholders={"entity_id": issue_id[len("missing_entity_"):]},
-            )
+            try:
+                ir.async_create_issue(
+                    self.hass, DOMAIN, issue_id,
+                    is_fixable=False, is_persistent=False, severity=ir.IssueSeverity.ERROR,
+                    translation_key="missing_entity",
+                    translation_placeholders={"entity_id": issue_id[len("missing_entity_"):]},
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not create repair issue %s", issue_id)
         for issue_id in self._open_issues - wanted:
-            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            try:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not delete repair issue %s", issue_id)
         self._open_issues = wanted
         self._refresh_panic_devices()
 
@@ -387,6 +404,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         opened = self._panic_monitor.open_test_window(now, now + timedelta(seconds=PANIC_TEST_WINDOW_SECONDS), entity_id)
         if opened:
             self.hass.bus.async_fire(f"{DOMAIN}_panic_test_window", {"entity_ids": opened})
+        elif entity_id is not None:
+            _LOGGER.warning("panic_test: %s is not a known panic device", entity_id)
         return opened
 
     def _expected_entities(self) -> list[str]:
@@ -450,13 +469,22 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _flush_gate(self, force: bool = False) -> None:
         """Release completed one-second buckets from the gate and process them."""
         self._gate_flush_pending = False
-        events = self._gate.flush(dt_util.now(), force=force)
+        events, dropped = self._gate.flush(dt_util.now(), force=force)
         for ev in events:
             self._process_activity(ev.entity_id, ev.old_state, ev.new_state, ev.timestamp)
+        if dropped:
+            # A discarded burst still proves the entities were seen, just not
+            # enough to trust for learning, correlation or the daily count.
+            for ev in dropped:
+                self._last_seen[ev.entity_id] = ev.timestamp
+            _LOGGER.debug(
+                "Discarded burst of %d events across %d entities",
+                len(dropped), len({ev.entity_id for ev in dropped}),
+            )
         if self._gate.pending and not force:
             self._gate_flush_pending = True
             self.hass.loop.call_later(1.0, self._flush_gate)
-        if events:
+        if events and not force:
             self.hass.async_create_task(self.async_request_refresh())
 
     def _process_activity(self, eid: str, old_sv: str | None, sv: str, now: datetime) -> None:
@@ -579,7 +607,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._current_welfare_status = "alert"
         if self._holiday_mode or self.is_snoozed():
             if device_alerts:
-                await self._handle_alerts(device_alerts, now)
+                await self._handle_alerts(device_alerts, now, prune=False)
             data = self._with_panic(self._build_safe_defaults(), panic_alerts)
             if device_alerts:
                 data["anomaly_detected"] = True
@@ -597,7 +625,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _finish_update(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
         """Send the blind notification once per transition into blindness."""
         blind = data.get("welfare", {}).get("status") == WELFARE_BLIND
-        if blind and not self._blind_notified:
+        if blind and not self._blind_notified and self._enable_notifications:
             w = data["welfare"]
             await self._deliver_notification(
                 "Behaviour Monitor: no data",
@@ -630,12 +658,16 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         return alerts
 
-    async def _handle_alerts(self, alerts: list[AlertResult], now: datetime) -> None:
-        # Clear suppression entries whose condition has resolved (key not in current alerts)
-        current_keys = {f"{a.entity_id}|{a.alert_type.value}" for a in alerts}
-        for key in list(self._alert_suppression):
-            if key not in current_keys:
-                del self._alert_suppression[key]
+    async def _handle_alerts(self, alerts: list[AlertResult], now: datetime, prune: bool = True) -> None:
+        # Clear suppression entries whose condition has resolved (key not in current alerts).
+        # Skipped when the caller only supplied a subset of alert types (e.g. the
+        # holiday/snooze path's device-only alerts) — pruning against a partial set
+        # would wipe suppression for conditions this call never evaluated.
+        if prune:
+            current_keys = {f"{a.entity_id}|{a.alert_type.value}" for a in alerts}
+            for key in list(self._alert_suppression):
+                if key not in current_keys:
+                    del self._alert_suppression[key]
 
         if not self._enable_notifications or not alerts:
             return
@@ -741,6 +773,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "category": self._categories.get(e, EntityCategory.OTHER).value,
                     "panic_active": self._panic_monitor.is_active(e),
                     "correlated_with": self._correlation_detector.get_correlated_entities(e),
+                    **(self._panic_monitor.device_status(e) if self._categories.get(e) is EntityCategory.PANIC else {}),
                 }
                 for e in self._monitored_entities
             ],

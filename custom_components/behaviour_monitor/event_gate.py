@@ -49,14 +49,19 @@ class EventGate:
         )
         return True
 
-    def flush(self, now: datetime, *, force: bool = False) -> list[GatedEvent]:
+    def flush(
+        self, now: datetime, *, force: bool = False
+    ) -> tuple[list[GatedEvent], list[GatedEvent]]:
         """Release buckets for seconds earlier than ``now`` (all when ``force``).
 
         A bucket in which at least ``burst_threshold`` distinct entities appear
-        is dropped entirely and counted in ``dropped_bursts``.
+        is dropped entirely and counted in ``dropped_bursts``. Returns
+        ``(kept, dropped)``: the caller still owes dropped events a
+        last-seen update, just not learning, correlation or the daily count.
         """
         current = int(now.timestamp())
         out: list[GatedEvent] = []
+        dropped: list[GatedEvent] = []
         for key in sorted(self._buckets):
             if not force and key >= current:
                 continue
@@ -64,9 +69,10 @@ class EventGate:
             distinct = {e.entity_id for e in events}
             if self._threshold and len(distinct) >= self._threshold:
                 self._dropped_bursts += 1
+                dropped.extend(events)
                 continue
             out.extend(events)
-        return out
+        return out, dropped
 
     @property
     def pending(self) -> int:

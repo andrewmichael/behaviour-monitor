@@ -45,58 +45,79 @@ class TestBurst:
         g = EventGate(0, 3)
         _sub(g, "a", T0)
         _sub(g, "b", T0 + timedelta(seconds=1))
-        out = g.flush(T0 + timedelta(seconds=1, milliseconds=500))
+        out, dropped = g.flush(T0 + timedelta(seconds=1, milliseconds=500))
         assert [e.entity_id for e in out] == ["a"]
+        assert dropped == []
         assert g.pending == 1
 
     def test_force_flushes_current_second(self) -> None:
         g = EventGate(0, 3)
         _sub(g, "a", T0)
-        out = g.flush(T0, force=True)
+        out, dropped = g.flush(T0, force=True)
         assert [e.entity_id for e in out] == ["a"]
+        assert dropped == []
         assert g.pending == 0
 
     def test_burst_at_threshold_dropped(self) -> None:
         g = EventGate(0, 3)
         for eid in ("a", "b", "c"):
             _sub(g, eid, T0)
-        assert g.flush(T0 + timedelta(seconds=2)) == []
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
+        assert out == []
+        assert {e.entity_id for e in dropped} == {"a", "b", "c"}
         assert g.dropped_bursts == 1
 
     def test_below_threshold_kept(self) -> None:
         g = EventGate(0, 3)
         _sub(g, "a", T0)
         _sub(g, "b", T0 + timedelta(milliseconds=300))
-        out = g.flush(T0 + timedelta(seconds=2))
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
         assert [e.entity_id for e in out] == ["a", "b"]
+        assert dropped == []
         assert g.dropped_bursts == 0
 
     def test_same_entity_repeated_is_one_distinct(self) -> None:
         g = EventGate(0, 3)
         for _ in range(5):
             _sub(g, "a", T0, "off", "on")
-        assert len(g.flush(T0 + timedelta(seconds=2))) == 5
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
+        assert len(out) == 5
+        assert dropped == []
 
     def test_threshold_zero_disables(self) -> None:
         g = EventGate(0, 0)
         for eid in ("a", "b", "c", "d"):
             _sub(g, eid, T0)
-        assert len(g.flush(T0 + timedelta(seconds=2))) == 4
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
+        assert len(out) == 4
+        assert dropped == []
 
     def test_events_preserve_order_and_fields(self) -> None:
         g = EventGate(0, 3)
         _sub(g, "a", T0, None, "on")
         _sub(g, "a", T0 + timedelta(milliseconds=10), "on", "off")
-        out = g.flush(T0 + timedelta(seconds=2))
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
         assert out == [
             GatedEvent("a", None, "on", T0),
             GatedEvent("a", "on", "off", T0 + timedelta(milliseconds=10)),
         ]
+        assert dropped == []
 
     def test_buckets_independent(self) -> None:
         g = EventGate(0, 3)
         for eid in ("a", "b", "c"):
             _sub(g, eid, T0)  # burst second
         _sub(g, "d", T0 + timedelta(seconds=1))  # clean second
-        out = g.flush(T0 + timedelta(seconds=3))
+        out, dropped = g.flush(T0 + timedelta(seconds=3))
         assert [e.entity_id for e in out] == ["d"]
+        assert {e.entity_id for e in dropped} == {"a", "b", "c"}
+
+    def test_flush_returns_dropped_separately(self) -> None:
+        g = EventGate(0, 2)
+        _sub(g, "a", T0)
+        _sub(g, "b", T0)
+        _sub(g, "c", T0 + timedelta(seconds=1))
+        out, dropped = g.flush(T0 + timedelta(seconds=2))
+        assert [e.entity_id for e in out] == ["c"]
+        assert {e.entity_id for e in dropped} == {"a", "b"}
+        assert g.dropped_bursts == 1
