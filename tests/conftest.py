@@ -34,6 +34,7 @@ def _setup_ha_mocks():
         SENSOR = "sensor"
         SWITCH = "switch"
         SELECT = "select"
+        BUTTON = "button"
         BINARY_SENSOR = "binary_sensor"
 
     mock_ha_const.Platform = MockPlatform
@@ -330,11 +331,33 @@ def _setup_ha_mocks():
 
     mock_switch.SwitchEntity = MockSwitchEntity
 
+    # Mock button component
+    mock_button = MagicMock()
+
+    class MockButtonEntity:
+        """Mock ButtonEntity base class."""
+        def __init__(self):
+            self._attr_unique_id = None
+            self._attr_name = None
+            self._attr_device_info = None
+
+        @property
+        def unique_id(self):
+            """Return unique ID."""
+            return self._attr_unique_id
+
+        async def async_press(self):
+            """Press the button."""
+            raise NotImplementedError
+
+    mock_button.ButtonEntity = MockButtonEntity
+
     # Mock components
     mock_components = MagicMock()
     mock_components.sensor = mock_sensor
     mock_components.select = mock_select
     mock_components.switch = mock_switch
+    mock_components.button = mock_button
 
     # Mock dt utilities
     mock_dt_util = MagicMock()
@@ -368,6 +391,7 @@ def _setup_ha_mocks():
     sys.modules['homeassistant.components.sensor'] = mock_sensor
     sys.modules['homeassistant.components.select'] = mock_select
     sys.modules['homeassistant.components.switch'] = mock_switch
+    sys.modules['homeassistant.components.button'] = mock_button
     sys.modules['homeassistant.util'] = mock_ha_util
     sys.modules['homeassistant.util.dt'] = mock_dt_util
     sys.modules['voluptuous'] = mock_voluptuous

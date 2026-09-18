@@ -46,6 +46,7 @@ from .const import (
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
     DOMAIN,
     SENSITIVITY_MEDIUM,
+    SERVICE_ACKNOWLEDGE_PANIC,
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_ENABLE_HOLIDAY_MODE,
@@ -57,7 +58,7 @@ from .coordinator import BehaviourMonitorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT, Platform.BUTTON]
 
 # ML config keys removed in v1.1
 _ML_KEYS_REMOVED_V3 = (
@@ -257,6 +258,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entity_id = call.data["entity_id"]
         await coordinator.async_routine_reset(entity_id)
 
+    async def handle_acknowledge_panic(call: ServiceCall) -> None:
+        """Handle acknowledge panic service call."""
+        await coordinator.async_acknowledge_panic(call.data.get("entity_id"))
+
     # Register services for this instance
     hass.services.async_register(
         DOMAIN,
@@ -292,6 +297,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({vol.Required("entity_id"): str}),
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ACKNOWLEDGE_PANIC,
+        handle_acknowledge_panic,
+        schema=vol.Schema({vol.Optional("entity_id"): str}),
+    )
+
     # Register update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -319,6 +331,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_ROUTINE_RESET)
+        hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_PANIC)
 
         # Remove from hass data
         hass.data[DOMAIN].pop(entry.entry_id)

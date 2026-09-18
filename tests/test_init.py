@@ -20,6 +20,7 @@ from custom_components.behaviour_monitor.const import (
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_SNOOZE,
     SERVICE_CLEAR_SNOOZE,
+    SERVICE_ACKNOWLEDGE_PANIC,
 )
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import (
@@ -195,9 +196,43 @@ class TestAsyncSetupEntry:
                 (DOMAIN, SERVICE_SNOOZE),
                 (DOMAIN, SERVICE_CLEAR_SNOOZE),
                 (DOMAIN, SERVICE_ROUTINE_RESET),
+                (DOMAIN, SERVICE_ACKNOWLEDGE_PANIC),
             ]
             for svc in expected_services:
                 assert svc in registered_services, f"Service {svc} not registered"
+
+    @pytest.mark.asyncio
+    async def test_acknowledge_panic_service_calls_coordinator(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        with patch(
+            "custom_components.behaviour_monitor.BehaviourMonitorCoordinator"
+        ) as mock_coordinator_class:
+            mock_coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
+            mock_coordinator.async_setup = AsyncMock()
+            mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+            mock_coordinator.async_acknowledge_panic = AsyncMock()
+            mock_coordinator.monitored_entities = {"sensor.test1"}
+            mock_coordinator_class.return_value = mock_coordinator
+
+            await async_setup_entry(mock_hass, mock_config_entry)
+
+            handler = next(
+                call[0][2] for call in mock_hass.services.async_register.call_args_list
+                if call[0][1] == SERVICE_ACKNOWLEDGE_PANIC
+            )
+            call = MagicMock()
+            call.data = {"entity_id": "binary_sensor.sos"}
+            await handler(call)
+            mock_coordinator.async_acknowledge_panic.assert_awaited_with("binary_sensor.sos")
+            call.data = {}
+            await handler(call)
+            mock_coordinator.async_acknowledge_panic.assert_awaited_with(None)
+
+    def test_platforms_include_button(self) -> None:
+        from custom_components.behaviour_monitor import PLATFORMS
+
+        assert "button" in [str(getattr(p, "value", p)) for p in PLATFORMS]
 
 
 class TestAsyncUnloadEntry:
