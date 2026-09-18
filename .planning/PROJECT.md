@@ -55,6 +55,10 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ track_attributes defaults to off so attribute-only updates (e.g. PIR sensors) are not counted as activity — v4.1
 - ✓ Per-entity track_attributes include/exclude override lists with config migration v9→v10 — v4.2
 
+- ✓ Entity categories (motion/contact/plug/light/other) inferred from device class and domain with per-category override lists — v5.0
+- ✓ Motion debounce at ingestion: rising edges only, configurable merge window (default 120s), applied to recorder bootstrap and one-shot re-bootstrap on upgrade — v5.0
+- ✓ Category-weighted welfare status (max score, plugs and lights at half weight) with config migration v10→v11 — v5.0
+
 ### Active
 
 *No active milestone. Ready for next milestone planning.*
@@ -70,19 +74,20 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v4.2 with ~13,400 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 542 tests passing.
+Shipped v5.0 with ~14,700 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 630 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v10.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v11.
 
 Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
 - `acute_detector.py` — tier-aware inactivity detection with boost factors and absolute floors; CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
+- `entity_category.py` — pure-Python entity categorisation, `MotionDebouncer` (rising-edge + merge window), and `derive_weighted_status()` for category-weighted welfare
 - `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
 - `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
 - `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
 - `correlation_detector.py` — PMI-based co-occurrence discovery; check_breaks() with sustained evidence; decay_stale_pairs() and remove_entity() lifecycle management
-- `config_flow.py` — v10 config with per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10)
+- `config_flow.py` — v11 config with category override lists, motion debounce window, per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10→v11)
 - `translations/en.json` — user-friendly labels for all config fields
 
 Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
@@ -135,4 +140,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-18 after v4.2.0 release*
+*Last updated: 2026-09-18 after v5.0 milestone shipped*

@@ -89,12 +89,17 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Track attributes | Also track attribute changes, not just state changes | No |
 | Always track attribute changes for | Entities that count attribute-only changes regardless of the global toggle | Empty |
 | Never track attribute changes for | Entities that ignore attribute-only changes regardless of the global toggle | Empty |
+| Motion sensors | Force these entities into the motion category (auto-inferred from motion/occupancy/presence device class) | Empty |
+| Contact sensors | Force these entities into the contact category (auto-inferred from door/window/opening/garage door device class) | Empty |
+| Plugs and switches | Force these entities into the plug category (auto-inferred from outlet/plug device class or the switch domain) | Empty |
+| Lights | Force these entities into the light category (auto-inferred from the light domain) | Empty |
+| Motion debounce window | Merge repeated motion triggers within this many seconds into one activity; 0 disables (0–600) | 120 seconds |
 
 Per-entity overrides take precedence over the global "Track attributes" toggle. This lets you keep attribute tracking off globally (so noisy PIR motion sensors that update battery, illuminance, or last-seen attributes are not counted as activity) while opting in specific entities that only ever change attributes, or the reverse. An entity cannot appear in both lists.
 
 ### Upgrading
 
-Existing config entries migrate automatically through the full migration chain (v2 through v9). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
+Existing config entries migrate automatically through the full migration chain (v2 through v11). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
 
 Notable migrations:
 - **v2→v4**: Removed ML-related options, added detection controls
@@ -103,6 +108,8 @@ Notable migrations:
 - **v7**: Added adaptive inactivity multiplier bounds
 - **v8**: Added activity tier override (defaults to "Auto")
 - **v9**: Added correlation window (defaults to 120 seconds)
+- **v10**: Added per-entity track_attributes override lists
+- **v11**: Added entity category override lists and motion debounce window; motion baselines are rebuilt from recorder history once after upgrade
 
 ## Holiday Mode and Visitor Snooze
 
@@ -307,6 +314,32 @@ Classification is gated on learning confidence (requires ~80% of the history win
 
 A global override is available in the config UI to force all entities to a specific tier (useful for testing or edge cases). Set to "Auto" (default) to use automatic classification.
 
+### Entity Categories
+
+Each monitored entity is assigned a category at startup so that noisy devices and automated devices are treated appropriately.
+
+**Inference order** (first match wins):
+
+1. The entity is in one of the four category override lists.
+2. Its entity-registry device class: `motion`, `occupancy`, `presence` → motion; `door`, `window`, `opening`, `garage_door` → contact; `outlet`, `plug` → plug.
+3. Its domain: `switch` → plug; `light` → light; anything else → other.
+
+Numeric entities are always "other". The inferred category is shown as the `category` attribute on each entry of the `entity_status_summary` sensor.
+
+**Motion debounce.** Motion entities only count when they turn *on*, and repeated triggers within the debounce window (default 2 minutes) are merged into a single activity. The learned routine, correlation detection and daily count all see the debounced stream; the entity's last-seen time still updates on every raw transition so inactivity detection is not delayed. Recorder history is debounced the same way on first install, and existing installs rebuild their motion baselines from recorder history when upgrading to v5.0.
+
+**Weighted welfare.** The welfare status is derived from the highest-scoring active alert, where score = severity points × category weight:
+
+| Category | Weight | Rationale |
+|---|---|---|
+| motion | 1.0 | Direct evidence of presence |
+| other | 1.0 | Unchanged from previous versions |
+| contact | 0.8 | Strong but sparser evidence |
+| plug | 0.5 | Often driven by automations |
+| light | 0.5 | Often driven by automations |
+
+Severity points are LOW 1, MEDIUM 2, HIGH 3. A score of 2.25 or more gives `alert`, 1.25 or more gives `concern`, anything else gives `check_recommended`. In practice motion, contact and other behave as before; a plug or light alert alone tops out at `concern`. Individual alert severities and notifications are not affected.
+
 ### Acute Detection
 
 Two types of acute alerts, both requiring **sustained evidence** (3 consecutive polling cycles) before firing:
@@ -418,6 +451,12 @@ All data persists across Home Assistant restarts. Daily counts are only restored
 - Check the entity is not in the "Never track attribute changes for" list
 - **Check if Holiday Mode is enabled** — all tracking is paused when ON
 - **Check if Snoozed** — pattern learning is paused during snooze
+
+### Motion Sensor Generates Too Many or Too Few Activities
+
+- Check the `category` attribute on `entity_status_summary` shows `motion`. If not, add the entity to the "Motion sensors" list.
+- Increase the "Motion debounce window" if a single walk through a room still produces several activities; decrease it (or set 0) if genuinely separate visits are being merged.
+- After changing the window, the learned routine adapts as the history window rolls over.
 
 ### Drift Alerts After Intentional Routine Change
 

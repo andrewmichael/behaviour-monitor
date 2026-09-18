@@ -8,6 +8,7 @@
 - ✅ **v3.0 Detection Accuracy** — Phases 9-11 (shipped 2026-03-14)
 - ✅ **v3.1 Activity-Rate Classification** — Phases 12-16 (shipped 2026-04-03)
 - ✅ **v4.0 Cross-Entity Correlation** — Phases 17-20 (shipped 2026-04-07)
+- ✅ **v5.0 Entity Categories** — Phases 21-23 (shipped 2026-09-18)
 
 ## Phases
 
@@ -67,6 +68,15 @@
 
 </details>
 
+<details>
+<summary>✅ v5.0 Entity Categories (Phases 21-23) — SHIPPED 2026-09-18</summary>
+
+- [x] Phase 21: Category Inference and Motion Debounce (entity_category.py, coordinator wiring) — completed 2026-09-18
+- [x] Phase 22: Weighted Welfare (category-weighted status derivation) — completed 2026-09-18
+- [x] Phase 23: Config, Migration v11 and Motion Re-bootstrap — completed 2026-09-18
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -91,3 +101,6 @@
 | 18. Correlation Discovery | v4.0 | 2/2 | Complete    | 2026-04-04 |
 | 19. Break Detection and Alerting | v4.0 | 2/2 | Complete    | 2026-04-06 |
 | 20. Correlation Lifecycle | v4.0 | 2/2 | Complete    | 2026-04-07 |
+| 21. Category Inference and Motion Debounce | v5.0 | 1/1 | Complete | 2026-09-18 |
+| 22. Weighted Welfare | v5.0 | 1/1 | Complete | 2026-09-18 |
+| 23. Config, Migration v11 and Motion Re-bootstrap | v5.0 | 1/1 | Complete | 2026-09-18 |
