@@ -19,13 +19,13 @@ from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL, CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT,
-    CONF_CATEGORY_MOTION, CONF_CATEGORY_PLUG, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
+    CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_CATEGORY_PLUG, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_REBOOTSTRAP_MOTION, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_NOTIFY_SERVICES, CONF_PANIC_RENOTIFY_MINUTES, CONF_REBOOTSTRAP_MOTION, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
@@ -35,13 +35,14 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
-    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
+    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN, EntityCategory, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
     STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
 from .entity_category import MotionDebouncer, derive_weighted_status, infer_categories
+from .panic_monitor import PanicMonitor
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
 try:
@@ -108,10 +109,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             EntityCategory.CONTACT: list(d.get(CONF_CATEGORY_CONTACT) or []),
             EntityCategory.PLUG: list(d.get(CONF_CATEGORY_PLUG) or []),
             EntityCategory.LIGHT: list(d.get(CONF_CATEGORY_LIGHT) or []),
+            EntityCategory.PANIC: list(d.get(CONF_CATEGORY_PANIC) or []),
         }
         self._motion_debounce_seconds: int = int(d.get(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS))
         self._categories: dict[str, EntityCategory] = {}
         self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
+        self._panic_renotify_minutes: int = int(d.get(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES))
+        self._panic_monitor = PanicMonitor()
         self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(
             float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
@@ -154,6 +158,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def is_snoozed(self) -> bool:
         return self._snooze_until is not None and dt_util.now() < self._snooze_until
 
+    @property
+    def panic_active(self) -> list[str]:
+        return [eid for eid, _, _ in self._panic_monitor.active()]
+
+    @property
+    def panic_unacknowledged(self) -> list[str]:
+        return self._panic_monitor.unacknowledged()
+
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
         if stored:
@@ -173,6 +185,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ]
                 for eid in stale_entities:
                     self._correlation_detector.remove_entity(eid)
+            if "panic_state" in stored:
+                self._panic_monitor = PanicMonitor.from_dict(stored["panic_state"])
             c = stored.get("coordinator", {})
             self._holiday_mode = c.get("holiday_mode", False)
             if (sn := c.get("snooze_until")) and (sdt := _parse_dt(sn)):
@@ -204,6 +218,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "routine_model": self._routine_model.to_dict(),
             "cusum_states": {e: s.to_dict() for e, s in self._drift_detector._states.items()},
             "correlation_state": self._correlation_detector.to_dict(),
+            "panic_state": self._panic_monitor.to_dict(),
             "coordinator": {
                 "holiday_mode": self._holiday_mode,
                 "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
@@ -270,6 +285,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ns = event.data.get("new_state")
         if ns is None:
             return
+        if self._categories.get(eid) is EntityCategory.PANIC:
+            self._handle_panic_event(eid, event.data.get("old_state"), ns)
+            return
         old_state = event.data.get("old_state")
         if not self._tracks_attributes(eid):
             if old_state is not None and old_state.state == ns.state:
@@ -286,6 +304,49 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._today_count, self._today_date = 0, now.date()
         self._today_count += 1
         self.hass.async_create_task(self.async_request_refresh())
+
+    def _handle_panic_event(self, eid: str, old_state: Any, new_state: Any) -> None:
+        """Panic entities bypass learning entirely: press notifies now, release clears."""
+        sv = str(new_state.state).lower()
+        old_sv = None if old_state is None else str(old_state.state).lower()
+        now = dt_util.now()
+        if sv == "on" and old_sv != "on":
+            if self._panic_monitor.press(eid, now):
+                self.hass.async_create_task(self._async_panic_pressed([eid], now))
+        elif sv == "off" and self._panic_monitor.is_active(eid):
+            self._panic_monitor.release(eid)
+            self.hass.async_create_task(
+                self._save_fire_refresh(f"{DOMAIN}_panic_released", {"entity_id": eid})
+            )
+
+    async def _async_panic_pressed(self, entity_ids: list[str], now: datetime) -> None:
+        await self._send_panic_notification(entity_ids, now)
+        await self._save_fire_refresh(f"{DOMAIN}_panic_pressed", {"entity_ids": entity_ids})
+
+    async def _send_panic_notification(self, entity_ids: list[str], now: datetime) -> None:
+        """Send a panic notification. Ignores every suppression on purpose."""
+        lines = []
+        for eid in entity_ids:
+            since = self._panic_monitor.active_since(eid)
+            elapsed = (now - since).total_seconds() if since is not None else 0.0
+            when = "just now" if elapsed < 60 else f"{format_duration(elapsed)} ago"
+            lines.append(f"- PANIC: {eid} pressed {when}")
+        title, msg = "Behaviour Monitor: PANIC", "\n".join(lines)
+        await self.hass.services.async_call(
+            "persistent_notification", "create",
+            {"title": title, "message": msg, "notification_id": "behaviour_monitor_panic"},
+        )
+        for svc in self._notify_services:
+            parts = svc.split(".", 1)
+            if len(parts) == 2:
+                await self.hass.services.async_call(parts[0], parts[1], {"title": title, "message": msg})
+        self._last_notification_info = {"timestamp": now.isoformat(), "type": "panic"}
+
+    async def async_acknowledge_panic(self, entity_id: str | None = None) -> None:
+        """Acknowledge one or all active panics; stops re-notification until release."""
+        changed = self._panic_monitor.acknowledge(dt_util.now(), entity_id)
+        if changed:
+            await self._save_fire_refresh(f"{DOMAIN}_panic_acknowledged", {"entity_ids": changed})
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
@@ -501,6 +562,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return
             end, start = dt_util.now(), dt_util.now() - timedelta(days=self._history_window_days)
             for eid in targets:
+                if self._categories.get(eid) is EntityCategory.PANIC:
+                    continue
                 is_motion = self._categories.get(eid) is EntityCategory.MOTION
                 prev: str | None = None
                 try:
