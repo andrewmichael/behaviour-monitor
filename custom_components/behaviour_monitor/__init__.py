@@ -12,6 +12,10 @@ import voluptuous as vol
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
@@ -19,17 +23,24 @@ from .const import (
     CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
+    CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_REBOOTSTRAP_MOTION,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_CATEGORY_CONTACT,
+    DEFAULT_CATEGORY_LIGHT,
+    DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+    DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -185,6 +196,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v10 — "
             "per-entity track_attributes overrides added"
+        )
+
+    if config_entry.version < 11:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_CATEGORY_MOTION, list(DEFAULT_CATEGORY_MOTION))
+        new_data.setdefault(CONF_CATEGORY_CONTACT, list(DEFAULT_CATEGORY_CONTACT))
+        new_data.setdefault(CONF_CATEGORY_PLUG, list(DEFAULT_CATEGORY_PLUG))
+        new_data.setdefault(CONF_CATEGORY_LIGHT, list(DEFAULT_CATEGORY_LIGHT))
+        new_data.setdefault(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS)
+        # One-shot: the coordinator rebuilds motion routines with debounce
+        # from recorder history on its next setup, then clears this flag.
+        new_data[CONF_REBOOTSTRAP_MOTION] = True
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=11)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v11 — "
+            "entity categories and motion debounce added"
         )
 
     return True

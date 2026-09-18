@@ -167,9 +167,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_10(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 10 after per-entity track_attributes override additions."""
-        assert config_flow.VERSION == 10
+    async def test_version_is_11(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 11 after entity category additions."""
+        assert config_flow.VERSION == 11
 
     @pytest.mark.asyncio
     async def test_schema_includes_activity_tier_override(self) -> None:

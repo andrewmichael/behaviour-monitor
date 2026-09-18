@@ -360,7 +360,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 10
+    VERSION = 11
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

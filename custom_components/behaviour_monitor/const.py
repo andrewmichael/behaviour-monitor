@@ -83,7 +83,7 @@ DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 10
+STORAGE_VERSION: Final = 11
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
