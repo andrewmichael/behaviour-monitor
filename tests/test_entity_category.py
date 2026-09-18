@@ -21,7 +21,7 @@ from custom_components.behaviour_monitor.const import (
     EntityCategory,
 )
 from custom_components.behaviour_monitor.alert_result import AlertSeverity
-from custom_components.behaviour_monitor.entity_category import infer_categories
+from custom_components.behaviour_monitor.entity_category import MotionDebouncer, infer_categories
 
 
 class TestConstants:
@@ -128,3 +128,63 @@ class TestInferCategories:
             "light.b": EntityCategory.LIGHT,
             "sensor.c": EntityCategory.OTHER,
         }
+
+
+T0 = datetime(2026, 9, 18, 10, 0, 0)
+
+
+class TestMotionDebouncer:
+    def test_rising_edge_counts(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
+
+    def test_off_transition_never_counts(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, "on", "off", T0) is False
+        # even when nothing has been counted yet
+        assert d.should_count("binary_sensor.pir", True, None, "off", T0) is False
+
+    def test_on_to_on_is_not_a_rising_edge(self) -> None:
+        d = MotionDebouncer(0)
+        assert d.should_count("binary_sensor.pir", True, "on", "on", T0) is False
+
+    def test_second_edge_inside_window_dropped(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=119)) is False
+
+    def test_edge_at_exactly_window_counts(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)) is True
+
+    def test_dropped_edge_does_not_extend_window(self) -> None:
+        d = MotionDebouncer(120)
+        d.should_count("binary_sensor.pir", True, "off", "on", T0)
+        d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=100))  # dropped
+        # 120s after the *counted* edge, not the dropped one
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)) is True
+
+    def test_zero_window_counts_every_rising_edge(self) -> None:
+        d = MotionDebouncer(0)
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
+        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=1)) is True
+
+    def test_none_old_state_counts_as_rising_edge(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, None, "on", T0) is True
+
+    def test_non_motion_always_counts(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.door", False, "on", "off", T0) is True
+        assert d.should_count("binary_sensor.door", False, "off", "off", T0) is True
+        assert d.should_count("binary_sensor.door", False, "off", "on", T0 + timedelta(seconds=1)) is True
+
+    def test_entities_are_independent(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.a", True, "off", "on", T0) is True
+        assert d.should_count("binary_sensor.b", True, "off", "on", T0 + timedelta(seconds=1)) is True
+
+    def test_state_is_case_insensitive(self) -> None:
+        d = MotionDebouncer(120)
+        assert d.should_count("binary_sensor.pir", True, "OFF", "On", T0) is True

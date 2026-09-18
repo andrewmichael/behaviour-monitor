@@ -79,3 +79,43 @@ def infer_categories(
         domain = eid.split(".", 1)[0]
         result[eid] = _DOMAIN_FALLBACK.get(domain, EntityCategory.OTHER)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Motion debounce
+# ---------------------------------------------------------------------------
+
+
+class MotionDebouncer:
+    """Decide whether a motion-sensor event should count as activity.
+
+    For motion entities only rising edges (not-on -> on) count, and only when
+    at least ``window_seconds`` have elapsed since the last counted edge for
+    that entity. Non-motion entities always count. State is in-memory only;
+    after a restart the first rising edge always counts.
+    """
+
+    def __init__(self, window_seconds: int) -> None:
+        self._window = timedelta(seconds=max(0, int(window_seconds)))
+        self._last_counted: dict[str, datetime] = {}
+
+    def should_count(
+        self,
+        entity_id: str,
+        is_motion: bool,
+        old_state: str | None,
+        new_state: str,
+        timestamp: datetime,
+    ) -> bool:
+        """Return True if this event should be recorded as activity."""
+        if not is_motion:
+            return True
+        if new_state.lower() != "on":
+            return False
+        if old_state is not None and old_state.lower() == "on":
+            return False
+        last = self._last_counted.get(entity_id)
+        if last is not None and timestamp - last < self._window:
+            return False
+        self._last_counted[entity_id] = timestamp
+        return True
