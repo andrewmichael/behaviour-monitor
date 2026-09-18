@@ -2362,3 +2362,14 @@ class TestEventGateWiring:
         ts = c._gate._buckets[next(iter(c._gate._buckets))][0].timestamp
         c._flush_gate(force=True)
         assert c._last_seen["s.a"] == ts
+
+    @pytest.mark.asyncio
+    async def test_shutdown_flushes_before_unsubscribe(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._handle_state_changed(self._event("s.a", "off", "on"))
+        unsub = MagicMock()
+        c._unsub_state_changed = unsub
+        with patch.object(c._store, "async_save", new_callable=AsyncMock):
+            await c.async_shutdown()
+        assert "s.a" in c._last_seen
+        unsub.assert_called_once()

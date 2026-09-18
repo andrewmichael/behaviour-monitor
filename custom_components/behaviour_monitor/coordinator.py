@@ -236,10 +236,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsub_state_changed = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
 
     async def async_shutdown(self) -> None:
+        self._flush_gate(force=True)
         if self._unsub_state_changed:
             self._unsub_state_changed()
             self._unsub_state_changed = None
-        self._flush_gate(force=True)
         await self._save_data()
 
     async def _save_data(self) -> None:
