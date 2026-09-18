@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-09-18
+
+### Added
+- bump config entry version to 10 for per-entity track_attributes overrides
+- per-entity overrides for track_attributes
+
 ## [4.1.0] - 2026-09-07
 
 ### Added
