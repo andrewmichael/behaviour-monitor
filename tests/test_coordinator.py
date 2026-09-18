@@ -1934,8 +1934,8 @@ class TestPanicPressRelease:
         with patch.object(c._store, "async_save", new_callable=AsyncMock) as save:
             await c._save_data()
         stored = save.call_args[0][0]
-        assert "binary_sensor.sos" in stored["panic_state"]
-        assert stored["panic_state"]["binary_sensor.sos"]["acknowledged"] is True
+        assert "binary_sensor.sos" in stored["panic_state"]["active"]
+        assert stored["panic_state"]["active"]["binary_sensor.sos"]["acknowledged"] is True
 
         c2 = self._make(mock_hass, mock_config_entry)
         with patch.object(c2._store, "async_load", new_callable=AsyncMock, return_value=stored), \

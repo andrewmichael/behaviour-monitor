@@ -164,3 +164,156 @@ class TestSerialization:
     def test_from_dict_rejects_non_dict_payload(self) -> None:
         assert PanicMonitor.from_dict(["nonsense"]).active() == []  # type: ignore[arg-type]
         assert PanicMonitor.from_dict({"x": "bad"}).active() == []
+
+
+H24 = timedelta(hours=24)
+D30 = timedelta(days=30)
+
+
+class TestDeviceLiveness:
+    def test_update_and_status(self) -> None:
+        m = PanicMonitor()
+        m.update_device(
+            "binary_sensor.sos", available=True, last_reported=T0, battery=87.0
+        )
+        s = m.device_status("binary_sensor.sos")
+        assert s == {
+            "available": True,
+            "last_reported": T0.isoformat(),
+            "battery": 87.0,
+            "last_test": None,
+        }
+        assert m.known_devices() == ["binary_sensor.sos"]
+
+    def test_status_unknown_device(self) -> None:
+        assert PanicMonitor().device_status("binary_sensor.nope") == {
+            "available": False,
+            "last_reported": None,
+            "battery": None,
+            "last_test": None,
+        }
+
+    def test_test_window_and_record(self) -> None:
+        m = PanicMonitor()
+        m.update_device(
+            "binary_sensor.sos", available=True, last_reported=T0, battery=None
+        )
+        assert m.open_test_window(T0, T0 + timedelta(seconds=120)) == [
+            "binary_sensor.sos"
+        ]
+        assert (
+            m.in_test_window("binary_sensor.sos", T0 + timedelta(seconds=119)) is True
+        )
+        assert (
+            m.in_test_window("binary_sensor.sos", T0 + timedelta(seconds=120)) is False
+        )
+        m.record_test("binary_sensor.sos", T0 + timedelta(seconds=30))
+        assert (
+            m.device_status("binary_sensor.sos")["last_test"]
+            == (T0 + timedelta(seconds=30)).isoformat()
+        )
+        assert (
+            m.in_test_window("binary_sensor.sos", T0 + timedelta(seconds=31)) is False
+        )
+        # a test press never activates the panic
+        assert m.is_active("binary_sensor.sos") is False
+
+    def test_open_window_for_one_or_unknown(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=T0, battery=None)
+        m.update_device("b", available=True, last_reported=T0, battery=None)
+        assert m.open_test_window(T0, T0 + FIVE, "a") == ["a"]
+        assert m.in_test_window("b", T0) is False
+        assert m.open_test_window(T0, T0 + FIVE, "zzz") == []
+
+    def test_device_alerts_unavailable(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=False, last_reported=T0, battery=None)
+        alerts = m.device_alerts(T0, None, None, 20)
+        assert [(e, k, s) for e, k, s, _ in alerts] == [("a", "unavailable", "high")]
+
+    def test_device_alerts_heartbeat(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=T0, battery=None)
+        assert m.device_alerts(T0 + H24 - timedelta(seconds=1), H24, None, 20) == []
+        alerts = m.device_alerts(T0 + H24, H24, None, 20)
+        assert [(e, k, s) for e, k, s, _ in alerts] == [("a", "heartbeat", "high")]
+        assert "24h" in alerts[0][3]
+
+    def test_device_alerts_no_report_ever_with_heartbeat(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=None, battery=None)
+        alerts = m.device_alerts(T0, H24, None, 20)
+        assert [(e, k, s) for e, k, s, _ in alerts] == [("a", "heartbeat", "high")]
+        assert "never" in alerts[0][3]
+
+    def test_device_alerts_battery(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=T0, battery=20)
+        alerts = m.device_alerts(T0, None, None, 20)
+        assert [(e, k, s) for e, k, s, _ in alerts] == [("a", "battery", "medium")]
+        m.update_device("a", available=True, last_reported=T0, battery=21)
+        assert m.device_alerts(T0, None, None, 20) == []
+
+    def test_device_alerts_test_reminder(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=T0, battery=None)
+        alerts = m.device_alerts(T0, None, D30, 20)
+        assert [(e, k, s) for e, k, s, _ in alerts] == [("a", "test_reminder", "low")]
+        assert "never" in alerts[0][3]
+        m.record_test("a", T0)
+        assert m.device_alerts(T0 + D30 - timedelta(seconds=1), None, D30, 20) == []
+        assert [k for _, k, _, _ in m.device_alerts(T0 + D30, None, D30, 20)] == [
+            "test_reminder"
+        ]
+
+    def test_disabled_checks(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=True, last_reported=None, battery=None)
+        assert m.device_alerts(T0 + timedelta(days=400), None, None, 20) == []
+
+    def test_multiple_conditions_ordered(self) -> None:
+        m = PanicMonitor()
+        m.update_device("a", available=False, last_reported=None, battery=5)
+        kinds = [k for _, k, _, _ in m.device_alerts(T0, H24, D30, 20)]
+        assert kinds == ["unavailable", "heartbeat", "battery", "test_reminder"]
+
+
+class TestSerializationV2:
+    def test_round_trip_with_devices(self) -> None:
+        m = PanicMonitor()
+        m.press("a", T0)
+        m.update_device("a", available=True, last_reported=T0, battery=50)
+        m.record_test("a", T0 - FIVE)
+        m.update_device("b", available=False, last_reported=None, battery=None)
+        d = m.to_dict()
+        assert set(d) == {"active", "devices"}
+        r = PanicMonitor.from_dict(d)
+        assert r.active() == m.active()
+        assert r.device_status("a") == m.device_status("a")
+        assert r.device_status("b")["available"] is False
+        # test window is not persisted
+        assert r.in_test_window("a", T0) is False
+
+    def test_legacy_flat_shape(self) -> None:
+        legacy = {
+            "a": {
+                "active_since": T0.isoformat(),
+                "last_notified": T0.isoformat(),
+                "acknowledged": True,
+            }
+        }
+        r = PanicMonitor.from_dict(legacy)
+        assert [e for e, _, acked in r.active()] == ["a"]
+        assert r.active()[0][2] is True
+        assert r.known_devices() == []
+
+    def test_malformed_devices_dropped(self) -> None:
+        r = PanicMonitor.from_dict(
+            {
+                "active": {},
+                "devices": {"a": "bad", "b": {"last_test": "nope", "available": True}},
+            }
+        )
+        assert r.known_devices() == ["b"]
+        assert r.device_status("b")["last_test"] is None
