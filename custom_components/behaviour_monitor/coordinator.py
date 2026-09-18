@@ -41,7 +41,7 @@ from .const import (
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
-from .entity_category import MotionDebouncer, infer_categories
+from .entity_category import MotionDebouncer, derive_weighted_status, infer_categories
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
 try:
@@ -357,13 +357,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         welfare_alerts = [a for a in alerts if a.alert_type != AlertType.CORRELATION_BREAK]
         if not welfare_alerts:
             return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
-        sevs = [a.severity for a in welfare_alerts]
-        if AlertSeverity.HIGH in sevs:
-            st, rec = "alert", "Immediate welfare check recommended."
-        elif AlertSeverity.MEDIUM in sevs:
-            st, rec = "concern", "Schedule a welfare check soon."
-        else:
-            st, rec = "check_recommended", "Monitor closely."
+        st, rec = derive_weighted_status(welfare_alerts, self._categories)
         cnt: dict[str, int] = {}
         for a in welfare_alerts:
             cnt[a.entity_id] = cnt.get(a.entity_id, 0) + 1

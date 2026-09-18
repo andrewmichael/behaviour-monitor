@@ -1549,3 +1549,51 @@ class TestEntityCategories:
              patch.object(c, "_registry_device_classes", return_value={}):
             await c.async_setup()
         assert c._categories["switch.kettle"].value == "plug"
+
+
+class TestWeightedWelfare:
+    """_derive_welfare uses category-weighted scoring."""
+
+    @pytest.fixture
+    def coordinator(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_MONITORED_ENTITIES: ["binary_sensor.pir", "switch.kettle"],
+        }
+        c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c._categories = {
+            "binary_sensor.pir": EntityCategory.MOTION,
+            "switch.kettle": EntityCategory.PLUG,
+        }
+        return c
+
+    def test_plug_high_is_concern_not_alert(self, coordinator: BehaviourMonitorCoordinator) -> None:
+        welfare = coordinator._derive_welfare([_make_alert("switch.kettle", severity=AlertSeverity.HIGH)])
+        assert welfare["status"] == "concern"
+        assert welfare["recommendation"] == "Schedule a welfare check soon."
+
+    def test_motion_high_is_alert(self, coordinator: BehaviourMonitorCoordinator) -> None:
+        welfare = coordinator._derive_welfare([_make_alert("binary_sensor.pir", severity=AlertSeverity.HIGH)])
+        assert welfare["status"] == "alert"
+
+    def test_reasons_and_counts_still_include_plug_alert(self, coordinator: BehaviourMonitorCoordinator) -> None:
+        alerts = [
+            _make_alert("switch.kettle", severity=AlertSeverity.LOW),
+            _make_alert("binary_sensor.pir", severity=AlertSeverity.LOW),
+        ]
+        welfare = coordinator._derive_welfare(alerts)
+        assert welfare["status"] == "check_recommended"
+        assert len(welfare["reasons"]) == 2
+        assert welfare["entity_count_by_status"] == {"switch.kettle": 1, "binary_sensor.pir": 1}
+        assert welfare["summary"] == "2 active alert(s): check_recommended"
+
+    def test_no_alerts_is_ok(self, coordinator: BehaviourMonitorCoordinator) -> None:
+        assert coordinator._derive_welfare([])["status"] == "ok"
+
+    def test_only_correlation_breaks_is_ok(self, coordinator: BehaviourMonitorCoordinator) -> None:
+        alerts = [_make_alert("binary_sensor.pir", alert_type=AlertType.CORRELATION_BREAK, severity=AlertSeverity.HIGH)]
+        assert coordinator._derive_welfare(alerts)["status"] == "ok"
