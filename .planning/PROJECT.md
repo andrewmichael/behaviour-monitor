@@ -59,6 +59,8 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - ✓ Motion debounce at ingestion: rising edges only, configurable merge window (default 120s), applied to recorder bootstrap and one-shot re-bootstrap on upgrade — v5.0
 - ✓ Category-weighted welfare status (max score, plugs and lights at half weight) with config migration v10→v11 — v5.0
 
+- ✓ Panic button category (override-list only): instant unsuppressable notification, re-notify every N minutes until acknowledged, cleared on release; acknowledge via service and button entity; config migration v11→v12 — v5.1
+
 ### Active
 
 *No active milestone. Ready for next milestone planning.*
@@ -74,20 +76,22 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v5.0 with ~14,700 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 630 tests passing.
+Shipped v5.1 with ~15,800 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 692 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v11.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v12.
 
 Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
 - `acute_detector.py` — tier-aware inactivity detection with boost factors and absolute floors; CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
 - `entity_category.py` — pure-Python entity categorisation, `MotionDebouncer` (rising-edge + merge window), and `derive_weighted_status()` for category-weighted welfare
+- `panic_monitor.py` — pure-Python panic state machine (press/release/acknowledge/due) persisted under `panic_state`
 - `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
 - `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
 - `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
+- `button.py` — Acknowledge Panic button entity
 - `correlation_detector.py` — PMI-based co-occurrence discovery; check_breaks() with sustained evidence; decay_stale_pairs() and remove_entity() lifecycle management
 - `config_flow.py` — v11 config with category override lists, motion debounce window, per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10→v11)
+- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10→v11→v12)
 - `translations/en.json` — user-friendly labels for all config fields
 
 Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
@@ -140,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-18 after v5.0 milestone shipped*
+*Last updated: 2026-09-18 after v5.1 milestone shipped*

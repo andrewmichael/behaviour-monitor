@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v5.0
-milestone_name: Entity Categories
+milestone: v5.1
+milestone_name: Panic Button
 status: shipped
-stopped_at: v5.0 shipped
-last_updated: "2026-09-18T18:30:00.000Z"
+stopped_at: v5.1 shipped
+last_updated: "2026-09-18T18:49:31.000Z"
 last_activity: 2026-09-18
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  total_phases: 1
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
   percent: 100
 ---
 
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 ## Current Position
 
-Phase: 23
+Phase: 24
 Plan: Not started
 Status: Shipped
 Last activity: 2026-09-18
 
-Progress: [██████████] 100% (3/3 v5.0 phases)
+Progress: [██████████] 100% (1/1 v5.1 phases)
 
 ## Accumulated Context
 
@@ -52,6 +52,9 @@ See PROJECT.md Key Decisions table for full log.
 - [v5.0]: Welfare uses max weighted score, not sum; plugs/lights 0.5, contact 0.8, motion/other 1.0
 - [v5.0]: Motion debounce default 120s, on by default; last_seen updates on raw events, model/correlation/daily count on debounced events
 - [v5.0]: Upgrade re-bootstraps motion routines from recorder via one-shot rebootstrap_motion entry flag
+- [v5.1]: Panic is override-list only; no device-class inference (safety/problem are too ambiguous)
+- [v5.1]: Panic notifications bypass every suppression; re-notify rides the 60 s poll (≤60 s jitter accepted)
+- [v5.1]: Release clears acknowledgement; acknowledge stops repeats but keeps welfare at alert
 
 ### Blockers/Concerns
 

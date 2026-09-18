@@ -9,6 +9,7 @@
 - ✅ **v3.1 Activity-Rate Classification** — Phases 12-16 (shipped 2026-04-03)
 - ✅ **v4.0 Cross-Entity Correlation** — Phases 17-20 (shipped 2026-04-07)
 - ✅ **v5.0 Entity Categories** — Phases 21-23 (shipped 2026-09-18)
+- ✅ **v5.1 Panic Button** — Phase 24 (shipped 2026-09-18)
 
 ## Phases
 
@@ -77,6 +78,13 @@
 
 </details>
 
+<details>
+<summary>✅ v5.1 Panic Button (Phase 24) — SHIPPED 2026-09-18</summary>
+
+- [x] Phase 24: Panic Category, Instant Alert and Acknowledgement (panic_monitor.py, coordinator, button platform, migration v12) — completed 2026-09-18
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -104,3 +112,4 @@
 | 21. Category Inference and Motion Debounce | v5.0 | 1/1 | Complete | 2026-09-18 |
 | 22. Weighted Welfare | v5.0 | 1/1 | Complete | 2026-09-18 |
 | 23. Config, Migration v11 and Motion Re-bootstrap | v5.0 | 1/1 | Complete | 2026-09-18 |
+| 24. Panic Category, Instant Alert and Acknowledgement | v5.1 | 1/1 | Complete | 2026-09-18 |
