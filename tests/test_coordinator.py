@@ -1378,3 +1378,174 @@ class TestTrackAttributesPerEntityOverrides:
         }
         coordinator._handle_state_changed(event)
         assert "sensor.test1" in coordinator._last_seen
+
+
+# ---------------------------------------------------------------------------
+# TestEntityCategories — category map, debounce wiring, sensor attribute
+# ---------------------------------------------------------------------------
+
+
+class TestEntityCategories:
+    """Category inference on the coordinator and motion debounce at ingestion."""
+
+    def _make(
+        self,
+        mock_hass: MagicMock,
+        mock_config_entry: MagicMock,
+        entities: list[str],
+        **extra: Any,
+    ) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: entities, **extra}
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    @staticmethod
+    def _event(entity_id: str, old: str | None, new: str) -> MagicMock:
+        event = MagicMock()
+        event.data = {
+            "entity_id": entity_id,
+            "old_state": None if old is None else MagicMock(state=old),
+            "new_state": MagicMock(state=new),
+        }
+        return event
+
+    def test_defaults(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import DEFAULT_MOTION_DEBOUNCE_SECONDS
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
+        assert c._motion_debounce_seconds == DEFAULT_MOTION_DEBOUNCE_SECONDS
+        assert c._categories == {}
+
+    def test_refresh_categories_uses_registry_and_overrides(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_CONTACT, EntityCategory
+
+        c = self._make(
+            mock_hass,
+            mock_config_entry,
+            ["binary_sensor.pir", "binary_sensor.door", "switch.kettle", "light.hall", "sensor.temp"],
+            **{CONF_CATEGORY_CONTACT: ["sensor.temp"]},
+        )
+        with patch.object(
+            c,
+            "_registry_device_classes",
+            return_value={"binary_sensor.pir": "motion", "binary_sensor.door": "door"},
+        ):
+            c._refresh_categories()
+        assert c._categories == {
+            "binary_sensor.pir": EntityCategory.MOTION,
+            "binary_sensor.door": EntityCategory.CONTACT,
+            "switch.kettle": EntityCategory.PLUG,
+            "light.hall": EntityCategory.LIGHT,
+            "sensor.temp": EntityCategory.CONTACT,
+        }
+
+    def test_refresh_categories_forces_numeric_to_other(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["sensor.lux"], **{CONF_CATEGORY_MOTION: ["sensor.lux"]})
+        c._routine_model.get_or_create("sensor.lux", is_binary=False)
+        with patch.object(c, "_registry_device_classes", return_value={}):
+            c._refresh_categories()
+        assert c._categories["sensor.lux"] is EntityCategory.OTHER
+
+    def test_registry_device_classes_handles_missing_entries(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "switch.x"])
+        registry = MagicMock()
+        entry = MagicMock()
+        entry.device_class = None
+        entry.original_device_class = "motion"
+        registry.async_get = lambda eid: entry if eid == "binary_sensor.pir" else None
+        with patch.object(coord_module.er, "async_get", return_value=registry):
+            result = c._registry_device_classes()
+        assert result == {"binary_sensor.pir": "motion", "switch.x": None}
+
+    def test_motion_off_transition_updates_last_seen_but_not_model(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
+        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+        assert "binary_sensor.pir" in c._last_seen
+        assert "binary_sensor.pir" not in c._routine_model._entities
+        assert c._today_count == 0
+
+    def test_motion_rising_edge_records(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
+        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
+        assert "binary_sensor.pir" in c._routine_model._entities
+        assert c._today_count == 1
+
+    def test_motion_burst_counts_once(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
+        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        for _ in range(3):
+            c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
+            c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+        assert c._today_count == 1
+
+    def test_zero_window_counts_every_edge(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_MOTION_DEBOUNCE_SECONDS, EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"], **{CONF_MOTION_DEBOUNCE_SECONDS: 0})
+        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        for _ in range(3):
+            c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
+            c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+        assert c._today_count == 3
+
+    def test_non_motion_unchanged(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.door"])
+        c._categories = {"binary_sensor.door": EntityCategory.CONTACT}
+        c._handle_state_changed(self._event("binary_sensor.door", "off", "on"))
+        c._handle_state_changed(self._event("binary_sensor.door", "on", "off"))
+        assert c._today_count == 2
+
+    def test_sensor_data_includes_category(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "sensor.other"])
+        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        data = c._build_sensor_data([], datetime.now())
+        by_id = {e["entity_id"]: e for e in data["entity_status"]}
+        assert by_id["binary_sensor.pir"]["category"] == "motion"
+        assert by_id["sensor.other"]["category"] == "other"
+
+    @pytest.mark.asyncio
+    async def test_async_setup_refreshes_categories(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["switch.kettle"])
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=None), \
+             patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_registry_device_classes", return_value={}):
+            await c.async_setup()
+        assert c._categories["switch.kettle"].value == "plug"

@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -17,11 +18,13 @@ from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
+    CONF_ALERT_REPEAT_INTERVAL, CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_MOTION, CONF_CATEGORY_PLUG, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
-    CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
+    CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
@@ -31,12 +34,14 @@ from .const import (
     DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
+    DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
-    DOMAIN, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY, STORAGE_VERSION,
-    UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
+    DOMAIN, EntityCategory, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
+    STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
+from .entity_category import MotionDebouncer, infer_categories
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
 try:
@@ -84,6 +89,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_attributes: bool = bool(d.get(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES))
         self._track_attributes_include: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
         self._track_attributes_exclude: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
+        self._category_overrides: dict[EntityCategory, list[str]] = {
+            EntityCategory.MOTION: list(d.get(CONF_CATEGORY_MOTION) or []),
+            EntityCategory.CONTACT: list(d.get(CONF_CATEGORY_CONTACT) or []),
+            EntityCategory.PLUG: list(d.get(CONF_CATEGORY_PLUG) or []),
+            EntityCategory.LIGHT: list(d.get(CONF_CATEGORY_LIGHT) or []),
+        }
+        self._motion_debounce_seconds: int = int(d.get(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS))
+        self._categories: dict[str, EntityCategory] = {}
+        self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
         self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(
             float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
@@ -128,6 +142,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
+        self._refresh_categories()
         if stored:
             if "routine_model" in stored:
                 self._routine_model = RoutineModel.from_dict(stored["routine_model"])
@@ -181,6 +196,31 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         })
 
+    def _registry_device_classes(self) -> dict[str, str | None]:
+        """Return entity-registry device class per monitored entity (None if unknown)."""
+        out: dict[str, str | None] = {}
+        try:
+            registry = er.async_get(self.hass)
+        except Exception:  # noqa: BLE001
+            return {eid: None for eid in self._monitored_entities}
+        for eid in self._monitored_entities:
+            entry = registry.async_get(eid)
+            dc: Any = None
+            if entry is not None:
+                dc = entry.device_class or entry.original_device_class
+            out[eid] = dc if isinstance(dc, str) else None
+        return out
+
+    def _refresh_categories(self) -> None:
+        """Rebuild the entity -> category map from overrides, registry and model."""
+        numeric = {eid for eid, r in self._routine_model._entities.items() if not r.is_binary}
+        self._categories = infer_categories(
+            self._monitored_entities,
+            self._category_overrides,
+            self._registry_device_classes(),
+            numeric,
+        )
+
     def _tracks_attributes(self, entity_id: str) -> bool:
         """Return whether attribute-only changes count as activity for this entity.
 
@@ -207,8 +247,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if old_state is not None and old_state.state == ns.state:
                 return
         now, sv = dt_util.now(), str(ns.state)
-        self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
         self._last_seen[eid] = now
+        old_state = event.data.get("old_state")
+        old_sv = None if old_state is None else str(old_state.state)
+        is_motion = self._categories.get(eid) is EntityCategory.MOTION
+        if not self._debouncer.should_count(eid, is_motion, old_sv, sv, now):
+            return
+        self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
         self._correlation_detector.record_event(eid, now, self._last_seen)
         if self._today_date != now.date():
             self._today_count, self._today_date = 0, now.date()
@@ -365,6 +410,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "status": "active" if e in self._last_seen else "unknown",
                     "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
                     "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
+                    "category": self._categories.get(e, EntityCategory.OTHER).value,
                     "correlated_with": self._correlation_detector.get_correlated_entities(e),
                 }
                 for e in self._monitored_entities
