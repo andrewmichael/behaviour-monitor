@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -36,12 +36,14 @@ from .const import (
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_TRACK_ATTRIBUTES,
-    DOMAIN, EntityCategory, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
-    STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
+    DOMAIN, EntityCategory, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, SENSITIVITY_MEDIUM,
+    SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
+    STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_BLIND, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
 from .entity_category import MotionDebouncer, derive_weighted_status, infer_categories
+from .entity_health import count_by_status, qualify_welfare, resolve_entity_health
 from .panic_monitor import PanicMonitor
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
@@ -123,6 +125,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
         self._panic_renotify_minutes: int = int(d.get(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES))
         self._panic_monitor = PanicMonitor()
+        self._entity_health: dict[str, str] = {}
+        self._open_issues: set[str] = set()
+        self._blind_notified = False
         self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(
             float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
@@ -206,6 +211,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
         # Categories must be inferred from restored data before either bootstrap path.
         self._refresh_categories()
+        self._refresh_health()
         # A panic released while HA was down never sends an `off` event; drop it.
         for eid in self.panic_active:
             state = self.hass.states.get(eid)
@@ -280,6 +286,62 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if cat is EntityCategory.PANIC:
                 self._routine_model._entities.pop(eid, None)
                 self._correlation_detector.remove_entity(eid)
+
+    def _entity_facts(self) -> tuple[dict[str, str | None], set[str]]:
+        """Raw state string per monitored entity (None = no state object; "" = non-string state) and registry membership."""
+        states: dict[str, str | None] = {}
+        in_registry: set[str] = set()
+        try:
+            registry = er.async_get(self.hass)
+        except Exception:  # noqa: BLE001
+            registry = None
+        for eid in self._monitored_entities:
+            st = self.hass.states.get(eid)
+            if st is None:
+                states[eid] = None
+            else:
+                sv = getattr(st, "state", None)
+                states[eid] = sv if isinstance(sv, str) else ""
+            if registry is not None and registry.async_get(eid) is not None:
+                in_registry.add(eid)
+        return states, in_registry
+
+    def _refresh_health(self) -> None:
+        """Classify entity health and raise/clear repair issues on transitions only."""
+        states, in_registry = self._entity_facts()
+        self._entity_health = resolve_entity_health(self._monitored_entities, states, in_registry)
+        wanted = {f"missing_entity_{eid}" for eid, h in self._entity_health.items() if h == HEALTH_MISSING}
+        for issue_id in wanted - self._open_issues:
+            ir.async_create_issue(
+                self.hass, DOMAIN, issue_id,
+                is_fixable=False, severity=ir.IssueSeverity.ERROR,
+                translation_key="missing_entity",
+                translation_placeholders={"entity_id": issue_id[len("missing_entity_"):]},
+            )
+        for issue_id in self._open_issues - wanted:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        self._open_issues = wanted
+
+    def _expected_entities(self) -> list[str]:
+        return [e for e in self._monitored_entities if self._categories.get(e) is not EntityCategory.PANIC]
+
+    def _contributing_entities(self) -> list[str]:
+        return [e for e in self._expected_entities() if self._entity_health.get(e) == HEALTH_PRESENT]
+
+    def _finalize_welfare(self, welfare: dict[str, Any], alerts: list[AlertResult]) -> dict[str, Any]:
+        expected = self._expected_entities()
+        contributing = self._contributing_entities()
+        alerting = {a.entity_id for a in alerts if a.alert_type not in (AlertType.CORRELATION_BREAK, AlertType.DEVICE_HEALTH)}
+        out = qualify_welfare(
+            welfare,
+            contributing=contributing, expected=expected,
+            missing=[e for e in expected if self._entity_health.get(e) == HEALTH_MISSING],
+            unavailable=[e for e in expected if self._entity_health.get(e) == HEALTH_UNAVAILABLE],
+            panic_active=any(a.alert_type == AlertType.PANIC for a in alerts),
+            device_alerts=any(a.alert_type == AlertType.DEVICE_HEALTH for a in alerts),
+        )
+        out["entity_count_by_status"] = count_by_status(self._monitored_entities, self._entity_health, contributing, alerting)
+        return out
 
     def _tracks_attributes(self, entity_id: str) -> bool:
         """Return whether attribute-only changes count as activity for this entity.
@@ -400,11 +462,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if panic_alerts:
             data["anomaly_detected"] = True
             data["anomalies"] = [a.to_dict() for a in panic_alerts]
-            data["welfare"] = self._derive_welfare(panic_alerts)
+            data["welfare"] = self._finalize_welfare(self._derive_welfare(panic_alerts), panic_alerts)
         return data
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
+        self._refresh_health()
         if self._today_date != now.date():
             self._today_count = 0
             self._today_date = now.date()
@@ -423,14 +486,28 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.exception("Panic re-notification failed")
             self._current_welfare_status = "alert"
         if self._holiday_mode or self.is_snoozed():
-            return self._with_panic(self._build_safe_defaults(), panic_alerts)
+            return await self._finish_update(self._with_panic(self._build_safe_defaults(), panic_alerts), now)
         try:
             alerts = self._run_detection(now) + panic_alerts
             await self._handle_alerts(alerts, now)
-            return self._build_sensor_data(alerts, now)
+            return await self._finish_update(self._build_sensor_data(alerts, now), now)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Coordinator update error — returning safe defaults")
-            return self._with_panic(self._build_safe_defaults(), panic_alerts)
+            return await self._finish_update(self._with_panic(self._build_safe_defaults(), panic_alerts), now)
+
+    async def _finish_update(self, data: dict[str, Any], now: datetime) -> dict[str, Any]:
+        """Send the blind notification once per transition into blindness."""
+        blind = data.get("welfare", {}).get("status") == WELFARE_BLIND
+        if blind and not self._blind_notified:
+            w = data["welfare"]
+            await self._deliver_notification(
+                "Behaviour Monitor: no data",
+                f"0 of {w.get('expected_entities', 0)} monitored entities are reporting. {w.get('recommendation', '')}",
+                "behaviour_monitor_health",
+            )
+            self._last_notification_info = {"timestamp": now.isoformat(), "type": "blind"}
+        self._blind_notified = blind
+        return data
 
     def _run_detection(self, now: datetime) -> list[AlertResult]:
         alerts: list[AlertResult] = []
@@ -473,7 +550,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         notifiable = [a for a in alerts if a.alert_type != AlertType.PANIC and _ok(a)]
         drift_ok = [a for a in notifiable if a.alert_type == AlertType.DRIFT]
         acute_ok = [a for a in notifiable if a.alert_type != AlertType.DRIFT]
-        new_status = self._derive_welfare(alerts)["status"]
+        new_status = self._finalize_welfare(self._derive_welfare(alerts), alerts)["status"]
         if new_status != self._current_welfare_status:
             cnt = self._welfare_debounce.get(new_status, 0) + 1
             self._welfare_debounce[new_status] = cnt
@@ -499,31 +576,31 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _derive_welfare(self, alerts: list[AlertResult]) -> dict[str, Any]:
         if not alerts:
-            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
+            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "alert_count_by_entity": {}}
         panic = [a for a in alerts if a.alert_type == AlertType.PANIC]
         if panic:
-            ordered = panic + [a for a in alerts if a.alert_type not in (AlertType.PANIC, AlertType.CORRELATION_BREAK)]
+            ordered = panic + [a for a in alerts if a.alert_type not in (AlertType.PANIC, AlertType.CORRELATION_BREAK, AlertType.DEVICE_HEALTH)]
             cnt_p: dict[str, int] = {}
             for a in ordered:
                 cnt_p[a.entity_id] = cnt_p.get(a.entity_id, 0) + 1
             return {"status": "alert", "reasons": [a.explanation for a in ordered],
                     "summary": f"{len(ordered)} active alert(s): alert",
-                    "recommendation": WELFARE_PANIC_RECOMMENDATION, "entity_count_by_status": cnt_p}
-        # Exclude correlation breaks from welfare escalation (per D-03)
-        welfare_alerts = [a for a in alerts if a.alert_type != AlertType.CORRELATION_BREAK]
+                    "recommendation": WELFARE_PANIC_RECOMMENDATION, "alert_count_by_entity": cnt_p}
+        # Exclude correlation breaks and device-health alerts from welfare escalation (per D-03)
+        welfare_alerts = [a for a in alerts if a.alert_type not in (AlertType.CORRELATION_BREAK, AlertType.DEVICE_HEALTH)]
         if not welfare_alerts:
-            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
+            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "alert_count_by_entity": {}}
         st, rec = derive_weighted_status(welfare_alerts, self._categories)
         cnt: dict[str, int] = {}
         for a in welfare_alerts:
             cnt[a.entity_id] = cnt.get(a.entity_id, 0) + 1
         return {"status": st, "reasons": [a.explanation for a in welfare_alerts],
-                "summary": f"{len(welfare_alerts)} active alert(s): {st}", "recommendation": rec, "entity_count_by_status": cnt}
+                "summary": f"{len(welfare_alerts)} active alert(s): {st}", "recommendation": rec, "alert_count_by_entity": cnt}
 
     def _build_sensor_data(self, alerts: list[AlertResult], now: datetime) -> dict[str, Any]:
         last_activity = max(self._last_seen.values()).isoformat() if self._last_seen else None
-        conf = self._routine_model.overall_confidence(now) * 100.0
-        ls = self._routine_model.learning_status(now)
+        conf = self._routine_model.overall_confidence(now, expected_ids=self._expected_entities()) * 100.0
+        ls = self._routine_model.learning_status(now, expected_ids=self._expected_entities())
         today, hrs = now.date(), now.hour + now.minute / 60.0
         rates = [r.daily_activity_rate(today) for eid in self._monitored_entities if (r := self._routine_model._entities.get(eid))]
         exp_full, exp_now = sum(rates), sum(int(r * hrs / 24.0) for r in rates)
@@ -547,7 +624,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {
             "last_activity": last_activity, "activity_score": round(conf, 1), "anomaly_detected": bool(alerts),
             "anomalies": [a.to_dict() for a in alerts], "confidence": round(conf, 1), "daily_count": self._today_count,
-            "welfare": self._derive_welfare(alerts),
+            "welfare": self._finalize_welfare(self._derive_welfare(alerts), alerts),
             "routine": {"progress_percent": pct, "expected_by_now": exp_now, "actual_today": self._today_count,
                         "expected_full_day": exp_full, "status": rstatus,
                         "summary": f"{self._today_count} of ~{exp_full} expected activities"},
@@ -557,7 +634,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "entity_status": [
                 {
                     "entity_id": e,
-                    "status": "active" if e in self._last_seen else "unknown",
+                    "status": ("active" if e in self._last_seen else "unknown") if self._entity_health.get(e, HEALTH_PRESENT) == HEALTH_PRESENT else self._entity_health[e],
+                    "health": self._entity_health.get(e, HEALTH_PRESENT),
+                    "contributing": self._entity_health.get(e) == HEALTH_PRESENT and self._categories.get(e) is not EntityCategory.PANIC,
                     "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
                     "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
                     "category": self._categories.get(e, EntityCategory.OTHER).value,
@@ -578,7 +657,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _build_safe_defaults(self) -> dict[str, Any]:
         return {"last_activity": None, "activity_score": 0.0, "anomaly_detected": False, "anomalies": [],
                 "confidence": 0.0, "daily_count": self._today_count, "entity_status": [],
-                "welfare": {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}},
+                "welfare": self._finalize_welfare({"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "alert_count_by_entity": {}}, []),
                 "routine": {"progress_percent": 0, "expected_by_now": 0, "actual_today": 0, "expected_full_day": 0, "status": "unknown", "summary": "Suppressed"},
                 "activity_context": {"time_since_formatted": "Unknown", "time_since_seconds": None, "typical_interval_seconds": None, "typical_interval_formatted": "Unknown", "concern_level": 0, "status": "unknown", "context": ""},
                 "stat_training": {"complete": False, "formatted": "Unknown", "days_remaining": None, "days_elapsed": None, "total_days": self._history_window_days, "first_observation": None},

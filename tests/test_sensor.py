@@ -162,6 +162,11 @@ class TestSensorDescriptions:
         assert result["summary"] == "Activity below normal"
         assert result["recommendation"] == "Check in"
         assert result["entity_count_by_status"]["attention"] == 1
+        assert result["contributing_entities"] == 0
+        assert result["expected_entities"] == 0
+        assert result["missing_entities"] == []
+        assert result["unavailable_entities"] == []
+        assert result["alert_count_by_entity"] == {}
 
     def test_routine_progress_sensor(self) -> None:
         """Test routine_progress sensor."""
@@ -228,20 +233,20 @@ class TestSensorDescriptions:
     def test_entity_status_summary_sensor(self) -> None:
         """Test entity_status_summary sensor."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "entity_status_summary")
-        data = {
-            "welfare": {
-                "entity_count_by_status": {
-                    "normal": 5,
-                    "attention": 1,
-                    "concern": 1,
-                    "alert": 0,
-                }
-            }
-        }
+        data = {"welfare": {"entity_count_by_status": {"ok": 5, "attention": 2, "unavailable": 0, "missing": 0}}}
 
         result = sensor.value_fn(data)
 
         assert result == "5 OK, 2 Need Attention"
+
+    def test_entity_status_summary_sensor_with_missing(self) -> None:
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "entity_status_summary")
+        data = {"welfare": {"entity_count_by_status": {"ok": 3, "attention": 0, "unavailable": 1, "missing": 2}}}
+        assert sensor.value_fn(data) == "3 OK, 0 Need Attention, 2 Missing, 1 Unavailable"
+
+    def test_entity_status_summary_sensor_empty(self) -> None:
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "entity_status_summary")
+        assert sensor.value_fn({}) == "0 OK, 0 Need Attention"
 
     def test_entity_status_summary_extra_attrs(self) -> None:
         """Test entity_status_summary sensor extra attributes."""

@@ -125,6 +125,14 @@ def _setup_ha_mocks():
     # Mock homeassistant.helpers modules
     mock_ha_helpers.config_validation = MagicMock()
     mock_ha_helpers.entity_registry = MagicMock()
+    mock_ha_helpers.issue_registry = MagicMock()
+
+    class MockIssueSeverity:
+        CRITICAL = "critical"
+        ERROR = "error"
+        WARNING = "warning"
+
+    mock_ha_helpers.issue_registry.IssueSeverity = MockIssueSeverity
     mock_ha_helpers.entity = MagicMock()
     mock_ha_helpers.entity_platform = MagicMock()
     mock_ha_helpers.selector = MagicMock()
@@ -382,6 +390,7 @@ def _setup_ha_mocks():
     sys.modules['homeassistant.helpers'] = mock_ha_helpers
     sys.modules['homeassistant.helpers.config_validation'] = mock_ha_helpers.config_validation
     sys.modules['homeassistant.helpers.entity_registry'] = mock_ha_helpers.entity_registry
+    sys.modules['homeassistant.helpers.issue_registry'] = mock_ha_helpers.issue_registry
     sys.modules['homeassistant.helpers.entity'] = mock_ha_helpers.entity
     sys.modules['homeassistant.helpers.entity_platform'] = mock_ha_helpers.entity_platform
     sys.modules['homeassistant.helpers.selector'] = mock_ha_helpers.selector

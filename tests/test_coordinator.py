@@ -720,8 +720,8 @@ class TestCoordinatorDetection:
         a1 = _make_alert("sensor.test1", severity=AlertSeverity.MEDIUM)
         a2 = _make_alert("sensor.test2", severity=AlertSeverity.HIGH)
         w = coordinator._derive_welfare([a1, a2])
-        assert "sensor.test1" in w["entity_count_by_status"]
-        assert "sensor.test2" in w["entity_count_by_status"]
+        assert "sensor.test1" in w["alert_count_by_entity"]
+        assert "sensor.test2" in w["alert_count_by_entity"]
 
 
 # ---------------------------------------------------------------------------
@@ -1601,7 +1601,7 @@ class TestWeightedWelfare:
         welfare = coordinator._derive_welfare(alerts)
         assert welfare["status"] == "check_recommended"
         assert len(welfare["reasons"]) == 2
-        assert welfare["entity_count_by_status"] == {"switch.kettle": 1, "binary_sensor.pir": 1}
+        assert welfare["alert_count_by_entity"] == {"switch.kettle": 1, "binary_sensor.pir": 1}
         assert welfare["summary"] == "2 active alert(s): check_recommended"
 
     def test_no_alerts_is_ok(self, coordinator: BehaviourMonitorCoordinator) -> None:
@@ -2013,7 +2013,7 @@ class TestPanicPoll:
         assert w["status"] == "alert"
         assert w["recommendation"] == "Panic button pressed. Respond now."
         assert w["reasons"][0].startswith("binary_sensor.sos")
-        assert w["entity_count_by_status"] == {"binary_sensor.sos": 1, "switch.kettle": 1}
+        assert w["alert_count_by_entity"] == {"binary_sensor.sos": 1, "switch.kettle": 1}
 
     def test_welfare_unchanged_without_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
@@ -2123,3 +2123,148 @@ class TestPanicPoll:
         with patch.object(c._acute_detector, "check_inactivity") as inact:
             c._run_detection(datetime.now())
         assert all(call[0][0] != "binary_sensor.sos" for call in inact.call_args_list)
+
+
+# ---------------------------------------------------------------------------
+# TestEntityHealthIntegration — health facts, repair issues, blind/degraded welfare, counts, confidence
+# ---------------------------------------------------------------------------
+
+
+class TestEntityHealthIntegration:
+    def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, entities: list[str], **extra: Any) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: entities, **extra}
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    def test_entity_facts_from_states_and_registry(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, ["a.on", "a.unavail", "a.gone", "a.reg_only"])
+        states = {"a.on": MagicMock(state="on"), "a.unavail": MagicMock(state="unavailable")}
+        mock_hass.states.get = lambda eid: states.get(eid)
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock() if eid in ("a.on", "a.unavail", "a.reg_only") else None
+        with patch.object(coord_module.er, "async_get", return_value=registry):
+            st, reg = c._entity_facts()
+        assert st == {"a.on": "on", "a.unavail": "unavailable", "a.gone": None, "a.reg_only": None}
+        assert reg == {"a.on", "a.unavail", "a.reg_only"}
+
+    def test_entity_facts_non_string_state_is_present(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b"])
+        st, _ = c._entity_facts()  # default MagicMock state
+        assert st["a.b"] == ""
+
+    def test_refresh_health_creates_and_clears_repair_issue_once(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        with patch.object(c, "_entity_facts", return_value=({"a.b": "on", "c.d": None}, set())), \
+             patch.object(coord_module.ir, "async_create_issue") as create, \
+             patch.object(coord_module.ir, "async_delete_issue") as delete:
+            c._refresh_health()
+            c._refresh_health()
+        assert c._entity_health == {"a.b": "present", "c.d": "missing"}
+        create.assert_called_once()
+        kwargs = create.call_args.kwargs
+        assert create.call_args.args[1] == "behaviour_monitor" or kwargs.get("domain") == "behaviour_monitor"
+        assert "missing_entity_c.d" in create.call_args.args or kwargs.get("issue_id") == "missing_entity_c.d"
+        assert kwargs.get("translation_placeholders") == {"entity_id": "c.d"}
+        delete.assert_not_called()
+        with patch.object(c, "_entity_facts", return_value=({"a.b": "on", "c.d": "off"}, set())), \
+             patch.object(coord_module.ir, "async_delete_issue") as delete2:
+            c._refresh_health()
+        delete2.assert_called_once()
+        assert c._open_issues == set()
+
+    def test_expected_and_contributing(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d", "binary_sensor.sos"], **{CONF_CATEGORY_PANIC: ["binary_sensor.sos"]})
+        c._categories = {"a.b": EntityCategory.OTHER, "c.d": EntityCategory.OTHER, "binary_sensor.sos": EntityCategory.PANIC}
+        c._entity_health = {"a.b": "present", "c.d": "missing", "binary_sensor.sos": "present"}
+        assert c._expected_entities() == ["a.b", "c.d"]
+        assert c._contributing_entities() == ["a.b"]
+
+    @pytest.mark.asyncio
+    async def test_blind_when_nothing_reports(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        with patch.object(c, "_entity_facts", return_value=({"a.b": None, "c.d": None}, set())), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_deliver_notification", new_callable=AsyncMock) as deliver:
+            data = await c._async_update_data()
+            data2 = await c._async_update_data()
+        assert data["welfare"]["status"] == "blind"
+        assert data["welfare"]["contributing_entities"] == 0
+        assert data["welfare"]["expected_entities"] == 2
+        assert sorted(data["welfare"]["missing_entities"]) == ["a.b", "c.d"]
+        assert data["welfare"]["entity_count_by_status"] == {"ok": 0, "attention": 0, "unavailable": 0, "missing": 2}
+        assert data["baseline_confidence"] == 0.0
+        by_id = {e["entity_id"]: e for e in data["entity_status"]}
+        assert by_id["a.b"]["health"] == "missing" and by_id["a.b"]["status"] == "missing"
+        assert by_id["a.b"]["contributing"] is False
+        # blind notification sent once on transition, not every poll
+        assert deliver.await_count == 1
+        assert deliver.call_args.args[2] == "behaviour_monitor_health"
+        assert data2["welfare"]["status"] == "blind"
+
+    @pytest.mark.asyncio
+    async def test_blind_during_holiday(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b"])
+        c._holiday_mode = True
+        with patch.object(c, "_entity_facts", return_value=({"a.b": None}, set())), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_deliver_notification", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "blind"
+        assert data["routine"]["summary"] == "Suppressed"
+
+    @pytest.mark.asyncio
+    async def test_degraded_on_partial_loss(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        with patch.object(c, "_entity_facts", return_value=({"a.b": "on", "c.d": "unavailable"}, set())), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "degraded"
+        assert data["welfare"]["unavailable_entities"] == ["c.d"]
+        assert data["welfare"]["entity_count_by_status"] == {"ok": 1, "attention": 0, "unavailable": 1, "missing": 0}
+
+    @pytest.mark.asyncio
+    async def test_all_present_ok_with_suffix(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        with patch.object(c, "_entity_facts", return_value=({"a.b": "on", "c.d": "off"}, set())), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "ok"
+        assert data["welfare"]["summary"].endswith("(2 of 2 reporting)")
+        assert data["welfare"]["alert_count_by_entity"] == {}
+
+    def test_alert_counts_and_attention(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        c._entity_health = {"a.b": "present", "c.d": "present"}
+        w = c._finalize_welfare(c._derive_welfare([_make_alert("a.b", severity=AlertSeverity.LOW)]), [_make_alert("a.b", severity=AlertSeverity.LOW)])
+        assert w["alert_count_by_entity"] == {"a.b": 1}
+        assert w["entity_count_by_status"] == {"ok": 1, "attention": 1, "unavailable": 0, "missing": 0}
+        assert w["status"] == "check_recommended"
+
+    @pytest.mark.asyncio
+    async def test_confidence_uses_expected_denominator(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d"])
+        er = c._routine_model.get_or_create("a.b", is_binary=True)
+        er.first_observation = (datetime.now() - timedelta(days=60)).isoformat()
+        with patch.object(c, "_entity_facts", return_value=({"a.b": "on", "c.d": "on"}, set())), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        full = c._routine_model.overall_confidence(datetime.now()) * 100.0
+        assert 0 < data["baseline_confidence"] <= round(full / 2, 1) + 0.1
+
+    @pytest.mark.asyncio
+    async def test_setup_refreshes_health(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["a.b"])
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=None), \
+             patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_entity_facts", return_value=({"a.b": "on"}, set())):
+            await c.async_setup()
+        assert c._entity_health == {"a.b": "present"}
