@@ -1946,6 +1946,7 @@ class TestPanicPressRelease:
 
 
 class TestPanicPoll:
+    # Uses naive datetime.now() to match the mocked dt_util.now (real HA is tz-aware end to end).
     def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
         from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
 
@@ -1961,7 +1962,7 @@ class TestPanicPoll:
 
     def test_panic_alerts_built_per_active_entity(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         c._panic_monitor.press("binary_sensor.sos", now - timedelta(minutes=3))
         alerts = c._panic_alerts(now)
         assert len(alerts) == 1
@@ -1975,7 +1976,7 @@ class TestPanicPoll:
 
     def test_welfare_forced_to_alert_by_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         c._panic_monitor.press("binary_sensor.sos", now)
         alerts = c._panic_alerts(now) + [_make_alert("switch.kettle", severity=AlertSeverity.LOW)]
         w = c._derive_welfare(alerts)
@@ -1992,7 +1993,7 @@ class TestPanicPoll:
     @pytest.mark.asyncio
     async def test_poll_renotifies_when_due_and_not_after_ack(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
-        t0 = datetime.now(timezone.utc)
+        t0 = datetime.now()
         c._panic_monitor.press("binary_sensor.sos", t0 - timedelta(minutes=6))
         with patch.object(c._store, "async_save", new_callable=AsyncMock):
             await c._renotify_panic(t0)
@@ -2007,7 +2008,7 @@ class TestPanicPoll:
     @pytest.mark.asyncio
     async def test_update_data_includes_panic_and_forces_status(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         c._panic_monitor.press("binary_sensor.sos", now)
         with patch.object(c._store, "async_save", new_callable=AsyncMock), \
              patch.object(c, "_send_notification", new_callable=AsyncMock) as ordinary:
@@ -2026,7 +2027,7 @@ class TestPanicPoll:
     async def test_update_data_during_holiday_still_shows_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         c = self._make(mock_hass, mock_config_entry)
         c._holiday_mode = True
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         c._panic_monitor.press("binary_sensor.sos", now)
         with patch.object(c._store, "async_save", new_callable=AsyncMock):
             data = await c._async_update_data()

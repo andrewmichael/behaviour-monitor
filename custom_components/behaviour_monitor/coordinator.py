@@ -328,7 +328,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         lines = []
         for eid in entity_ids:
             since = self._panic_monitor.active_since(eid)
-            elapsed = (self._panic_clock(now, since) - since).total_seconds() if since is not None else 0.0
+            elapsed = (now - since).total_seconds() if since is not None else 0.0
             when = "just now" if elapsed < 60 else f"{format_duration(elapsed)} ago"
             lines.append(f"- PANIC: {eid} pressed {when}")
         title, msg = "Behaviour Monitor: PANIC", "\n".join(lines)
@@ -348,22 +348,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if changed:
             await self._save_fire_refresh(f"{DOMAIN}_panic_acknowledged", {"entity_ids": changed})
 
-    @staticmethod
-    def _panic_clock(now: datetime, reference: datetime) -> datetime:
-        """Match `now`'s tz-awareness to `reference` without shifting wall time.
-
-        dt_util.now() is always tz-aware in a real Home Assistant install, matching
-        the panic monitor's own tz-aware timestamps. Only the test double for
-        dt_util.now() returns a naive value, so this only ever activates there.
-        """
-        if (now.tzinfo is None) != (reference.tzinfo is None):
-            return now.replace(tzinfo=reference.tzinfo)
-        return now
-
     def _panic_alerts(self, now: datetime) -> list[AlertResult]:
         alerts: list[AlertResult] = []
         for eid, since, acked in self._panic_monitor.active():
-            elapsed = max(0.0, (self._panic_clock(now, since) - since).total_seconds())
+            elapsed = max(0.0, (now - since).total_seconds())
             alerts.append(AlertResult(
                 entity_id=eid, alert_type=AlertType.PANIC, severity=AlertSeverity.HIGH, confidence=1.0,
                 explanation=f"{eid}: PANIC button pressed {format_duration(elapsed)} ago",
@@ -373,9 +361,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return alerts
 
     async def _renotify_panic(self, now: datetime) -> None:
-        active = self._panic_monitor.active()
-        cmp_now = self._panic_clock(now, active[0][1]) if active else now
-        due = self._panic_monitor.due(cmp_now, timedelta(minutes=self._panic_renotify_minutes))
+        due = self._panic_monitor.due(now, timedelta(minutes=self._panic_renotify_minutes))
         if due:
             await self._send_panic_notification(due, now)
             await self._save_data()
