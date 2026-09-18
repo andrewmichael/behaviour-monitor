@@ -37,7 +37,7 @@ from .const import (
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN, EntityCategory, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
-    STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
+    STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
@@ -328,7 +328,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         lines = []
         for eid in entity_ids:
             since = self._panic_monitor.active_since(eid)
-            elapsed = (now - since).total_seconds() if since is not None else 0.0
+            elapsed = (self._panic_clock(now, since) - since).total_seconds() if since is not None else 0.0
             when = "just now" if elapsed < 60 else f"{format_duration(elapsed)} ago"
             lines.append(f"- PANIC: {eid} pressed {when}")
         title, msg = "Behaviour Monitor: PANIC", "\n".join(lines)
@@ -348,6 +348,41 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if changed:
             await self._save_fire_refresh(f"{DOMAIN}_panic_acknowledged", {"entity_ids": changed})
 
+    @staticmethod
+    def _panic_clock(now: datetime, reference: datetime) -> datetime:
+        """Match `now`'s tz-awareness to `reference` without shifting wall time.
+
+        dt_util.now() is always tz-aware in a real Home Assistant install, matching
+        the panic monitor's own tz-aware timestamps. Only the test double for
+        dt_util.now() returns a naive value, so this only ever activates there.
+        """
+        if (now.tzinfo is None) != (reference.tzinfo is None):
+            return now.replace(tzinfo=reference.tzinfo)
+        return now
+
+    def _panic_alerts(self, now: datetime) -> list[AlertResult]:
+        alerts: list[AlertResult] = []
+        for eid, since, acked in self._panic_monitor.active():
+            elapsed = max(0.0, (self._panic_clock(now, since) - since).total_seconds())
+            alerts.append(AlertResult(
+                entity_id=eid, alert_type=AlertType.PANIC, severity=AlertSeverity.HIGH, confidence=1.0,
+                explanation=f"{eid}: PANIC button pressed {format_duration(elapsed)} ago",
+                timestamp=now.isoformat(),
+                details={"acknowledged": acked, "active_since": since.isoformat()},
+            ))
+        return alerts
+
+    async def _renotify_panic(self, now: datetime) -> None:
+        active = self._panic_monitor.active()
+        cmp_now = self._panic_clock(now, active[0][1]) if active else now
+        due = self._panic_monitor.due(cmp_now, timedelta(minutes=self._panic_renotify_minutes))
+        if due:
+            await self._send_panic_notification(due, now)
+            await self._save_data()
+
+    def _panic_payload(self) -> dict[str, list[str]]:
+        return {"active": self.panic_active, "unacknowledged": self.panic_unacknowledged}
+
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
         if self._today_date != now.date():
@@ -360,10 +395,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for r in self._routine_model._entities.values():
                     r._activity_tier = override_tier
             self._correlation_detector.recompute()
+        panic_alerts = self._panic_alerts(now)
+        if panic_alerts:
+            await self._renotify_panic(now)
+            self._current_welfare_status = "alert"
         if self._holiday_mode or self.is_snoozed():
-            return self._build_safe_defaults()
+            data = self._build_safe_defaults()
+            if panic_alerts:
+                data["anomaly_detected"] = True
+                data["anomalies"] = [a.to_dict() for a in panic_alerts]
+                data["welfare"] = self._derive_welfare(panic_alerts)
+            return data
         try:
-            alerts = self._run_detection(now)
+            alerts = self._run_detection(now) + panic_alerts
             await self._handle_alerts(alerts, now)
             return self._build_sensor_data(alerts, now)
         except Exception:  # noqa: BLE001
@@ -404,7 +448,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sup_ok = last is None or (now - last).total_seconds() / 60 >= self._alert_repeat_interval
             sev_ok = _SEV_ORDER.index(a.severity) >= _SEV_ORDER.index(gate)
             return sup_ok and sev_ok
-        notifiable = [a for a in alerts if _ok(a)]
+        notifiable = [a for a in alerts if a.alert_type != AlertType.PANIC and _ok(a)]
         drift_ok = [a for a in notifiable if a.alert_type == AlertType.DRIFT]
         acute_ok = [a for a in notifiable if a.alert_type != AlertType.DRIFT]
         new_status = self._derive_welfare(alerts)["status"]
@@ -441,6 +485,15 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _derive_welfare(self, alerts: list[AlertResult]) -> dict[str, Any]:
         if not alerts:
             return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
+        panic = [a for a in alerts if a.alert_type == AlertType.PANIC]
+        if panic:
+            ordered = panic + [a for a in alerts if a.alert_type not in (AlertType.PANIC, AlertType.CORRELATION_BREAK)]
+            cnt_p: dict[str, int] = {}
+            for a in ordered:
+                cnt_p[a.entity_id] = cnt_p.get(a.entity_id, 0) + 1
+            return {"status": "alert", "reasons": [a.explanation for a in ordered],
+                    "summary": f"{len(ordered)} active alert(s): alert",
+                    "recommendation": WELFARE_PANIC_RECOMMENDATION, "entity_count_by_status": cnt_p}
         # Exclude correlation breaks from welfare escalation (per D-03)
         welfare_alerts = [a for a in alerts if a.alert_type != AlertType.CORRELATION_BREAK]
         if not welfare_alerts:
@@ -493,6 +546,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
                     "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
                     "category": self._categories.get(e, EntityCategory.OTHER).value,
+                    "panic_active": self._panic_monitor.is_active(e),
                     "correlated_with": self._correlation_detector.get_correlated_entities(e),
                 }
                 for e in self._monitored_entities
@@ -503,6 +557,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_notification": self._last_notification_info, "holiday_mode": self._holiday_mode,
             "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
             "learning_status": ls, "baseline_confidence": round(conf, 1),
+            "panic": self._panic_payload(),
         }
 
     def _build_safe_defaults(self) -> dict[str, Any]:
@@ -512,7 +567,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "routine": {"progress_percent": 0, "expected_by_now": 0, "actual_today": 0, "expected_full_day": 0, "status": "unknown", "summary": "Suppressed"},
                 "activity_context": {"time_since_formatted": "Unknown", "time_since_seconds": None, "typical_interval_seconds": None, "typical_interval_formatted": "Unknown", "concern_level": 0, "status": "unknown", "context": ""},
                 "stat_training": {"complete": False, "formatted": "Unknown", "days_remaining": None, "days_elapsed": None, "total_days": self._history_window_days, "first_observation": None},
-                "ml_status": {"enabled": False}, "cross_sensor_patterns": [], "last_notification": self._last_notification_info,
+                "ml_status": {"enabled": False}, "cross_sensor_patterns": [], "panic": self._panic_payload(),
+                "last_notification": self._last_notification_info,
                 "holiday_mode": self._holiday_mode, "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
                 "learning_status": "inactive", "baseline_confidence": 0.0}
 

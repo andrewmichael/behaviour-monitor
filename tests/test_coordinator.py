@@ -1943,3 +1943,104 @@ class TestPanicPressRelease:
             await c2.async_setup()
         assert c2.panic_active == ["binary_sensor.sos"]
         assert c2.panic_unacknowledged == []
+
+
+class TestPanicPoll:
+    def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
+
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_MONITORED_ENTITIES: ["binary_sensor.sos", "switch.kettle"],
+            CONF_CATEGORY_PANIC: ["binary_sensor.sos"],
+            **extra,
+        }
+        c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        c._categories = {"binary_sensor.sos": EntityCategory.PANIC, "switch.kettle": EntityCategory.PLUG}
+        return c
+
+    def test_panic_alerts_built_per_active_entity(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        now = datetime.now(timezone.utc)
+        c._panic_monitor.press("binary_sensor.sos", now - timedelta(minutes=3))
+        alerts = c._panic_alerts(now)
+        assert len(alerts) == 1
+        a = alerts[0]
+        assert a.alert_type == AlertType.PANIC
+        assert a.severity == AlertSeverity.HIGH
+        assert a.entity_id == "binary_sensor.sos"
+        assert a.confidence == 1.0
+        assert "PANIC" in a.explanation and "3m" in a.explanation
+        assert a.details["acknowledged"] is False
+
+    def test_welfare_forced_to_alert_by_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        now = datetime.now(timezone.utc)
+        c._panic_monitor.press("binary_sensor.sos", now)
+        alerts = c._panic_alerts(now) + [_make_alert("switch.kettle", severity=AlertSeverity.LOW)]
+        w = c._derive_welfare(alerts)
+        assert w["status"] == "alert"
+        assert w["recommendation"] == "Panic button pressed. Respond now."
+        assert w["reasons"][0].startswith("binary_sensor.sos")
+        assert w["entity_count_by_status"] == {"binary_sensor.sos": 1, "switch.kettle": 1}
+
+    def test_welfare_unchanged_without_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        w = c._derive_welfare([_make_alert("switch.kettle", severity=AlertSeverity.HIGH)])
+        assert w["status"] == "concern"
+
+    @pytest.mark.asyncio
+    async def test_poll_renotifies_when_due_and_not_after_ack(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        t0 = datetime.now(timezone.utc)
+        c._panic_monitor.press("binary_sensor.sos", t0 - timedelta(minutes=6))
+        with patch.object(c._store, "async_save", new_callable=AsyncMock):
+            await c._renotify_panic(t0)
+            assert mock_hass.services.async_call.call_count >= 1
+            mock_hass.services.async_call.reset_mock()
+            await c._renotify_panic(t0 + timedelta(minutes=1))
+            mock_hass.services.async_call.assert_not_called()
+            c._panic_monitor.acknowledge(t0)
+            await c._renotify_panic(t0 + timedelta(hours=1))
+            mock_hass.services.async_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_data_includes_panic_and_forces_status(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        now = datetime.now(timezone.utc)
+        c._panic_monitor.press("binary_sensor.sos", now)
+        with patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_send_notification", new_callable=AsyncMock) as ordinary:
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "alert"
+        assert any(a["alert_type"] == "panic" for a in data["anomalies"])
+        assert data["panic"] == {"active": ["binary_sensor.sos"], "unacknowledged": ["binary_sensor.sos"]}
+        by_id = {e["entity_id"]: e for e in data["entity_status"]}
+        assert by_id["binary_sensor.sos"]["panic_active"] is True
+        assert by_id["switch.kettle"]["panic_active"] is False
+        assert c._current_welfare_status == "alert"
+        ordinary.assert_not_called()  # panic never goes through the ordinary path
+        assert not any(k.endswith("|panic") for k in c._alert_suppression)
+
+    @pytest.mark.asyncio
+    async def test_update_data_during_holiday_still_shows_panic(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._holiday_mode = True
+        now = datetime.now(timezone.utc)
+        c._panic_monitor.press("binary_sensor.sos", now)
+        with patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        assert data["welfare"]["status"] == "alert"
+        assert data["anomaly_detected"] is True
+        assert data["panic"]["active"] == ["binary_sensor.sos"]
+        assert data["routine"]["summary"] == "Suppressed"
+
+    @pytest.mark.asyncio
+    async def test_update_data_no_panic_payload_empty(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        with patch.object(c._store, "async_save", new_callable=AsyncMock):
+            data = await c._async_update_data()
+        assert data["panic"] == {"active": [], "unacknowledged": []}
+        c._holiday_mode = True
+        data = await c._async_update_data()
+        assert data["panic"] == {"active": [], "unacknowledged": []}
