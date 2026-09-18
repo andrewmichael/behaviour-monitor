@@ -109,7 +109,7 @@ Notable migrations:
 - **v8**: Added activity tier override (defaults to "Auto")
 - **v9**: Added correlation window (defaults to 120 seconds)
 - **v10**: Added per-entity track_attributes override lists
-- **v11**: Added entity category override lists and motion debounce window; motion baselines are rebuilt from recorder history once after upgrade
+- **v11**: Added entity category override lists and motion debounce window; motion baselines are rebuilt from recorder history once after upgrade. Dropped (debounced) motion events no longer trigger an immediate sensor refresh; the next 60-second poll picks them up.
 
 ## Holiday Mode and Visitor Snooze
 
@@ -334,7 +334,7 @@ Numeric entities are always "other". The inferred category is shown as the `cate
 |---|---|---|
 | motion | 1.0 | Direct evidence of presence |
 | other | 1.0 | Unchanged from previous versions |
-| contact | 0.8 | Strong but sparser evidence |
+| contact | 0.8 | Strong but sparser evidence; at the current thresholds it lands in the same bands as motion, so the weight is headroom for future tuning |
 | plug | 0.5 | Often driven by automations |
 | light | 0.5 | Often driven by automations |
 

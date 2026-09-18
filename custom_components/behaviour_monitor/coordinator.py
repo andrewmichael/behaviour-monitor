@@ -72,6 +72,20 @@ def _parse_dt(ts: str) -> datetime | None:
         return None
 
 
+class BehaviourMonitorStore(Store):  # type: ignore[type-arg]
+    """Store whose persisted schema is version-tolerant.
+
+    Every reader of the persisted dict uses .get() with defaults, so data written
+    by any earlier STORAGE_VERSION loads unchanged. Without this override Home
+    Assistant raises NotImplementedError on a major-version mismatch.
+    """
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        return old_data
+
+
 class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator wiring RoutineModel + AcuteDetector + DriftDetector."""
 
@@ -122,7 +136,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_notification_info: dict[str, Any] = {"timestamp": None, "type": None}
         self._welfare_debounce: dict[str, int] = {}
         self._current_welfare_status = "ok"
-        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
+        self._store = BehaviourMonitorStore(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._unsub_state_changed: Any = None
 
     @property
@@ -169,6 +183,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_notification_info = c.get("last_notification_info", {"timestamp": None, "type": None})
             self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
             self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
+        # Categories must be inferred from restored data before either bootstrap path.
         self._refresh_categories()
         if stored:
             if self._entry.data.get(CONF_REBOOTSTRAP_MOTION, False):
@@ -216,7 +231,17 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _refresh_categories(self) -> None:
         """Rebuild the entity -> category map from overrides, registry and model."""
-        numeric = {eid for eid, r in self._routine_model._entities.items() if not r.is_binary}
+        numeric: set[str] = set()
+        for eid in self._monitored_entities:
+            r = self._routine_model._entities.get(eid)
+            if r is not None:
+                if not r.is_binary:
+                    numeric.add(eid)
+                continue
+            state = self.hass.states.get(eid)
+            sv = getattr(state, "state", None)
+            if isinstance(sv, str) and sv not in ("unavailable", "unknown") and not is_binary_state(sv):
+                numeric.add(eid)
         self._categories = infer_categories(
             self._monitored_entities,
             self._category_overrides,
@@ -245,13 +270,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ns = event.data.get("new_state")
         if ns is None:
             return
+        old_state = event.data.get("old_state")
         if not self._tracks_attributes(eid):
-            old_state = event.data.get("old_state")
             if old_state is not None and old_state.state == ns.state:
                 return
         now, sv = dt_util.now(), str(ns.state)
         self._last_seen[eid] = now
-        old_state = event.data.get("old_state")
         old_sv = None if old_state is None else str(old_state.state)
         is_motion = self._categories.get(eid) is EntityCategory.MOTION
         if not self._debouncer.should_count(eid, is_motion, old_sv, sv, now):
@@ -463,6 +487,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Replay recorder history into the routine model, debouncing motion entities.
 
         Uses a private MotionDebouncer so replay never disturbs live debounce state.
+        A skipped unavailable/unknown state resets the edge-detection ``prev`` value,
+        matching live handling: on -> unavailable -> on is a rising edge.
         """
         if recorder_get_instance is None or recorder_state_changes_during_period is None:
             _LOGGER.warning("Behaviour Monitor: recorder unavailable, skipping bootstrap")
@@ -483,6 +509,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )).values():
                         for s in sl:
                             if s.state in ("unavailable", "unknown"):
+                                prev = None
                                 continue
                             sv = str(s.state)
                             if debouncer.should_count(eid, is_motion, prev, sv, s.last_changed):

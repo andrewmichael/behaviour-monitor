@@ -59,6 +59,7 @@ make clean-all    # Remove venv and all generated files
 - Statistical patterns stored in `.storage/behaviour_monitor.{entry_id}.json`
 - ML patterns stored in `.storage/behaviour_monitor_ml.{entry_id}.json`
 - Serialization via `to_dict`/`from_dict` methods on dataclasses
+- STORAGE_VERSION is bumped in lockstep with the config entry version; `BehaviourMonitorStore._async_migrate_func` passes old data through unchanged because all readers use `.get()` defaults.
 
 ## Project-specific Conventions
 

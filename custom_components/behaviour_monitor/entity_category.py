@@ -132,7 +132,7 @@ _RECOMMENDATION = {
 }
 
 
-def alert_score(alert: AlertResult, categories: Mapping[str, EntityCategory]) -> float:
+def _alert_score(alert: AlertResult, categories: Mapping[str, EntityCategory]) -> float:
     """Severity points times the category weight of the alert's entity."""
     category = categories.get(alert.entity_id, EntityCategory.OTHER)
     return SEVERITY_POINTS[alert.severity] * CATEGORY_WEIGHT[category]
@@ -153,7 +153,7 @@ def derive_weighted_status(
     for alert in alerts:
         if alert.alert_type == AlertType.CORRELATION_BREAK:
             continue
-        top = max(top, alert_score(alert, categories))
+        top = max(top, _alert_score(alert, categories))
     if top >= WELFARE_ALERT_SCORE:
         status = WELFARE_ALERT
     elif top >= WELFARE_CONCERN_SCORE:

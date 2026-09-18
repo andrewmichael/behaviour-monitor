@@ -1550,6 +1550,19 @@ class TestEntityCategories:
             await c.async_setup()
         assert c._categories["switch.kettle"].value == "plug"
 
+    def test_refresh_categories_uses_live_state_when_model_empty(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, ["sensor.lux", "binary_sensor.pir"], **{CONF_CATEGORY_MOTION: ["sensor.lux", "binary_sensor.pir"]})
+        states = {"sensor.lux": MagicMock(state="23.5"), "binary_sensor.pir": MagicMock(state="off")}
+        mock_hass.states.get = lambda eid: states.get(eid)
+        with patch.object(c, "_registry_device_classes", return_value={}):
+            c._refresh_categories()
+        assert c._categories["sensor.lux"] is EntityCategory.OTHER
+        assert c._categories["binary_sensor.pir"] is EntityCategory.MOTION
+
 
 class TestWeightedWelfare:
     """_derive_welfare uses category-weighted scoring."""
@@ -1671,6 +1684,22 @@ class TestBootstrapDebounceAndRebootstrap:
         assert "binary_sensor.door" not in c._routine_model._entities
 
     @pytest.mark.asyncio
+    async def test_bootstrap_unavailable_dropout_resets_edge_detection(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        history = {
+            "binary_sensor.pir": self._states(
+                "binary_sensor.pir", [("on", 0), ("unavailable", 200), ("on", 400)]
+            ),
+        }
+        p1, p2 = self._patch_recorder(history)
+        with p1, p2:
+            await c._bootstrap_from_recorder(entity_ids=["binary_sensor.pir"])
+        pir = c._routine_model._entities["binary_sensor.pir"]
+        assert sum(len(s.event_times) for s in pir.slots) == 2
+
+    @pytest.mark.asyncio
     async def test_rebootstrap_clears_only_motion_and_clears_flag(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
     ) -> None:
@@ -1747,3 +1776,17 @@ class TestBootstrapDebounceAndRebootstrap:
              patch.object(c, "_rebootstrap_motion_entities", new_callable=AsyncMock) as reboot:
             await c.async_setup()
         reboot.assert_not_awaited()
+
+
+class TestStoreMigration:
+    @pytest.mark.asyncio
+    async def test_store_migrate_passes_data_through(self, mock_hass: MagicMock) -> None:
+        from custom_components.behaviour_monitor.coordinator import BehaviourMonitorStore
+        store = BehaviourMonitorStore(mock_hass, 11, "behaviour_monitor.test")
+        old = {"routine_model": {"entities": {}}, "coordinator": {"holiday_mode": True}}
+        assert await store._async_migrate_func(10, 1, old) is old
+
+    def test_coordinator_uses_migrating_store(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.coordinator import BehaviourMonitorStore
+        c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        assert isinstance(c._store, BehaviourMonitorStore)

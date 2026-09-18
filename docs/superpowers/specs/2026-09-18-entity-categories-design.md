@@ -275,3 +275,5 @@ All without Home Assistant, using existing mock patterns.
 | Where category lives | New `entity_category.py` module (Option B) |
 | Weight aggregation | Max score, not sum |
 | Version | v5.0 (welfare scoring changes alert behaviour) |
+| EntityCategory enum location | const.py (beside ActivityTier), not entity_category.py, to avoid const importing the new module |
+| Store version | STORAGE_VERSION bumped in lockstep with config entry version; BehaviourMonitorStore passes old data through unchanged |
