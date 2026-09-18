@@ -18,24 +18,26 @@ from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL, CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT,
+    CONF_ALERT_REPEAT_INTERVAL, CONF_BURST_DISCARD_THRESHOLD, CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_CATEGORY_PLUG, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_PANIC_RENOTIFY_MINUTES, CONF_REBOOTSTRAP_MOTION, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_NOTIFY_SERVICES, CONF_PANIC_RENOTIFY_MINUTES, CONF_REBOOTSTRAP_MOTION, CONF_STARTUP_GRACE_SECONDS,
+    CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
-    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_CORRELATION_WINDOW,
+    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_BURST_DISCARD_THRESHOLD, DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
-    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_TRACK_ATTRIBUTES,
+    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_STARTUP_GRACE_SECONDS, DEFAULT_TRACK_ATTRIBUTES,
     DOMAIN, EntityCategory, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, SENSITIVITY_MEDIUM,
     SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
     STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_BLIND, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
@@ -44,6 +46,7 @@ from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
 from .entity_category import MotionDebouncer, derive_weighted_status, infer_categories
 from .entity_health import count_by_status, qualify_welfare, resolve_entity_health
+from .event_gate import EventGate
 from .panic_monitor import PanicMonitor
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
@@ -128,6 +131,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._entity_health: dict[str, str] = {}
         self._open_issues: set[str] = set()
         self._blind_notified = False
+        self._gate = EventGate(
+            int(d.get(CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS)),
+            int(d.get(CONF_BURST_DISCARD_THRESHOLD, DEFAULT_BURST_DISCARD_THRESHOLD)),
+        )
+        self._gate_flush_pending = False
         self._routine_model = RoutineModel(self._learning_period_days)
         self._acute_detector = AcuteDetector(
             float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
@@ -224,12 +232,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif not self._routine_model._entities:
             await self._bootstrap_from_recorder()
             await self._save_data()
+        self._gate.arm(dt_util.now())
         self._unsub_state_changed = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
 
     async def async_shutdown(self) -> None:
         if self._unsub_state_changed:
             self._unsub_state_changed()
             self._unsub_state_changed = None
+        self._flush_gate(force=True)
         await self._save_data()
 
     async def _save_data(self) -> None:
@@ -372,8 +382,29 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if old_state is not None and old_state.state == ns.state:
                 return
         now, sv = dt_util.now(), str(ns.state)
-        self._last_seen[eid] = now
         old_sv = None if old_state is None else str(old_state.state)
+        if not self._gate.submit(eid, old_sv, sv, now):
+            return
+        if not self._gate_flush_pending:
+            self._gate_flush_pending = True
+            self.hass.loop.call_later(1.0, self._flush_gate)
+
+    @callback
+    def _flush_gate(self, force: bool = False) -> None:
+        """Release completed one-second buckets from the gate and process them."""
+        self._gate_flush_pending = False
+        events = self._gate.flush(dt_util.now(), force=force)
+        for ev in events:
+            self._process_activity(ev.entity_id, ev.old_state, ev.new_state, ev.timestamp)
+        if self._gate.pending and not force:
+            self._gate_flush_pending = True
+            self.hass.loop.call_later(1.0, self._flush_gate)
+        if events:
+            self.hass.async_create_task(self.async_request_refresh())
+
+    def _process_activity(self, eid: str, old_sv: str | None, sv: str, now: datetime) -> None:
+        """The pre-gate activity path: last-seen, debounce, record, correlate, count."""
+        self._last_seen[eid] = now
         is_motion = self._categories.get(eid) is EntityCategory.MOTION
         if not self._debouncer.should_count(eid, is_motion, old_sv, sv, now):
             return
@@ -382,7 +413,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._today_date != now.date():
             self._today_count, self._today_date = 0, now.date()
         self._today_count += 1
-        self.hass.async_create_task(self.async_request_refresh())
 
     def _handle_panic_event(self, eid: str, old_state: Any, new_state: Any) -> None:
         """Panic entities bypass learning entirely: press notifies now, release clears."""

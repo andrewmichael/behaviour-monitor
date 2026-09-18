@@ -45,6 +45,12 @@ def _make_alert(
     )
 
 
+def _fire(coordinator: BehaviourMonitorCoordinator, event: MagicMock) -> None:
+    """Deliver a state_changed event and flush the one-second gate immediately."""
+    coordinator._handle_state_changed(event)
+    coordinator._flush_gate(force=True)
+
+
 # ---------------------------------------------------------------------------
 # TestBehaviourMonitorCoordinator — basic initialization and properties
 # ---------------------------------------------------------------------------
@@ -137,7 +143,7 @@ class TestBehaviourMonitorCoordinator:
     ) -> None:
         event = MagicMock()
         event.data = {"entity_id": "sensor.unmonitored", "new_state": MagicMock(state="on")}
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         # Should not have recorded anything in last_seen
         assert "sensor.unmonitored" not in coordinator._last_seen
 
@@ -146,7 +152,7 @@ class TestBehaviourMonitorCoordinator:
     ) -> None:
         event = MagicMock()
         event.data = {"entity_id": "sensor.test1", "new_state": MagicMock(state="on")}
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         assert "sensor.test1" in coordinator._last_seen
 
     def test_handle_state_changed_ignores_none_new_state(
@@ -154,7 +160,7 @@ class TestBehaviourMonitorCoordinator:
     ) -> None:
         event = MagicMock()
         event.data = {"entity_id": "sensor.test1", "new_state": None}
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         assert "sensor.test1" not in coordinator._last_seen
 
     def test_handle_state_changed_increments_today_count(
@@ -163,7 +169,7 @@ class TestBehaviourMonitorCoordinator:
         initial = coordinator._today_count
         event = MagicMock()
         event.data = {"entity_id": "sensor.test1", "new_state": MagicMock(state="on")}
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         assert coordinator._today_count == initial + 1
 
     @pytest.mark.asyncio
@@ -468,7 +474,7 @@ class TestCoordinatorHolidayMode:
         coordinator._holiday_mode = True
         event = MagicMock()
         event.data = {"entity_id": "sensor.test1", "new_state": MagicMock(state="on")}
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         assert "sensor.test1" in coordinator._last_seen
 
 
@@ -1348,9 +1354,9 @@ class TestTrackAttributesPerEntityOverrides:
         coordinator = self._make_coordinator(
             mock_hass, mock_config_entry, global_flag=False, include=["sensor.test1"]
         )
-        coordinator._handle_state_changed(self._attribute_only_event("sensor.test1"))
+        _fire(coordinator, self._attribute_only_event("sensor.test1"))
         assert "sensor.test1" in coordinator._last_seen
-        coordinator._handle_state_changed(self._attribute_only_event("sensor.test2"))
+        _fire(coordinator, self._attribute_only_event("sensor.test2"))
         assert "sensor.test2" not in coordinator._last_seen
 
     def test_attribute_only_event_skipped_for_excluded_entity(
@@ -1359,9 +1365,9 @@ class TestTrackAttributesPerEntityOverrides:
         coordinator = self._make_coordinator(
             mock_hass, mock_config_entry, global_flag=True, exclude=["sensor.test1"]
         )
-        coordinator._handle_state_changed(self._attribute_only_event("sensor.test1"))
+        _fire(coordinator, self._attribute_only_event("sensor.test1"))
         assert "sensor.test1" not in coordinator._last_seen
-        coordinator._handle_state_changed(self._attribute_only_event("sensor.test2"))
+        _fire(coordinator, self._attribute_only_event("sensor.test2"))
         assert "sensor.test2" in coordinator._last_seen
 
     def test_real_state_change_always_recorded_for_excluded_entity(
@@ -1376,7 +1382,7 @@ class TestTrackAttributesPerEntityOverrides:
             "old_state": MagicMock(state="off"),
             "new_state": MagicMock(state="on"),
         }
-        coordinator._handle_state_changed(event)
+        _fire(coordinator, event)
         assert "sensor.test1" in coordinator._last_seen
 
 
@@ -1475,7 +1481,7 @@ class TestEntityCategories:
 
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
         c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
-        c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+        _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert "binary_sensor.pir" in c._last_seen
         assert "binary_sensor.pir" not in c._routine_model._entities
         assert c._today_count == 0
@@ -1487,7 +1493,7 @@ class TestEntityCategories:
 
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
         c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
-        c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
+        _fire(c, self._event("binary_sensor.pir", "off", "on"))
         assert "binary_sensor.pir" in c._routine_model._entities
         assert c._today_count == 1
 
@@ -1499,8 +1505,8 @@ class TestEntityCategories:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
         c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
         for _ in range(3):
-            c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
-            c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+            _fire(c, self._event("binary_sensor.pir", "off", "on"))
+            _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert c._today_count == 1
 
     def test_zero_window_counts_every_edge(
@@ -1511,8 +1517,8 @@ class TestEntityCategories:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"], **{CONF_MOTION_DEBOUNCE_SECONDS: 0})
         c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
         for _ in range(3):
-            c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
-            c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+            _fire(c, self._event("binary_sensor.pir", "off", "on"))
+            _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert c._today_count == 3
 
     def test_non_motion_unchanged(
@@ -1522,8 +1528,8 @@ class TestEntityCategories:
 
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.door"])
         c._categories = {"binary_sensor.door": EntityCategory.CONTACT}
-        c._handle_state_changed(self._event("binary_sensor.door", "off", "on"))
-        c._handle_state_changed(self._event("binary_sensor.door", "on", "off"))
+        _fire(c, self._event("binary_sensor.door", "off", "on"))
+        _fire(c, self._event("binary_sensor.door", "on", "off"))
         assert c._today_count == 2
 
     def test_sensor_data_includes_category(
@@ -2268,3 +2274,91 @@ class TestEntityHealthIntegration:
              patch.object(c, "_entity_facts", return_value=({"a.b": "on"}, set())):
             await c.async_setup()
         assert c._entity_health == {"a.b": "present"}
+
+
+class TestEventGateWiring:
+    def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: ["s.a", "s.b", "s.c", "s.d"], **extra}
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    @staticmethod
+    def _event(eid: str, old: str | None, new: str) -> MagicMock:
+        e = MagicMock()
+        e.data = {"entity_id": eid, "old_state": None if old is None else MagicMock(state=old), "new_state": MagicMock(state=new)}
+        return e
+
+    def test_defaults(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        assert c._gate._grace.total_seconds() == 90
+        assert c._gate._threshold == 3
+
+    def test_event_is_buffered_then_processed_on_flush(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._handle_state_changed(self._event("s.a", "off", "on"))
+        assert "s.a" not in c._last_seen
+        assert c._gate.pending == 1
+        mock_hass.loop.call_later.assert_called_once()
+        assert mock_hass.loop.call_later.call_args.args[0] == 1.0
+        c._flush_gate(force=True)
+        assert "s.a" in c._last_seen
+        assert c._today_count == 1
+        assert c._gate.pending == 0
+
+    def test_single_timer_per_batch(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._handle_state_changed(self._event("s.a", "off", "on"))
+        c._handle_state_changed(self._event("s.b", "off", "on"))
+        assert mock_hass.loop.call_later.call_count == 1
+        c._flush_gate(force=True)
+        c._handle_state_changed(self._event("s.a", "on", "off"))
+        assert mock_hass.loop.call_later.call_count == 2
+
+    def test_burst_dropped(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        for eid in ("s.a", "s.b", "s.c"):
+            c._handle_state_changed(self._event(eid, "off", "on"))
+        c._flush_gate(force=True)
+        assert c._last_seen == {}
+        assert c._today_count == 0
+        assert c._gate.dropped_bursts == 1
+
+    def test_threshold_zero_keeps_burst(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_BURST_DISCARD_THRESHOLD
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_BURST_DISCARD_THRESHOLD: 0})
+        for eid in ("s.a", "s.b", "s.c"):
+            c._handle_state_changed(self._event(eid, "off", "on"))
+        c._flush_gate(force=True)
+        assert c._today_count == 3
+
+    @pytest.mark.asyncio
+    async def test_grace_armed_at_setup_drops_events(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=None), \
+             patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock), \
+             patch.object(c, "_registry_device_classes", return_value={}):
+            await c.async_setup()
+        c._handle_state_changed(self._event("s.a", "off", "on"))
+        c._flush_gate(force=True)
+        assert "s.a" not in c._last_seen
+        mock_hass.loop.call_later.assert_not_called()
+
+    def test_panic_bypasses_gate(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityCategory
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_CATEGORY_PANIC: ["binary_sensor.sos"]})
+        c._categories["binary_sensor.sos"] = EntityCategory.PANIC
+        c._gate.arm(datetime.now())  # even during grace
+        c._handle_state_changed(self._event("binary_sensor.sos", "off", "on"))
+        assert c.panic_active == ["binary_sensor.sos"]
+        assert c._gate.pending == 0
+
+    def test_flush_uses_original_timestamp(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        c._handle_state_changed(self._event("s.a", "off", "on"))
+        ts = c._gate._buckets[next(iter(c._gate._buckets))][0].timestamp
+        c._flush_gate(force=True)
+        assert c._last_seen["s.a"] == ts
