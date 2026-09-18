@@ -19,6 +19,7 @@ class AlertType(str, Enum):
     DRIFT = "drift"
     CORRELATION_BREAK = "correlation_break"
     PANIC = "panic"
+    DEVICE_HEALTH = "device_health"
 
 
 class AlertSeverity(str, Enum):

@@ -87,6 +87,20 @@ DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
 DEFAULT_CATEGORY_PANIC: Final[list[str]] = []  # override-list only; never inferred
 DEFAULT_PANIC_RENOTIFY_MINUTES: Final = 5  # minutes between re-notifications until acknowledged
 
+# New v5.2 config keys (system integrity)
+CONF_STARTUP_GRACE_SECONDS: Final = "startup_grace_seconds"
+CONF_BURST_DISCARD_THRESHOLD: Final = "burst_discard_threshold"
+CONF_PANIC_HEARTBEAT_HOURS: Final = "panic_heartbeat_hours"
+CONF_PANIC_TEST_REMINDER_DAYS: Final = "panic_test_reminder_days"
+
+# New v5.2 defaults
+DEFAULT_STARTUP_GRACE_SECONDS: Final = 90  # seconds after setup during which events are ignored; 0 disables
+DEFAULT_BURST_DISCARD_THRESHOLD: Final = 3  # distinct entities changing in one second = artifact; 0 disables
+DEFAULT_PANIC_HEARTBEAT_HOURS: Final = 24  # hours without a report before a panic device alert; 0 disables
+DEFAULT_PANIC_TEST_REMINDER_DAYS: Final = 30  # days without a test press before a reminder; 0 disables
+PANIC_TEST_WINDOW_SECONDS: Final = 120
+PANIC_LOW_BATTERY_PERCENT: Final = 20
+
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 12
@@ -129,6 +143,8 @@ WELFARE_OK: Final = "ok"
 WELFARE_CHECK: Final = "check_recommended"
 WELFARE_CONCERN: Final = "concern"
 WELFARE_ALERT: Final = "alert"
+WELFARE_BLIND: Final = "blind"  # no monitored entity is reporting
+WELFARE_DEGRADED: Final = "degraded"  # some inputs lost or a device-health alert is active
 
 # Holiday mode and snooze
 ATTR_HOLIDAY_MODE: Final = "holiday_mode"
@@ -173,6 +189,7 @@ SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
 SERVICE_ROUTINE_RESET: Final = "routine_reset"
 SERVICE_ACKNOWLEDGE_PANIC: Final = "acknowledge_panic"
+SERVICE_PANIC_TEST: Final = "panic_test"
 
 # ---------------------------------------------------------------------------
 # Detection engine constants (v1.1)
@@ -290,3 +307,10 @@ WELFARE_ALERT_SCORE: Final[float] = 2.25
 WELFARE_CONCERN_SCORE: Final[float] = 1.25
 # Recommendation text when any panic button is active
 WELFARE_PANIC_RECOMMENDATION: Final = "Panic button pressed. Respond now."
+WELFARE_BLIND_RECOMMENDATION: Final = "No monitored entities are reporting. Check sensors and the integration options."
+WELFARE_DEGRADED_RECOMMENDATION: Final = "Some monitored entities are not reporting."
+
+# Entity health classification (v5.2)
+HEALTH_PRESENT: Final = "present"
+HEALTH_UNAVAILABLE: Final = "unavailable"
+HEALTH_MISSING: Final = "missing"
