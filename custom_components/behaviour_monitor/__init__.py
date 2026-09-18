@@ -12,6 +12,7 @@ import voluptuous as vol
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_BURST_DISCARD_THRESHOLD,
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION,
@@ -25,13 +26,17 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_PANIC_HEARTBEAT_HOURS,
     CONF_PANIC_RENOTIFY_MINUTES,
+    CONF_PANIC_TEST_REMINDER_DAYS,
     CONF_REBOOTSTRAP_MOTION,
+    CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_BURST_DISCARD_THRESHOLD,
     DEFAULT_CATEGORY_CONTACT,
     DEFAULT_CATEGORY_LIGHT,
     DEFAULT_CATEGORY_MOTION,
@@ -44,7 +49,10 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    DEFAULT_PANIC_HEARTBEAT_HOURS,
     DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -228,6 +236,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v12 — panic button category added"
         )
+
+    if config_entry.version < 13:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS)
+        new_data.setdefault(CONF_BURST_DISCARD_THRESHOLD, DEFAULT_BURST_DISCARD_THRESHOLD)
+        new_data.setdefault(CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS)
+        new_data.setdefault(CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=13)
+        _LOGGER.info("Behaviour Monitor: Config entry migrated to v13 — system integrity settings added")
 
     return True
 

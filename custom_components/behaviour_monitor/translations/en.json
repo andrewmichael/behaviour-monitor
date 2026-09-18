@@ -26,7 +26,11 @@
           "category_light": "Lights",
           "motion_debounce_seconds": "Motion debounce window",
           "category_panic": "Panic buttons",
-          "panic_renotify_minutes": "Panic re-notify interval"
+          "panic_renotify_minutes": "Panic re-notify interval",
+          "startup_grace_seconds": "Start-up grace period",
+          "burst_discard_threshold": "Burst discard threshold",
+          "panic_heartbeat_hours": "Panic device heartbeat",
+          "panic_test_reminder_days": "Panic test reminder"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -50,7 +54,11 @@
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
           "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
           "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert. They do not need to be in the monitored entities list.",
-          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
+          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged.",
+          "startup_grace_seconds": "Seconds after Home Assistant starts or the integration reloads during which state changes are ignored, because restarts write synthetic states to every entity. 0 disables.",
+          "burst_discard_threshold": "If at least this many different entities change within the same second, the whole second is discarded as a reload artifact. 0 disables.",
+          "panic_heartbeat_hours": "Raise a device-health alert when a panic button has not reported for this many hours. 0 disables.",
+          "panic_test_reminder_days": "Raise a reminder when a panic button has not been test-pressed for this many days. 0 disables."
         }
       }
     },
@@ -89,7 +97,11 @@
           "category_light": "Lights",
           "motion_debounce_seconds": "Motion debounce window",
           "category_panic": "Panic buttons",
-          "panic_renotify_minutes": "Panic re-notify interval"
+          "panic_renotify_minutes": "Panic re-notify interval",
+          "startup_grace_seconds": "Start-up grace period",
+          "burst_discard_threshold": "Burst discard threshold",
+          "panic_heartbeat_hours": "Panic device heartbeat",
+          "panic_test_reminder_days": "Panic test reminder"
         },
         "data_description": {
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
@@ -101,7 +113,11 @@
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
           "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
           "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert. They do not need to be in the monitored entities list.",
-          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
+          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged.",
+          "startup_grace_seconds": "Seconds after Home Assistant starts or the integration reloads during which state changes are ignored, because restarts write synthetic states to every entity. 0 disables.",
+          "burst_discard_threshold": "If at least this many different entities change within the same second, the whole second is discarded as a reload artifact. 0 disables.",
+          "panic_heartbeat_hours": "Raise a device-health alert when a panic button has not reported for this many hours. 0 disables.",
+          "panic_test_reminder_days": "Raise a reminder when a panic button has not been test-pressed for this many days. 0 disables."
         }
       }
     },
@@ -140,6 +156,12 @@
       "last_notification": {
         "name": "Last Notification"
       }
+    }
+  },
+  "issues": {
+    "missing_entity": {
+      "title": "Monitored entity {entity_id} no longer exists",
+      "description": "Behaviour Monitor is configured to watch {entity_id} but it is not in Home Assistant. Restore the entity or remove it from the integration options. Until then the monitor is running blind for this entity."
     }
   }
 }

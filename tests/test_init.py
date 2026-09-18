@@ -27,6 +27,7 @@ from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoor
 from custom_components.behaviour_monitor.const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_BURST_DISCARD_THRESHOLD,
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION,
@@ -37,12 +38,19 @@ from custom_components.behaviour_monitor.const import (
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_PANIC_HEARTBEAT_HOURS,
     CONF_PANIC_RENOTIFY_MINUTES,
+    CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_STARTUP_GRACE_SECONDS,
     CONF_REBOOTSTRAP_MOTION,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
+    DEFAULT_BURST_DISCARD_THRESHOLD,
+    DEFAULT_PANIC_HEARTBEAT_HOURS,
+    DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_LEARNING_PERIOD_DAYS,
@@ -464,9 +472,9 @@ class TestIntegrationLifecycle:
 class TestStorageVersion:
     """Tests for STORAGE_VERSION constant."""
 
-    def test_storage_version_is_12(self) -> None:
-        """Test that STORAGE_VERSION equals 12 after panic button bump."""
-        assert STORAGE_VERSION == 12
+    def test_storage_version_is_13(self) -> None:
+        """Test that STORAGE_VERSION equals 13 after system integrity bump."""
+        assert STORAGE_VERSION == 13
 
 
 class TestMigrateEntry:
@@ -638,8 +646,8 @@ class TestMigrateEntry:
         assert "enable_ml" not in new_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v2_updates_version_to_12(self) -> None:
-        """Migration from v2 ends at version=12 (v2->...->v11->v12)."""
+    async def test_migrate_v2_updates_version_to_13(self) -> None:
+        """Migration from v2 ends at version=13 (v2->...->v12->v13)."""
         hass = MagicMock()
         hass.config_entries.async_update_entry = MagicMock()
         entry = self._make_config_entry(
@@ -657,9 +665,9 @@ class TestMigrateEntry:
 
         assert result is True
         # Seven calls: v3, v4, v5, v6, v7, v8, v9
-        assert hass.config_entries.async_update_entry.call_count == 10
+        assert hass.config_entries.async_update_entry.call_count == 11
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 12
+        assert last_call[1]["version"] == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v3_upgrades_to_v9(self) -> None:
@@ -679,7 +687,7 @@ class TestMigrateEntry:
 
         assert result is True
         # Six calls: v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 9
+        assert hass.config_entries.async_update_entry.call_count == 10
         # Check v3->v4 call (index 0) for v4-specific changes
         v4_call = hass.config_entries.async_update_entry.call_args_list[0]
         assert v4_call[1]["version"] == 4
@@ -689,7 +697,7 @@ class TestMigrateEntry:
         assert v4_data["drift_sensitivity"] == "medium"
         # Final call should be v9
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 12
+        assert last_call[1]["version"] == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v4_upgrades_to_v9(self) -> None:
@@ -710,9 +718,9 @@ class TestMigrateEntry:
 
         assert result is True
         # Five calls: v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 8
+        assert hass.config_entries.async_update_entry.call_count == 9
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call.kwargs.get("version") == 12 or last_call[1].get("version") == 12
+        assert last_call.kwargs.get("version") == 13 or last_call[1].get("version") == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v4_adds_learning_period(self) -> None:
@@ -751,8 +759,8 @@ class TestMigrateEntry:
         assert updated_data[CONF_TRACK_ATTRIBUTES] == DEFAULT_TRACK_ATTRIBUTES
 
     @pytest.mark.asyncio
-    async def test_migrate_v4_updates_version_to_12(self) -> None:
-        """Migration from v4 ends at version=12 (v4->...->v11->v12)."""
+    async def test_migrate_v4_updates_version_to_13(self) -> None:
+        """Migration from v4 ends at version=13 (v4->...->v12->v13)."""
         hass = MagicMock()
         hass.config_entries = MagicMock()
         entry = self._make_config_entry(
@@ -763,7 +771,7 @@ class TestMigrateEntry:
         await async_migrate_entry(hass, entry)
 
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call.kwargs.get("version") == 12 or last_call[1].get("version") == 12
+        assert last_call.kwargs.get("version") == 13 or last_call[1].get("version") == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v4_preserves_existing_learning_period(self) -> None:
@@ -853,7 +861,7 @@ class TestMigrateEntryV5ToV6:
 
         assert result is True
         # Four calls: v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 7
+        assert hass.config_entries.async_update_entry.call_count == 8
         # v5->v6 call (index 0) adds alert_repeat_interval
         v6_call = hass.config_entries.async_update_entry.call_args_list[0]
         v6_data = v6_call.kwargs.get("data") or v6_call[1].get("data")
@@ -862,7 +870,7 @@ class TestMigrateEntryV5ToV6:
         # Final call should be v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v5_to_v6_preserves_existing(self) -> None:
@@ -885,10 +893,10 @@ class TestMigrateEntryV5ToV6:
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_ALERT_REPEAT_INTERVAL] == 120
 
-    def test_config_flow_version_is_12(self) -> None:
-        """BehaviourMonitorConfigFlow.VERSION should be 12 after panic button bump."""
+    def test_config_flow_version_is_13(self) -> None:
+        """BehaviourMonitorConfigFlow.VERSION should be 13 after system integrity bump."""
         from custom_components.behaviour_monitor.config_flow import BehaviourMonitorConfigFlow
-        assert BehaviourMonitorConfigFlow.VERSION == 12
+        assert BehaviourMonitorConfigFlow.VERSION == 13
 
 
 class TestMigrateEntryV6ToV7:
@@ -923,7 +931,7 @@ class TestMigrateEntryV6ToV7:
 
         assert result is True
         # Three calls: v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 6
+        assert hass.config_entries.async_update_entry.call_count == 7
         # v6->v7 call (index 0)
         call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
@@ -970,7 +978,7 @@ class TestMigrateEntryV6ToV7:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v7_migrates_to_v9(self) -> None:
@@ -989,7 +997,7 @@ class TestMigrateEntryV6ToV7:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 5
+        assert hass.config_entries.async_update_entry.call_count == 6
         # v7->v8 call (index 0)
         v8_call = hass.config_entries.async_update_entry.call_args_list[0]
         v8_data = v8_call.kwargs.get("data") or v8_call[1].get("data")
@@ -999,7 +1007,7 @@ class TestMigrateEntryV6ToV7:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v6_preserves_existing_min_inactivity_multiplier(self) -> None:
@@ -1042,9 +1050,9 @@ class TestMigrateEntryV6ToV7:
 
         assert result is True
         # Seven migration steps: v2->v3, v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 10
+        assert hass.config_entries.async_update_entry.call_count == 11
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 12
+        assert last_call[1]["version"] == 13
 
 
 class TestMigrateEntryV7ToV8:
@@ -1102,7 +1110,7 @@ class TestMigrateEntryV7ToV8:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v7_to_v8_preserves_existing_override(self) -> None:
@@ -1141,13 +1149,13 @@ class TestMigrateEntryV7ToV8:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 4
+        assert hass.config_entries.async_update_entry.call_count == 5
         v9_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v9_call.kwargs.get("version") or v9_call[1].get("version")
         assert version == 9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
 
 class TestMigrateEntryV8ToV9:
@@ -1194,13 +1202,13 @@ class TestMigrateEntryV8ToV9:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 4
+        assert hass.config_entries.async_update_entry.call_count == 5
         v9_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v9_call.kwargs.get("version") or v9_call[1].get("version")
         assert version == 9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v8_to_v9_preserves_existing_window(self) -> None:
@@ -1287,13 +1295,13 @@ class TestMigrateEntryV9ToV10:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 3
+        assert hass.config_entries.async_update_entry.call_count == 4
         v10_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v10_call.kwargs.get("version") or v10_call[1].get("version")
         assert version == 10
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 12
+        assert version == 13
 
     @pytest.mark.asyncio
     async def test_migrate_v9_to_v10_preserves_existing_lists(self) -> None:
@@ -1362,7 +1370,7 @@ class TestMigrateEntryV10ToV11:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 2
+        assert hass.config_entries.async_update_entry.call_count == 3
         call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_MOTION] == []
@@ -1441,8 +1449,8 @@ class TestMigrateEntryV11ToV12:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        hass.config_entries.async_update_entry.assert_called_once()
-        call_args = hass.config_entries.async_update_entry.call_args
+        assert hass.config_entries.async_update_entry.call_count == 2
+        call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_PANIC] == []
         assert updated_data[CONF_PANIC_RENOTIFY_MINUTES] == DEFAULT_PANIC_RENOTIFY_MINUTES
@@ -1473,18 +1481,74 @@ class TestMigrateEntryV11ToV12:
         assert updated_data[CONF_PANIC_RENOTIFY_MINUTES] == 10
 
     @pytest.mark.asyncio
-    async def test_migrate_v12_is_noop(self) -> None:
-        """A v12 config entry is not re-migrated — async_update_entry is not called."""
+    async def test_migrate_v12_preserves_panic_keys(self) -> None:
+        """A v12 entry continues to v13 without touching v12 keys."""
         hass = MagicMock()
         hass.config_entries = MagicMock()
         entry = self._make_config_entry(
             version=12,
             data={
                 "monitored_entities": ["sensor.test"],
-                CONF_CATEGORY_PANIC: [],
+                CONF_CATEGORY_PANIC: ["binary_sensor.sos"],
                 CONF_PANIC_RENOTIFY_MINUTES: 5,
             },
         )
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert updated_data[CONF_CATEGORY_PANIC] == ["binary_sensor.sos"]
+
+
+class TestMigrateEntryV12ToV13:
+    """Tests for v12->v13 migration (system integrity)."""
+
+    def _make_config_entry(self, version: int, data: dict) -> MagicMock:
+        entry = MagicMock()
+        entry.version = version
+        entry.data = data
+        return entry
+
+    @pytest.mark.asyncio
+    async def test_migrate_v12_to_v13_seeds_defaults(self) -> None:
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=12, data={"monitored_entities": ["sensor.test"]})
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        hass.config_entries.async_update_entry.assert_called_once()
+        call_args = hass.config_entries.async_update_entry.call_args
+        updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert updated_data[CONF_STARTUP_GRACE_SECONDS] == DEFAULT_STARTUP_GRACE_SECONDS
+        assert updated_data[CONF_BURST_DISCARD_THRESHOLD] == DEFAULT_BURST_DISCARD_THRESHOLD
+        assert updated_data[CONF_PANIC_HEARTBEAT_HOURS] == DEFAULT_PANIC_HEARTBEAT_HOURS
+        assert updated_data[CONF_PANIC_TEST_REMINDER_DAYS] == DEFAULT_PANIC_TEST_REMINDER_DAYS
+        version = call_args.kwargs.get("version") or call_args[1].get("version")
+        assert version == 13
+
+    @pytest.mark.asyncio
+    async def test_migrate_v12_to_v13_preserves_existing(self) -> None:
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=12, data={"monitored_entities": ["sensor.test"], CONF_STARTUP_GRACE_SECONDS: 0, CONF_PANIC_HEARTBEAT_HOURS: 6})
+
+        result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        assert updated_data[CONF_STARTUP_GRACE_SECONDS] == 0
+        assert updated_data[CONF_PANIC_HEARTBEAT_HOURS] == 6
+
+    @pytest.mark.asyncio
+    async def test_migrate_v13_is_noop(self) -> None:
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=13, data={"monitored_entities": ["sensor.test"], CONF_STARTUP_GRACE_SECONDS: 90})
 
         result = await async_migrate_entry(hass, entry)
 

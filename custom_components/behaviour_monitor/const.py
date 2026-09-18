@@ -103,7 +103,7 @@ PANIC_LOW_BATTERY_PERCENT: Final = 20
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 12
+STORAGE_VERSION: Final = 13
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60

@@ -167,9 +167,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_12(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 12 after panic button additions."""
-        assert config_flow.VERSION == 12
+    async def test_version_is_13(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 13 after system integrity additions."""
+        assert config_flow.VERSION == 13
 
     @pytest.mark.asyncio
     async def test_schema_includes_activity_tier_override(self) -> None:
@@ -1221,3 +1221,52 @@ class TestPanicFields:
         assert result["type"] == "form"
         assert build.call_args.kwargs["category_panic_default"] == ["binary_sensor.sos"]
         assert build.call_args.kwargs["panic_renotify_minutes_default"] == 10
+
+
+class TestIntegrityFields:
+    @pytest.fixture
+    def config_flow(self) -> BehaviourMonitorConfigFlow:
+        flow = BehaviourMonitorConfigFlow()
+        flow.hass = MagicMock()
+        return flow
+
+    @pytest.fixture
+    def options_flow(self, mock_config_entry: MagicMock) -> BehaviourMonitorOptionsFlow:
+        flow = BehaviourMonitorOptionsFlow(mock_config_entry)
+        flow.hass = MagicMock()
+        flow.hass.config_entries = MagicMock()
+        flow.hass.config_entries.async_update_entry = MagicMock()
+        return flow
+
+    @staticmethod
+    def _keys() -> tuple[str, str, str, str]:
+        from custom_components.behaviour_monitor.const import (
+            CONF_BURST_DISCARD_THRESHOLD,
+            CONF_PANIC_HEARTBEAT_HOURS,
+            CONF_PANIC_TEST_REMINDER_DAYS,
+            CONF_STARTUP_GRACE_SECONDS,
+        )
+
+        return CONF_STARTUP_GRACE_SECONDS, CONF_BURST_DISCARD_THRESHOLD, CONF_PANIC_HEARTBEAT_HOURS, CONF_PANIC_TEST_REMINDER_DAYS
+
+    @pytest.mark.asyncio
+    async def test_fields_in_both_flows(self, config_flow: BehaviourMonitorConfigFlow, options_flow: BehaviourMonitorOptionsFlow) -> None:
+        for result in (await config_flow.async_step_user(user_input=None), await options_flow.async_step_init(user_input=None)):
+            keys = {str(k) for k in result["data_schema"].keys()}
+            for key in self._keys():
+                assert any(key in k for k in keys), key
+
+    @pytest.mark.asyncio
+    async def test_options_prefills(self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import config_flow as cf_module
+
+        grace, burst, hb, rem = self._keys()
+        mock_config_entry.data.update({grace: 120, burst: 5, hb: 48, rem: 7})
+        with patch.object(cf_module, "_build_data_schema", wraps=cf_module._build_data_schema) as build:
+            result = await options_flow.async_step_init(user_input=None)
+        assert result["type"] == "form"
+        kw = build.call_args.kwargs
+        assert kw["startup_grace_seconds_default"] == 120
+        assert kw["burst_discard_threshold_default"] == 5
+        assert kw["panic_heartbeat_hours_default"] == 48
+        assert kw["panic_test_reminder_days_default"] == 7

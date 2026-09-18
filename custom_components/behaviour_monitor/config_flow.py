@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_BURST_DISCARD_THRESHOLD,
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION,
@@ -45,12 +46,16 @@ from .const import (
     CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
+    CONF_PANIC_HEARTBEAT_HOURS,
     CONF_PANIC_RENOTIFY_MINUTES,
+    CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_BURST_DISCARD_THRESHOLD,
     DEFAULT_CATEGORY_CONTACT,
     DEFAULT_CATEGORY_LIGHT,
     DEFAULT_CATEGORY_MOTION,
@@ -67,7 +72,10 @@ from .const import (
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_PANIC_HEARTBEAT_HOURS,
     DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -155,6 +163,10 @@ def _build_data_schema(
     motion_debounce_seconds_default: int = DEFAULT_MOTION_DEBOUNCE_SECONDS,
     category_panic_default: list[str] | None = None,
     panic_renotify_minutes_default: int = DEFAULT_PANIC_RENOTIFY_MINUTES,
+    startup_grace_seconds_default: int = DEFAULT_STARTUP_GRACE_SECONDS,
+    burst_discard_threshold_default: int = DEFAULT_BURST_DISCARD_THRESHOLD,
+    panic_heartbeat_hours_default: int = DEFAULT_PANIC_HEARTBEAT_HOURS,
+    panic_test_reminder_days_default: int = DEFAULT_PANIC_TEST_REMINDER_DAYS,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -234,6 +246,49 @@ def _build_data_schema(
                 step=1,
                 mode=NumberSelectorMode.BOX,
                 unit_of_measurement="minutes",
+            )
+        ),
+        vol.Required(
+            CONF_STARTUP_GRACE_SECONDS, default=startup_grace_seconds_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=300,
+                step=10,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
+        vol.Required(
+            CONF_BURST_DISCARD_THRESHOLD, default=burst_discard_threshold_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=10,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required(
+            CONF_PANIC_HEARTBEAT_HOURS, default=panic_heartbeat_hours_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=168,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="hours",
+            )
+        ),
+        vol.Required(
+            CONF_PANIC_TEST_REMINDER_DAYS, default=panic_test_reminder_days_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=365,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="days",
             )
         ),
         vol.Required(
@@ -382,7 +437,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 12
+    VERSION = 13
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -566,6 +621,18 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_panic_renotify_minutes = self._config_entry.data.get(
             CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES
         )
+        current_startup_grace_seconds = self._config_entry.data.get(
+            CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS
+        )
+        current_burst_discard_threshold = self._config_entry.data.get(
+            CONF_BURST_DISCARD_THRESHOLD, DEFAULT_BURST_DISCARD_THRESHOLD
+        )
+        current_panic_heartbeat_hours = self._config_entry.data.get(
+            CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS
+        )
+        current_panic_test_reminder_days = self._config_entry.data.get(
+            CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -591,6 +658,10 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             motion_debounce_seconds_default=current_motion_debounce_seconds,
             category_panic_default=current_category_panic,
             panic_renotify_minutes_default=current_panic_renotify_minutes,
+            startup_grace_seconds_default=current_startup_grace_seconds,
+            burst_discard_threshold_default=current_burst_discard_threshold,
+            panic_heartbeat_hours_default=current_panic_heartbeat_hours,
+            panic_test_reminder_days_default=current_panic_test_reminder_days,
         )
 
         return self.async_show_form(
