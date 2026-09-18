@@ -20,8 +20,16 @@ from custom_components.behaviour_monitor.const import (
     WELFARE_CONCERN_SCORE,
     EntityCategory,
 )
-from custom_components.behaviour_monitor.alert_result import AlertSeverity
-from custom_components.behaviour_monitor.entity_category import MotionDebouncer, infer_categories
+from custom_components.behaviour_monitor.alert_result import (
+    AlertResult,
+    AlertSeverity,
+    AlertType,
+)
+from custom_components.behaviour_monitor.entity_category import (
+    MotionDebouncer,
+    derive_weighted_status,
+    infer_categories,
+)
 
 
 class TestConstants:
@@ -59,7 +67,9 @@ class TestInferCategories:
         overrides = kw.pop("overrides", {})
         device_classes = kw.pop("device_classes", {})
         numeric = kw.pop("numeric", ())
-        return infer_categories([entity_id], overrides, device_classes, numeric)[entity_id]
+        return infer_categories([entity_id], overrides, device_classes, numeric)[
+            entity_id
+        ]
 
     @pytest.mark.parametrize("dc", ["motion", "occupancy", "presence"])
     def test_motion_device_classes(self, dc: str) -> None:
@@ -151,24 +161,46 @@ class TestMotionDebouncer:
     def test_second_edge_inside_window_dropped(self) -> None:
         d = MotionDebouncer(120)
         assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
-        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=119)) is False
+        assert (
+            d.should_count(
+                "binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=119)
+            )
+            is False
+        )
 
     def test_edge_at_exactly_window_counts(self) -> None:
         d = MotionDebouncer(120)
         assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
-        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)) is True
+        assert (
+            d.should_count(
+                "binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)
+            )
+            is True
+        )
 
     def test_dropped_edge_does_not_extend_window(self) -> None:
         d = MotionDebouncer(120)
         d.should_count("binary_sensor.pir", True, "off", "on", T0)
-        d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=100))  # dropped
+        d.should_count(
+            "binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=100)
+        )  # dropped
         # 120s after the *counted* edge, not the dropped one
-        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)) is True
+        assert (
+            d.should_count(
+                "binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=120)
+            )
+            is True
+        )
 
     def test_zero_window_counts_every_rising_edge(self) -> None:
         d = MotionDebouncer(0)
         assert d.should_count("binary_sensor.pir", True, "off", "on", T0) is True
-        assert d.should_count("binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=1)) is True
+        assert (
+            d.should_count(
+                "binary_sensor.pir", True, "off", "on", T0 + timedelta(seconds=1)
+            )
+            is True
+        )
 
     def test_none_old_state_counts_as_rising_edge(self) -> None:
         d = MotionDebouncer(120)
@@ -178,13 +210,114 @@ class TestMotionDebouncer:
         d = MotionDebouncer(120)
         assert d.should_count("binary_sensor.door", False, "on", "off", T0) is True
         assert d.should_count("binary_sensor.door", False, "off", "off", T0) is True
-        assert d.should_count("binary_sensor.door", False, "off", "on", T0 + timedelta(seconds=1)) is True
+        assert (
+            d.should_count(
+                "binary_sensor.door", False, "off", "on", T0 + timedelta(seconds=1)
+            )
+            is True
+        )
 
     def test_entities_are_independent(self) -> None:
         d = MotionDebouncer(120)
         assert d.should_count("binary_sensor.a", True, "off", "on", T0) is True
-        assert d.should_count("binary_sensor.b", True, "off", "on", T0 + timedelta(seconds=1)) is True
+        assert (
+            d.should_count(
+                "binary_sensor.b", True, "off", "on", T0 + timedelta(seconds=1)
+            )
+            is True
+        )
 
     def test_state_is_case_insensitive(self) -> None:
         d = MotionDebouncer(120)
         assert d.should_count("binary_sensor.pir", True, "OFF", "On", T0) is True
+
+
+def _alert(
+    entity_id: str,
+    severity: AlertSeverity,
+    alert_type: AlertType = AlertType.INACTIVITY,
+) -> AlertResult:
+    return AlertResult(
+        entity_id=entity_id,
+        alert_type=alert_type,
+        severity=severity,
+        confidence=0.9,
+        explanation=f"{entity_id} test",
+        timestamp=T0.isoformat(),
+    )
+
+
+class TestDeriveWeightedStatus:
+    @pytest.mark.parametrize(
+        ("category", "severity", "expected"),
+        [
+            (EntityCategory.MOTION, AlertSeverity.HIGH, "alert"),
+            (EntityCategory.MOTION, AlertSeverity.MEDIUM, "concern"),
+            (EntityCategory.MOTION, AlertSeverity.LOW, "check_recommended"),
+            (EntityCategory.OTHER, AlertSeverity.HIGH, "alert"),
+            (EntityCategory.OTHER, AlertSeverity.MEDIUM, "concern"),
+            (EntityCategory.OTHER, AlertSeverity.LOW, "check_recommended"),
+            (EntityCategory.CONTACT, AlertSeverity.HIGH, "alert"),
+            (EntityCategory.CONTACT, AlertSeverity.MEDIUM, "concern"),
+            (EntityCategory.CONTACT, AlertSeverity.LOW, "check_recommended"),
+            (EntityCategory.PLUG, AlertSeverity.HIGH, "concern"),
+            (EntityCategory.PLUG, AlertSeverity.MEDIUM, "check_recommended"),
+            (EntityCategory.PLUG, AlertSeverity.LOW, "check_recommended"),
+            (EntityCategory.LIGHT, AlertSeverity.HIGH, "concern"),
+            (EntityCategory.LIGHT, AlertSeverity.MEDIUM, "check_recommended"),
+            (EntityCategory.LIGHT, AlertSeverity.LOW, "check_recommended"),
+        ],
+    )
+    def test_single_alert_matrix(
+        self, category: EntityCategory, severity: AlertSeverity, expected: str
+    ) -> None:
+        status, _ = derive_weighted_status([_alert("x.y", severity)], {"x.y": category})
+        assert status == expected
+
+    def test_max_not_sum(self) -> None:
+        alerts = [_alert(f"switch.p{i}", AlertSeverity.HIGH) for i in range(5)]
+        cats = {a.entity_id: EntityCategory.PLUG for a in alerts}
+        status, _ = derive_weighted_status(alerts, cats)
+        assert status == "concern"
+
+    def test_strongest_alert_wins(self) -> None:
+        alerts = [
+            _alert("switch.p", AlertSeverity.HIGH),
+            _alert("binary_sensor.m", AlertSeverity.MEDIUM),
+        ]
+        cats = {
+            "switch.p": EntityCategory.PLUG,
+            "binary_sensor.m": EntityCategory.MOTION,
+        }
+        status, _ = derive_weighted_status(alerts, cats)
+        assert status == "concern"
+        alerts.append(_alert("binary_sensor.m2", AlertSeverity.HIGH))
+        cats["binary_sensor.m2"] = EntityCategory.MOTION
+        status, _ = derive_weighted_status(alerts, cats)
+        assert status == "alert"
+
+    def test_unknown_entity_defaults_to_other_weight(self) -> None:
+        status, _ = derive_weighted_status(
+            [_alert("sensor.unknown", AlertSeverity.HIGH)], {}
+        )
+        assert status == "alert"
+
+    def test_correlation_breaks_ignored(self) -> None:
+        alerts = [
+            _alert("binary_sensor.m", AlertSeverity.HIGH, AlertType.CORRELATION_BREAK),
+            _alert("switch.p", AlertSeverity.LOW),
+        ]
+        cats = {
+            "binary_sensor.m": EntityCategory.MOTION,
+            "switch.p": EntityCategory.PLUG,
+        }
+        status, _ = derive_weighted_status(alerts, cats)
+        assert status == "check_recommended"
+
+    def test_recommendations(self) -> None:
+        _, rec = derive_weighted_status([_alert("x.y", AlertSeverity.HIGH)], {})
+        assert rec == "Immediate welfare check recommended."
+        _, rec = derive_weighted_status([_alert("x.y", AlertSeverity.MEDIUM)], {})
+        assert rec == "Schedule a welfare check soon."
+        _, rec = derive_weighted_status([_alert("x.y", AlertSeverity.LOW)], {})
+        assert rec == "Monitor closely."

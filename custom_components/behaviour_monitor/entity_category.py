@@ -119,3 +119,45 @@ class MotionDebouncer:
             return False
         self._last_counted[entity_id] = timestamp
         return True
+
+
+# ---------------------------------------------------------------------------
+# Weighted welfare
+# ---------------------------------------------------------------------------
+
+_RECOMMENDATION = {
+    WELFARE_ALERT: "Immediate welfare check recommended.",
+    WELFARE_CONCERN: "Schedule a welfare check soon.",
+    WELFARE_CHECK: "Monitor closely.",
+}
+
+
+def alert_score(alert: AlertResult, categories: Mapping[str, EntityCategory]) -> float:
+    """Severity points times the category weight of the alert's entity."""
+    category = categories.get(alert.entity_id, EntityCategory.OTHER)
+    return SEVERITY_POINTS[alert.severity] * CATEGORY_WEIGHT[category]
+
+
+def derive_weighted_status(
+    alerts: Iterable[AlertResult],
+    categories: Mapping[str, EntityCategory],
+) -> tuple[str, str]:
+    """Return (welfare status, recommendation) from the highest-scoring alert.
+
+    Correlation-break alerts are ignored. The maximum score is used, not the
+    sum, so several weak alerts from automated devices cannot compound.
+    Callers must handle the no-alert case themselves; with no scoring alerts
+    this returns the check_recommended tier.
+    """
+    top = 0.0
+    for alert in alerts:
+        if alert.alert_type == AlertType.CORRELATION_BREAK:
+            continue
+        top = max(top, alert_score(alert, categories))
+    if top >= WELFARE_ALERT_SCORE:
+        status = WELFARE_ALERT
+    elif top >= WELFARE_CONCERN_SCORE:
+        status = WELFARE_CONCERN
+    else:
+        status = WELFARE_CHECK
+    return status, _RECOMMENDATION[status]
