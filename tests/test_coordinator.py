@@ -1597,3 +1597,153 @@ class TestWeightedWelfare:
     def test_only_correlation_breaks_is_ok(self, coordinator: BehaviourMonitorCoordinator) -> None:
         alerts = [_make_alert("binary_sensor.pir", alert_type=AlertType.CORRELATION_BREAK, severity=AlertSeverity.HIGH)]
         assert coordinator._derive_welfare(alerts)["status"] == "ok"
+
+
+class TestBootstrapDebounceAndRebootstrap:
+    """Recorder replay goes through the debouncer; v11 flag triggers motion re-bootstrap."""
+
+    def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES, EntityCategory
+
+        mock_config_entry.data = {
+            **mock_config_entry.data,
+            CONF_MONITORED_ENTITIES: ["binary_sensor.pir", "binary_sensor.door"],
+            **extra,
+        }
+        c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+        c._categories = {
+            "binary_sensor.pir": EntityCategory.MOTION,
+            "binary_sensor.door": EntityCategory.CONTACT,
+        }
+        return c
+
+    @staticmethod
+    def _states(entity_id: str, seq: list[tuple[str, int]]) -> list[MagicMock]:
+        base = datetime(2026, 9, 1, 8, 0, 0, tzinfo=timezone.utc)
+        out = []
+        for state, offset in seq:
+            s = MagicMock()
+            s.state = state
+            s.last_changed = base + timedelta(seconds=offset)
+            out.append(s)
+        return out
+
+    def _patch_recorder(self, history: dict[str, list[MagicMock]]):
+        instance = MagicMock()
+
+        async def _job(_fn, _hass, _start, _end, ids, _sig):
+            return {eid: history.get(eid, []) for eid in ids}
+
+        instance.async_add_executor_job = _job
+        return (
+            patch("custom_components.behaviour_monitor.coordinator.recorder_get_instance", return_value=instance),
+            patch("custom_components.behaviour_monitor.coordinator.recorder_state_changes_during_period", MagicMock()),
+        )
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_debounces_motion_history(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        history = {
+            # three on/off cycles inside 120s -> one counted edge
+            "binary_sensor.pir": self._states("binary_sensor.pir", [("on", 0), ("off", 10), ("on", 20), ("off", 30), ("on", 40), ("off", 50)]),
+            # contact: every transition counts
+            "binary_sensor.door": self._states("binary_sensor.door", [("on", 0), ("off", 10)]),
+        }
+        p1, p2 = self._patch_recorder(history)
+        with p1, p2:
+            await c._bootstrap_from_recorder()
+        pir = c._routine_model._entities["binary_sensor.pir"]
+        door = c._routine_model._entities["binary_sensor.door"]
+        assert sum(len(s.event_times) for s in pir.slots) == 1
+        assert sum(len(s.event_times) for s in door.slots) == 2
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_respects_entity_subset(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        history = {
+            "binary_sensor.pir": self._states("binary_sensor.pir", [("on", 0)]),
+            "binary_sensor.door": self._states("binary_sensor.door", [("on", 0)]),
+        }
+        p1, p2 = self._patch_recorder(history)
+        with p1, p2:
+            await c._bootstrap_from_recorder(entity_ids=["binary_sensor.pir"])
+        assert "binary_sensor.pir" in c._routine_model._entities
+        assert "binary_sensor.door" not in c._routine_model._entities
+
+    @pytest.mark.asyncio
+    async def test_rebootstrap_clears_only_motion_and_clears_flag(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_REBOOTSTRAP_MOTION
+        from custom_components.behaviour_monitor.drift_detector import CUSUMState
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_REBOOTSTRAP_MOTION: True})
+        # seed noisy state
+        c._routine_model.get_or_create("binary_sensor.pir", is_binary=True)
+        c._routine_model.get_or_create("binary_sensor.door", is_binary=True)
+        c._correlation_detector._entity_event_counts["binary_sensor.pir"] = 5
+        c._drift_detector._states["binary_sensor.pir"] = CUSUMState()
+        c._last_seen["binary_sensor.pir"] = datetime.now(timezone.utc)
+        door_before = c._routine_model._entities["binary_sensor.door"]
+
+        history = {"binary_sensor.pir": self._states("binary_sensor.pir", [("on", 0)])}
+        p1, p2 = self._patch_recorder(history)
+        with p1, p2, patch.object(c._store, "async_save", new_callable=AsyncMock) as save:
+            await c._rebootstrap_motion_entities()
+
+        # motion routine rebuilt from history (1 event), contact untouched
+        pir = c._routine_model._entities["binary_sensor.pir"]
+        assert sum(len(s.event_times) for s in pir.slots) == 1
+        assert c._routine_model._entities["binary_sensor.door"] is door_before
+        # correlation counts purged for motion entity
+        assert "binary_sensor.pir" not in c._correlation_detector._entity_event_counts
+        # CUSUM and last_seen kept
+        assert "binary_sensor.pir" in c._drift_detector._states
+        assert "binary_sensor.pir" in c._last_seen
+        save.assert_awaited_once()
+        # flag cleared via async_update_entry
+        call = mock_hass.config_entries.async_update_entry.call_args
+        assert CONF_REBOOTSTRAP_MOTION not in call.kwargs["data"]
+
+    @pytest.mark.asyncio
+    async def test_rebootstrap_clears_flag_when_recorder_unavailable(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_REBOOTSTRAP_MOTION
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_REBOOTSTRAP_MOTION: True})
+        c._routine_model.get_or_create("binary_sensor.pir", is_binary=True)
+        with patch("custom_components.behaviour_monitor.coordinator.recorder_get_instance", None), \
+             patch.object(c._store, "async_save", new_callable=AsyncMock):
+            await c._rebootstrap_motion_entities()
+        assert "binary_sensor.pir" not in c._routine_model._entities
+        call = mock_hass.config_entries.async_update_entry.call_args
+        assert CONF_REBOOTSTRAP_MOTION not in call.kwargs["data"]
+
+    @pytest.mark.asyncio
+    async def test_async_setup_runs_rebootstrap_when_flag_set(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import CONF_REBOOTSTRAP_MOTION
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_REBOOTSTRAP_MOTION: True})
+        stored = {"routine_model": c._routine_model.to_dict(), "coordinator": {}}
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=stored), \
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_rebootstrap_motion_entities", new_callable=AsyncMock) as reboot, \
+             patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock) as boot:
+            await c.async_setup()
+        reboot.assert_awaited_once()
+        boot.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_async_setup_skips_rebootstrap_without_flag(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        c = self._make(mock_hass, mock_config_entry)
+        stored = {"routine_model": c._routine_model.to_dict(), "coordinator": {}}
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=stored), \
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_rebootstrap_motion_entities", new_callable=AsyncMock) as reboot:
+            await c.async_setup()
+        reboot.assert_not_awaited()

@@ -25,7 +25,7 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_NOTIFY_SERVICES, CONF_REBOOTSTRAP_MOTION, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
@@ -142,7 +142,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
-        self._refresh_categories()
         if stored:
             if "routine_model" in stored:
                 self._routine_model = RoutineModel.from_dict(stored["routine_model"])
@@ -170,6 +169,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_notification_info = c.get("last_notification_info", {"timestamp": None, "type": None})
             self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
             self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
+        self._refresh_categories()
+        if stored:
+            if self._entry.data.get(CONF_REBOOTSTRAP_MOTION, False):
+                await self._rebootstrap_motion_entities()
         elif not self._routine_model._entities:
             await self._bootstrap_from_recorder()
             await self._save_data()
@@ -456,24 +459,55 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.warning("Routine reset for %s — CUSUM cleared", entity_id)
         await self._save_fire_refresh(f"{DOMAIN}_routine_reset", {"entity_id": entity_id})
 
-    async def _bootstrap_from_recorder(self) -> None:
+    async def _bootstrap_from_recorder(self, entity_ids: list[str] | None = None) -> None:
+        """Replay recorder history into the routine model, debouncing motion entities.
+
+        Uses a private MotionDebouncer so replay never disturbs live debounce state.
+        """
         if recorder_get_instance is None or recorder_state_changes_during_period is None:
             _LOGGER.warning("Behaviour Monitor: recorder unavailable, skipping bootstrap")
             return
+        targets = list(entity_ids) if entity_ids is not None else list(self._monitored_entities)
+        debouncer = MotionDebouncer(self._motion_debounce_seconds)
         try:
             instance = recorder_get_instance(self.hass)
             if instance is None:
                 return
             end, start = dt_util.now(), dt_util.now() - timedelta(days=self._history_window_days)
-            for eid in self._monitored_entities:
+            for eid in targets:
+                is_motion = self._categories.get(eid) is EntityCategory.MOTION
+                prev: str | None = None
                 try:
                     for sl in (await instance.async_add_executor_job(
                         recorder_state_changes_during_period, self.hass, start, end, [eid], False,
                     )).values():
                         for s in sl:
-                            if s.state not in ("unavailable", "unknown"):
-                                self._routine_model.record(eid, s.last_changed, s.state, is_binary_state(s.state))
+                            if s.state in ("unavailable", "unknown"):
+                                continue
+                            sv = str(s.state)
+                            if debouncer.should_count(eid, is_motion, prev, sv, s.last_changed):
+                                self._routine_model.record(eid, s.last_changed, sv, is_binary_state(sv))
+                            prev = sv
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning("Could not load recorder history for %s", eid)
         except Exception:  # noqa: BLE001
             _LOGGER.warning("Behaviour Monitor: recorder bootstrap failed", exc_info=True)
+
+    async def _rebootstrap_motion_entities(self) -> None:
+        """One-shot after the v11 migration: rebuild motion routines with debounce.
+
+        Drops the learned routine and correlation counts for every motion-category
+        entity, replays recorder history for those entities, saves, then clears
+        the rebootstrap_motion flag on the config entry. CUSUM drift state and
+        last_seen are kept.
+        """
+        motion = [e for e in self._monitored_entities if self._categories.get(e) is EntityCategory.MOTION]
+        for eid in motion:
+            self._routine_model._entities.pop(eid, None)
+            self._correlation_detector.remove_entity(eid)
+        if motion:
+            await self._bootstrap_from_recorder(entity_ids=motion)
+            _LOGGER.info("Behaviour Monitor: re-bootstrapped %d motion entities with debounce", len(motion))
+        await self._save_data()
+        new_data = {k: v for k, v in self._entry.data.items() if k != CONF_REBOOTSTRAP_MOTION}
+        self.hass.config_entries.async_update_entry(self._entry, data=new_data)
