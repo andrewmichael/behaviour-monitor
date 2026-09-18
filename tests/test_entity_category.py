@@ -321,3 +321,45 @@ class TestDeriveWeightedStatus:
         assert rec == "Schedule a welfare check soon."
         _, rec = derive_weighted_status([_alert("x.y", AlertSeverity.LOW)], {})
         assert rec == "Monitor closely."
+
+
+class TestPanicCategory:
+    def test_constants(self) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_CATEGORY_PANIC,
+            CONF_PANIC_RENOTIFY_MINUTES,
+            DEFAULT_CATEGORY_PANIC,
+            DEFAULT_PANIC_RENOTIFY_MINUTES,
+            SERVICE_ACKNOWLEDGE_PANIC,
+            WELFARE_PANIC_RECOMMENDATION,
+        )
+
+        assert EntityCategory.PANIC.value == "panic"
+        assert AlertType.PANIC.value == "panic"
+        assert CONF_CATEGORY_PANIC == "category_panic"
+        assert DEFAULT_CATEGORY_PANIC == []
+        assert CONF_PANIC_RENOTIFY_MINUTES == "panic_renotify_minutes"
+        assert DEFAULT_PANIC_RENOTIFY_MINUTES == 5
+        assert SERVICE_ACKNOWLEDGE_PANIC == "acknowledge_panic"
+        assert WELFARE_PANIC_RECOMMENDATION == "Panic button pressed. Respond now."
+
+    def test_panic_only_from_override_list(self) -> None:
+        eid = "binary_sensor.sos"
+        assert infer_categories([eid], {EntityCategory.PANIC: [eid]}, {})[eid] is EntityCategory.PANIC
+
+    @pytest.mark.parametrize("dc", ["safety", "problem", "motion", None])
+    def test_panic_never_inferred_from_device_class(self, dc: str | None) -> None:
+        eid = "binary_sensor.sos"
+        assert infer_categories([eid], {}, {eid: dc})[eid] is not EntityCategory.PANIC
+
+    def test_weighted_status_skips_panic_alerts(self) -> None:
+        alerts = [_alert("binary_sensor.sos", AlertSeverity.HIGH, AlertType.PANIC), _alert("switch.p", AlertSeverity.LOW)]
+        cats = {"binary_sensor.sos": EntityCategory.PANIC, "switch.p": EntityCategory.PLUG}
+        status, _ = derive_weighted_status(alerts, cats)
+        assert status == "check_recommended"
+
+    def test_unknown_category_weight_defaults_to_one(self) -> None:
+        # a non-panic alert on a PANIC-category entity must not KeyError
+        alerts = [_alert("binary_sensor.sos", AlertSeverity.HIGH)]
+        status, _ = derive_weighted_status(alerts, {"binary_sensor.sos": EntityCategory.PANIC})
+        assert status == "alert"

@@ -28,6 +28,12 @@ class TestAlertTypeEnum:
 
         assert isinstance(AlertType.INACTIVITY, str)
 
+    def test_panic_type(self) -> None:
+        from custom_components.behaviour_monitor.alert_result import AlertType
+
+        assert AlertType.PANIC == "panic"
+        assert AlertType.PANIC.value == "panic"
+
 
 class TestAlertSeverityEnum:
     """AlertSeverity enum has the correct values and str serialization."""

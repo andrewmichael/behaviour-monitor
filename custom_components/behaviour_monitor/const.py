@@ -70,6 +70,9 @@ CONF_CATEGORY_CONTACT: Final = "category_contact"
 CONF_CATEGORY_PLUG: Final = "category_plug"
 CONF_CATEGORY_LIGHT: Final = "category_light"
 CONF_MOTION_DEBOUNCE_SECONDS: Final = "motion_debounce_seconds"
+# New v5.1 config keys (panic button)
+CONF_CATEGORY_PANIC: Final = "category_panic"
+CONF_PANIC_RENOTIFY_MINUTES: Final = "panic_renotify_minutes"
 # One-shot flag written by the v11 migration; cleared by the coordinator
 # after it re-bootstraps motion entities from recorder history.
 CONF_REBOOTSTRAP_MOTION: Final = "rebootstrap_motion"
@@ -80,6 +83,9 @@ DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
 DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
 DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
 DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
+# New v5.1 defaults
+DEFAULT_CATEGORY_PANIC: Final[list[str]] = []  # override-list only; never inferred
+DEFAULT_PANIC_RENOTIFY_MINUTES: Final = 5  # minutes between re-notifications until acknowledged
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
@@ -166,6 +172,7 @@ SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
 SERVICE_ROUTINE_RESET: Final = "routine_reset"
+SERVICE_ACKNOWLEDGE_PANIC: Final = "acknowledge_panic"
 
 # ---------------------------------------------------------------------------
 # Detection engine constants (v1.1)
@@ -253,6 +260,7 @@ class EntityCategory(Enum):
     CONTACT = "contact"
     PLUG = "plug"
     LIGHT = "light"
+    PANIC = "panic"  # override-list only; instant alert, no learning
     OTHER = "other"
 
 
@@ -280,3 +288,5 @@ SEVERITY_POINTS: Final = {
 
 WELFARE_ALERT_SCORE: Final[float] = 2.25
 WELFARE_CONCERN_SCORE: Final[float] = 1.25
+# Recommendation text when any panic button is active
+WELFARE_PANIC_RECOMMENDATION: Final = "Panic button pressed. Respond now."
