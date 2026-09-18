@@ -61,6 +61,12 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 - ✓ Panic button category (override-list only): instant unsuppressable notification, re-notify every N minutes until acknowledged, cleared on release; acknowledge via service and button entity; config migration v11→v12 — v5.1
 
+- ✓ Entity health classification (present/unavailable/missing) with auto-clearing repair issues for missing entities — v5.2
+- ✓ Qualified welfare status — `blind` when nothing is reporting (with a one-off notification), `degraded` on partial input loss or a device-health alert; confidence scoring counts lost inputs as zero — v5.2
+- ✓ Corrected entity status summary counts (OK/Need Attention/Missing/Unavailable) replacing the always-zero counter — v5.2
+- ✓ Panic device liveness — availability, last report, battery tracked per device; device-health alerts for unavailable, heartbeat, low battery, and test-reminder conditions; `panic_test` service opens a two-minute test window — v5.2
+- ✓ Start-up grace period and same-second burst discard to stop restart/reload synthetic-state storms from corrupting the baseline; config migration v12→v13 — v5.2
+
 ### Active
 
 *No active milestone. Ready for next milestone planning.*
@@ -76,23 +82,25 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 
 ## Context
 
-Shipped v5.1 with ~15,800 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 692 tests passing.
+Shipped v5.2 with ~17,700 LOC Python across `custom_components/behaviour_monitor/` and `tests/`. 783 tests passing.
 
-Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v12.
+Tech stack: Home Assistant custom integration, Python async, pure stdlib (no ML dependencies). Config schema at v13.
 
 Architecture:
 - `routine_model.py` — pure-Python baseline engine (168 slots × Welford statistics); `ActivitySlot.interval_cv()` for variance; `classify_tier()` for activity-rate classification; `format_duration()` shared utility
 - `acute_detector.py` — tier-aware inactivity detection with boost factors and absolute floors; CV-adaptive thresholds; unusual-time detection with sustained-evidence gating
 - `entity_category.py` — pure-Python entity categorisation, `MotionDebouncer` (rising-edge + merge window), and `derive_weighted_status()` for category-weighted welfare
-- `panic_monitor.py` — pure-Python panic state machine (press/release/acknowledge/due) persisted under `panic_state`
+- `panic_monitor.py` — pure-Python panic state machine (press/release/acknowledge/due) plus device liveness (`update_device`/`device_status`/`device_alerts`) and test-press windowing, persisted under `panic_state`
+- `entity_health.py` — pure-Python entity health classification (`resolve_entity_health`, `count_by_status`) and welfare qualification (`qualify_welfare`) for the blind/degraded override
+- `event_gate.py` — pure-Python `EventGate` implementing the start-up grace period and same-second burst discard over a small per-second buffer
 - `drift_detector.py` — bidirectional CUSUM with day-type split and exponential decay weighting
-- `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes
-- `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier per entity
-- `button.py` — Acknowledge Panic button entity
+- `coordinator.py` — DataUpdateCoordinator wiring all engines; daily tier reclassification; tier override from config; fire-once-then-throttle alert suppression; format_duration for sensor attributes; resolves entity health each poll, raises/clears repair issues, arms and flushes the event gate, qualifies welfare
+- `sensor.py` — 11 sensor entity descriptions; entity_status includes activity_tier, health, contributing per entity
+- `button.py` — Acknowledge Panic button entity; attributes include per-device liveness
 - `correlation_detector.py` — PMI-based co-occurrence discovery; check_breaks() with sustained evidence; decay_stale_pairs() and remove_entity() lifecycle management
-- `config_flow.py` — v11 config with category override lists, motion debounce window, per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity
-- `__init__.py` — service registration, config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10→v11→v12)
-- `translations/en.json` — user-friendly labels for all config fields
+- `config_flow.py` — v13 config with category override lists, motion debounce window, per-entity track_attributes include/exclude lists, correlation window, tier override (Auto/High/Medium/Low), alert repeat interval, min/max inactivity multiplier bounds, learning period, attribute tracking, history window, inactivity multiplier, drift sensitivity, start-up grace period, burst discard threshold, panic device heartbeat, panic test reminder
+- `__init__.py` — service registration (including `panic_test`), config migration chain (v2→v3→v4→v5→v6→v7→v8→v9→v10→v11→v12→v13)
+- `translations/en.json` — user-friendly labels for all config fields and the missing-entity repair issue
 
 Known tech debt: Phase 10 fallback path derives baseline data twice (informational, not a defect).
 
@@ -144,4 +152,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-18 after v5.1 milestone shipped*
+*Last updated: 2026-09-18 after v5.2 milestone shipped*

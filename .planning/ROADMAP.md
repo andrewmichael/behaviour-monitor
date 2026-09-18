@@ -10,6 +10,7 @@
 - ✅ **v4.0 Cross-Entity Correlation** — Phases 17-20 (shipped 2026-04-07)
 - ✅ **v5.0 Entity Categories** — Phases 21-23 (shipped 2026-09-18)
 - ✅ **v5.1 Panic Button** — Phase 24 (shipped 2026-09-18)
+- ✅ **v5.2 System Integrity** — Phase 25 (shipped 2026-09-18)
 
 ## Phases
 
@@ -85,6 +86,13 @@
 
 </details>
 
+<details>
+<summary>✅ v5.2 System Integrity (Phase 25) — SHIPPED 2026-09-18</summary>
+
+- [x] Phase 25: System Integrity (entity_health.py, event_gate.py, panic device liveness, repair issues, blind/degraded welfare, migration v13) — completed 2026-09-18
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -113,3 +121,4 @@
 | 22. Weighted Welfare | v5.0 | 1/1 | Complete | 2026-09-18 |
 | 23. Config, Migration v11 and Motion Re-bootstrap | v5.0 | 1/1 | Complete | 2026-09-18 |
 | 24. Panic Category, Instant Alert and Acknowledgement | v5.1 | 1/1 | Complete | 2026-09-18 |
+| 25. System Integrity | v5.2 | 1/1 | Complete | 2026-09-18 |

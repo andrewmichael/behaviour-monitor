@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v5.1
-milestone_name: Panic Button
+milestone: v5.2
+milestone_name: System Integrity
 status: shipped
-stopped_at: v5.1 shipped
-last_updated: "2026-09-18T18:49:31.000Z"
+stopped_at: v5.2 shipped
+last_updated: "2026-09-18T20:13:13.000Z"
 last_activity: 2026-09-18
 progress:
   total_phases: 1
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 20 — Correlation Lifecycle
+**Current focus:** Phase 25 — System Integrity
 
 ## Current Position
 
-Phase: 24
+Phase: 25
 Plan: Not started
 Status: Shipped
 Last activity: 2026-09-18
 
-Progress: [██████████] 100% (1/1 v5.1 phases)
+Progress: [██████████] 100% (1/1 v5.2 phases)
 
 ## Accumulated Context
 
@@ -55,6 +55,9 @@ See PROJECT.md Key Decisions table for full log.
 - [v5.1]: Panic is override-list only; no device-class inference (safety/problem are too ambiguous)
 - [v5.1]: Panic notifications bypass every suppression; re-notify rides the 60 s poll (≤60 s jitter accepted)
 - [v5.1]: Release clears acknowledgement; acknowledge stops repeats but keeps welfare at alert
+- [v5.2]: Welfare precedence is panic > blind > ordinary alert/concern/check > degraded > ok — an ordinary alert outranks degraded, but blind (nothing reporting) outranks an ordinary alert
+- [v5.2]: Event gate is armed at coordinator setup, which runs on both Home Assistant start and integration reload, so both synthetic-state moments get the start-up grace period
+- [v5.2]: Device-health alerts travel the ordinary notification path (severity gate, repeat interval) rather than a separate channel; snooze and holiday do not suppress them because they concern the equipment, not the resident
 
 ### Blockers/Concerns
 
