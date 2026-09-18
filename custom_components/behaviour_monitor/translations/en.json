@@ -24,7 +24,9 @@
           "category_contact": "Contact sensors",
           "category_plug": "Plugs and switches",
           "category_light": "Lights",
-          "motion_debounce_seconds": "Motion debounce window"
+          "motion_debounce_seconds": "Motion debounce window",
+          "category_panic": "Panic buttons",
+          "panic_renotify_minutes": "Panic re-notify interval"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -46,7 +48,9 @@
           "category_contact": "Force these entities into the contact category. Contact is inferred from door, window, opening and garage door device classes.",
           "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
-          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging."
+          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
+          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert.",
+          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
         }
       }
     },
@@ -83,7 +87,9 @@
           "category_contact": "Contact sensors",
           "category_plug": "Plugs and switches",
           "category_light": "Lights",
-          "motion_debounce_seconds": "Motion debounce window"
+          "motion_debounce_seconds": "Motion debounce window",
+          "category_panic": "Panic buttons",
+          "panic_renotify_minutes": "Panic re-notify interval"
         },
         "data_description": {
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
@@ -93,7 +99,9 @@
           "category_contact": "Force these entities into the contact category. Contact is inferred from door, window, opening and garage door device classes.",
           "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
           "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
-          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging."
+          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging.",
+          "category_panic": "Binary sensors that act as panic buttons. A press notifies immediately, even during snooze or holiday mode, and keeps re-notifying until acknowledged. Releasing the button clears the alert.",
+          "panic_renotify_minutes": "Minutes between repeat panic notifications until the alert is acknowledged."
         }
       }
     },

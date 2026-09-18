@@ -30,6 +30,7 @@ from .const import (
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_LIGHT,
     CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PANIC,
     CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
@@ -44,6 +45,7 @@ from .const import (
     CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
+    CONF_PANIC_RENOTIFY_MINUTES,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
@@ -52,6 +54,7 @@ from .const import (
     DEFAULT_CATEGORY_CONTACT,
     DEFAULT_CATEGORY_LIGHT,
     DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PANIC,
     DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS,
@@ -64,6 +67,7 @@ from .const import (
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_PANIC_RENOTIFY_MINUTES,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -111,6 +115,7 @@ _CATEGORY_LIST_KEYS: tuple[str, ...] = (
     CONF_CATEGORY_CONTACT,
     CONF_CATEGORY_PLUG,
     CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_PANIC,
 )
 
 
@@ -148,6 +153,8 @@ def _build_data_schema(
     category_plug_default: list[str] | None = None,
     category_light_default: list[str] | None = None,
     motion_debounce_seconds_default: int = DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    category_panic_default: list[str] | None = None,
+    panic_renotify_minutes_default: int = DEFAULT_PANIC_RENOTIFY_MINUTES,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -212,6 +219,21 @@ def _build_data_schema(
                 step=10,
                 mode=NumberSelectorMode.BOX,
                 unit_of_measurement="seconds",
+            )
+        ),
+        vol.Optional(
+            CONF_CATEGORY_PANIC,
+            default=list(category_panic_default or DEFAULT_CATEGORY_PANIC),
+        ): EntitySelector(EntitySelectorConfig(multiple=True, domain="binary_sensor")),
+        vol.Required(
+            CONF_PANIC_RENOTIFY_MINUTES, default=panic_renotify_minutes_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1,
+                max=60,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="minutes",
             )
         ),
         vol.Required(
@@ -538,6 +560,12 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_motion_debounce_seconds = self._config_entry.data.get(
             CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS
         )
+        current_category_panic = self._config_entry.data.get(
+            CONF_CATEGORY_PANIC, DEFAULT_CATEGORY_PANIC
+        )
+        current_panic_renotify_minutes = self._config_entry.data.get(
+            CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -561,6 +589,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             category_plug_default=current_category_plug,
             category_light_default=current_category_light,
             motion_debounce_seconds_default=current_motion_debounce_seconds,
+            category_panic_default=current_category_panic,
+            panic_renotify_minutes_default=current_panic_renotify_minutes,
         )
 
         return self.async_show_form(

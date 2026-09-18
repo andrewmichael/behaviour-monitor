@@ -1144,3 +1144,80 @@ class TestCategoryFields:
         assert kwargs["category_plug_default"] == ["switch.kettle"]
         assert kwargs["category_light_default"] == ["light.hall"]
         assert kwargs["motion_debounce_seconds_default"] == 45
+
+
+class TestPanicFields:
+    @pytest.fixture
+    def config_flow(self) -> BehaviourMonitorConfigFlow:
+        flow = BehaviourMonitorConfigFlow()
+        flow.hass = MagicMock()
+        return flow
+
+    @pytest.fixture
+    def options_flow(self, mock_config_entry: MagicMock) -> BehaviourMonitorOptionsFlow:
+        flow = BehaviourMonitorOptionsFlow(mock_config_entry)
+        flow.hass = MagicMock()
+        flow.hass.config_entries = MagicMock()
+        flow.hass.config_entries.async_update_entry = MagicMock()
+        return flow
+
+    @staticmethod
+    def _keys() -> tuple[str, str, str]:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_PANIC_RENOTIFY_MINUTES
+
+        return CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_PANIC_RENOTIFY_MINUTES
+
+    def _base_input(self, **extra: Any) -> dict[str, Any]:
+        _, panic, renotify = self._keys()
+        data = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+            CONF_TRACK_ATTRIBUTES: False,
+            panic: [],
+            renotify: 5,
+        }
+        data.update(extra)
+        return data
+
+    @pytest.mark.asyncio
+    async def test_fields_in_both_flows(self, config_flow: BehaviourMonitorConfigFlow, options_flow: BehaviourMonitorOptionsFlow) -> None:
+        _, panic, renotify = self._keys()
+        for result in (await config_flow.async_step_user(user_input=None), await options_flow.async_step_init(user_input=None)):
+            keys = {str(k) for k in result["data_schema"].keys()}
+            assert any(panic in k for k in keys)
+            assert any(renotify in k for k in keys)
+
+    @pytest.mark.asyncio
+    async def test_panic_overlap_with_motion_rejected(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        motion, panic, _ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{motion: ["sensor.test1"], panic: ["sensor.test1"]}))
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "category_overlap"
+
+    @pytest.mark.asyncio
+    async def test_options_normalises_cleared_panic_list(self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock) -> None:
+        _, panic, _ = self._keys()
+        mock_config_entry.data[panic] = ["binary_sensor.sos"]
+        user_input = self._base_input()
+        user_input.pop(panic)
+        result = await options_flow.async_step_init(user_input=user_input)
+        assert result["type"] == "create_entry"
+        saved = options_flow.hass.config_entries.async_update_entry.call_args.kwargs["data"]
+        assert saved[panic] == []
+
+    @pytest.mark.asyncio
+    async def test_options_prefills(self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import config_flow as cf_module
+
+        _, panic, renotify = self._keys()
+        mock_config_entry.data[panic] = ["binary_sensor.sos"]
+        mock_config_entry.data[renotify] = 10
+        with patch.object(cf_module, "_build_data_schema", wraps=cf_module._build_data_schema) as build:
+            result = await options_flow.async_step_init(user_input=None)
+        assert result["type"] == "form"
+        assert build.call_args.kwargs["category_panic_default"] == ["binary_sensor.sos"]
+        assert build.call_args.kwargs["panic_renotify_minutes_default"] == 10
