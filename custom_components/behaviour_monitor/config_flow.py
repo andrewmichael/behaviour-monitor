@@ -40,6 +40,8 @@ from .const import (
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_TRACK_ATTRIBUTES,
+    CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_CORRELATION_WINDOW,
@@ -53,6 +55,8 @@ from .const import (
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_TRACK_ATTRIBUTES,
+    DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
+    DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
     DOMAIN,
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
@@ -83,6 +87,15 @@ def _get_available_entities(hass: HomeAssistant) -> list[str]:
     return sorted(entities)
 
 
+def _validate_track_attribute_overrides(user_input: dict[str, Any]) -> str | None:
+    """Return an error key if the per-entity override lists conflict, else None."""
+    include = set(user_input.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
+    exclude = set(user_input.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
+    if include & exclude:
+        return "track_attributes_overlap"
+    return None
+
+
 def _build_data_schema(
     *,
     entities_default: list[str] | None = None,
@@ -99,6 +112,8 @@ def _build_data_schema(
     min_severity_default: str = DEFAULT_MIN_NOTIFICATION_SEVERITY,
     learning_period_default: int = DEFAULT_LEARNING_PERIOD_DAYS,
     track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
+    track_attributes_include_default: list[str] | None = None,
+    track_attributes_exclude_default: list[str] | None = None,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -130,6 +145,14 @@ def _build_data_schema(
         vol.Required(
             CONF_TRACK_ATTRIBUTES, default=track_attributes_default
         ): BooleanSelector(),
+        vol.Optional(
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+            default=list(track_attributes_include_default or DEFAULT_TRACK_ATTRIBUTES_INCLUDE),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            default=list(track_attributes_exclude_default or DEFAULT_TRACK_ATTRIBUTES_EXCLUDE),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
         vol.Required(
             CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
         ): NumberSelector(
@@ -276,7 +299,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 9
+    VERSION = 10
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -299,6 +322,8 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "inactivity_min_exceeds_max"
             elif not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
+            elif (override_error := _validate_track_attribute_overrides(user_input)):
+                errors["base"] = override_error
             else:
                 unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
                 await self.async_set_unique_id(unique_id)
@@ -352,6 +377,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 errors["base"] = "inactivity_min_exceeds_max"
             elif not user_input.get(CONF_MONITORED_ENTITIES):
                 errors["base"] = "no_entities_selected"
+            elif (override_error := _validate_track_attribute_overrides(user_input)):
+                errors["base"] = override_error
             else:
                 # Merge user input with existing data to preserve all fields
                 updated_data = dict(self._config_entry.data)
@@ -364,6 +391,12 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                     updated_data[CONF_NOTIFY_SERVICES] = []
                 elif not user_input.get(CONF_NOTIFY_SERVICES):
                     updated_data[CONF_NOTIFY_SERVICES] = []
+
+                # Same treatment for the per-entity override lists: a cleared
+                # entity selector may be absent from user_input entirely
+                for key in (CONF_TRACK_ATTRIBUTES_INCLUDE, CONF_TRACK_ATTRIBUTES_EXCLUDE):
+                    if not user_input.get(key):
+                        updated_data[key] = []
 
                 # Update the config entry data (not just options)
                 self.hass.config_entries.async_update_entry(
@@ -403,6 +436,12 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_track_attributes = self._config_entry.data.get(
             CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
         )
+        current_track_attributes_include = self._config_entry.data.get(
+            CONF_TRACK_ATTRIBUTES_INCLUDE, DEFAULT_TRACK_ATTRIBUTES_INCLUDE
+        )
+        current_track_attributes_exclude = self._config_entry.data.get(
+            CONF_TRACK_ATTRIBUTES_EXCLUDE, DEFAULT_TRACK_ATTRIBUTES_EXCLUDE
+        )
         current_min_inactivity_multiplier = self._config_entry.data.get(
             CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
         )
@@ -431,6 +470,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             min_severity_default=current_min_severity,
             learning_period_default=current_learning_period,
             track_attributes_default=current_track_attributes,
+            track_attributes_include_default=current_track_attributes_include,
+            track_attributes_exclude_default=current_track_attributes_exclude,
         )
 
         return self.async_show_form(

@@ -21,6 +21,10 @@ CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
 CONF_LEARNING_PERIOD: Final = "learning_period"
 CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
 
+# New v4.1 config keys (per-entity overrides of track_attributes)
+CONF_TRACK_ATTRIBUTES_INCLUDE: Final = "track_attributes_include"
+CONF_TRACK_ATTRIBUTES_EXCLUDE: Final = "track_attributes_exclude"
+
 # New v3.0 config keys
 CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
 CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
@@ -54,9 +58,13 @@ DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
 DEFAULT_LEARNING_PERIOD_DAYS: Final = 7  # days
 DEFAULT_TRACK_ATTRIBUTES: Final = False
 
+# New v4.1 defaults
+DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
+DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
+
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 9
+STORAGE_VERSION: Final = 10
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60

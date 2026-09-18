@@ -87,6 +87,10 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Correlation window | Time window in seconds for co-occurrence detection (30–600) | 120 (2 min) |
 | Activity tier override | Override auto-classified frequency tier for all entities (Auto/High/Medium/Low) | Auto |
 | Track attributes | Also track attribute changes, not just state changes | No |
+| Always track attribute changes for | Entities that count attribute-only changes regardless of the global toggle | Empty |
+| Never track attribute changes for | Entities that ignore attribute-only changes regardless of the global toggle | Empty |
+
+Per-entity overrides take precedence over the global "Track attributes" toggle. This lets you keep attribute tracking off globally (so noisy PIR motion sensors that update battery, illuminance, or last-seen attributes are not counted as activity) while opting in specific entities that only ever change attributes, or the reverse. An entity cannot appear in both lists.
 
 ### Upgrading
 
@@ -404,13 +408,14 @@ All data persists across Home Assistant restarts. Daily counts are only restored
 
 - Check `baseline_confidence` sensor — detection activates as the routine model learns (proportional to history window)
 - Verify monitored entities are actually changing state
-- Check if "Track attributes" is enabled if your entities only change attributes
+- Check if "Track attributes" is enabled if your entities only change attributes, or add them to "Always track attribute changes for"
 - Inactivity alerts require the learned interval to be established (sufficient slot observations)
 
 ### Activity Not Being Tracked
 
 - Ensure the entity is in the monitored entities list
 - Check if "Track attributes" is enabled — some entities only change attributes, not state
+- Check the entity is not in the "Never track attribute changes for" list
 - **Check if Holiday Mode is enabled** — all tracking is paused when ON
 - **Check if Snoozed** — pattern learning is paused during snooze
 

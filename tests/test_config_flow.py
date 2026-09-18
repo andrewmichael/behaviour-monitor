@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -166,9 +167,9 @@ class TestBehaviourMonitorConfigFlow:
         assert result["data"][CONF_DRIFT_SENSITIVITY] == SENSITIVITY_HIGH
 
     @pytest.mark.asyncio
-    async def test_version_is_9(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 9 after v4.0 correlation window config flow additions."""
-        assert config_flow.VERSION == 9
+    async def test_version_is_10(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        """Test VERSION is 10 after per-entity track_attributes override additions."""
+        assert config_flow.VERSION == 10
 
     @pytest.mark.asyncio
     async def test_schema_includes_activity_tier_override(self) -> None:
@@ -807,3 +808,200 @@ class TestBehaviourMonitorOptionsFlow:
         call_kwargs = options_flow.hass.config_entries.async_update_entry.call_args
         updated_data = call_kwargs[1]["data"]
         assert updated_data[CONF_CORRELATION_WINDOW] == 180
+
+
+class TestTrackAttributesOverrideFields:
+    """Per-entity track_attributes include/exclude fields in both flows."""
+
+    @pytest.fixture
+    def config_flow(self) -> BehaviourMonitorConfigFlow:
+        flow = BehaviourMonitorConfigFlow()
+        flow.hass = MagicMock()
+        return flow
+
+    @pytest.fixture
+    def options_flow(self, mock_config_entry: MagicMock) -> BehaviourMonitorOptionsFlow:
+        flow = BehaviourMonitorOptionsFlow(mock_config_entry)
+        flow.hass = MagicMock()
+        flow.hass.config_entries = MagicMock()
+        flow.hass.config_entries.async_update_entry = MagicMock()
+        return flow
+
+    @staticmethod
+    def _base_input(**extra: Any) -> dict[str, Any]:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        data = {
+            CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
+            CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
+            CONF_INACTIVITY_MULTIPLIER: DEFAULT_INACTIVITY_MULTIPLIER,
+            CONF_DRIFT_SENSITIVITY: SENSITIVITY_MEDIUM,
+            CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
+            CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
+            CONF_TRACK_ATTRIBUTES: False,
+            CONF_TRACK_ATTRIBUTES_INCLUDE: [],
+            CONF_TRACK_ATTRIBUTES_EXCLUDE: [],
+        }
+        data.update(extra)
+        return data
+
+    @pytest.mark.asyncio
+    async def test_user_schema_includes_override_fields(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await config_flow.async_step_user(user_input=None)
+        keys = {str(k) for k in result["data_schema"].keys()}
+        assert any(CONF_TRACK_ATTRIBUTES_INCLUDE in k for k in keys)
+        assert any(CONF_TRACK_ATTRIBUTES_EXCLUDE in k for k in keys)
+
+    @pytest.mark.asyncio
+    async def test_options_schema_includes_override_fields(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await options_flow.async_step_init(user_input=None)
+        keys = {str(k) for k in result["data_schema"].keys()}
+        assert any(CONF_TRACK_ATTRIBUTES_INCLUDE in k for k in keys)
+        assert any(CONF_TRACK_ATTRIBUTES_EXCLUDE in k for k in keys)
+
+    @pytest.mark.asyncio
+    async def test_user_rejects_entity_in_both_lists(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await config_flow.async_step_user(
+            user_input=self._base_input(
+                **{
+                    CONF_TRACK_ATTRIBUTES_INCLUDE: ["sensor.test1"],
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE: ["sensor.test1"],
+                }
+            )
+        )
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "track_attributes_overlap"
+
+    @pytest.mark.asyncio
+    async def test_options_rejects_entity_in_both_lists(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await options_flow.async_step_init(
+            user_input=self._base_input(
+                **{
+                    CONF_TRACK_ATTRIBUTES_INCLUDE: ["sensor.test1"],
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE: ["sensor.test1"],
+                }
+            )
+        )
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "track_attributes_overlap"
+        options_flow.hass.config_entries.async_update_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_user_accepts_disjoint_lists(
+        self, config_flow: BehaviourMonitorConfigFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await config_flow.async_step_user(
+            user_input=self._base_input(
+                **{
+                    CONF_TRACK_ATTRIBUTES_INCLUDE: ["sensor.test1"],
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE: ["sensor.test2"],
+                }
+            )
+        )
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_TRACK_ATTRIBUTES_INCLUDE] == ["sensor.test1"]
+        assert result["data"][CONF_TRACK_ATTRIBUTES_EXCLUDE] == ["sensor.test2"]
+
+    @pytest.mark.asyncio
+    async def test_options_persists_override_lists(
+        self, options_flow: BehaviourMonitorOptionsFlow
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        result = await options_flow.async_step_init(
+            user_input=self._base_input(
+                **{
+                    CONF_TRACK_ATTRIBUTES_INCLUDE: ["sensor.test1"],
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE: ["sensor.test2"],
+                }
+            )
+        )
+        assert result["type"] == "create_entry"
+        updated = options_flow.hass.config_entries.async_update_entry.call_args[1]["data"]
+        assert updated[CONF_TRACK_ATTRIBUTES_INCLUDE] == ["sensor.test1"]
+        assert updated[CONF_TRACK_ATTRIBUTES_EXCLUDE] == ["sensor.test2"]
+
+    @pytest.mark.asyncio
+    async def test_options_clears_lists_when_absent_from_input(
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+    ) -> None:
+        """A cleared entity selector may be missing from user_input; treat as empty."""
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        mock_config_entry.data[CONF_TRACK_ATTRIBUTES_INCLUDE] = ["sensor.test1"]
+        mock_config_entry.data[CONF_TRACK_ATTRIBUTES_EXCLUDE] = ["sensor.test2"]
+        user_input = self._base_input()
+        del user_input[CONF_TRACK_ATTRIBUTES_INCLUDE]
+        del user_input[CONF_TRACK_ATTRIBUTES_EXCLUDE]
+
+        result = await options_flow.async_step_init(user_input=user_input)
+        assert result["type"] == "create_entry"
+        updated = options_flow.hass.config_entries.async_update_entry.call_args[1]["data"]
+        assert updated[CONF_TRACK_ATTRIBUTES_INCLUDE] == []
+        assert updated[CONF_TRACK_ATTRIBUTES_EXCLUDE] == []
+
+    @pytest.mark.asyncio
+    async def test_options_prefills_existing_lists(
+        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
+    ) -> None:
+        from custom_components.behaviour_monitor.const import (
+            CONF_TRACK_ATTRIBUTES_EXCLUDE,
+            CONF_TRACK_ATTRIBUTES_INCLUDE,
+        )
+
+        from custom_components.behaviour_monitor import config_flow as cf_module
+
+        mock_config_entry.data[CONF_TRACK_ATTRIBUTES_INCLUDE] = ["sensor.test1"]
+        mock_config_entry.data[CONF_TRACK_ATTRIBUTES_EXCLUDE] = ["sensor.test2"]
+        # voluptuous is mocked in tests (markers collapse to bare keys), so
+        # verify the defaults handed to the schema builder instead
+        with patch.object(
+            cf_module, "_build_data_schema", wraps=cf_module._build_data_schema
+        ) as build:
+            result = await options_flow.async_step_init(user_input=None)
+        assert result["type"] == "form"
+        kwargs = build.call_args.kwargs
+        assert kwargs["track_attributes_include_default"] == ["sensor.test1"]
+        assert kwargs["track_attributes_exclude_default"] == ["sensor.test2"]

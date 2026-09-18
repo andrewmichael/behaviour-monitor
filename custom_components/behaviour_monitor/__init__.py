@@ -20,6 +20,8 @@ from .const import (
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_TRACK_ATTRIBUTES,
+    CONF_TRACK_ATTRIBUTES_EXCLUDE,
+    CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_CORRELATION_WINDOW,
@@ -29,6 +31,8 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_TRACK_ATTRIBUTES,
+    DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
+    DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
     DOMAIN,
     SENSITIVITY_MEDIUM,
     SERVICE_CLEAR_SNOOZE,
@@ -167,6 +171,20 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=9)
         _LOGGER.info(
             "Behaviour Monitor: Config entry migrated to v9 — correlation_window added"
+        )
+
+    if config_entry.version < 10:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(
+            CONF_TRACK_ATTRIBUTES_INCLUDE, list(DEFAULT_TRACK_ATTRIBUTES_INCLUDE)
+        )
+        new_data.setdefault(
+            CONF_TRACK_ATTRIBUTES_EXCLUDE, list(DEFAULT_TRACK_ATTRIBUTES_EXCLUDE)
+        )
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=10)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v10 — "
+            "per-entity track_attributes overrides added"
         )
 
     return True
