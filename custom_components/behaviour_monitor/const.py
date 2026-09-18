@@ -64,7 +64,7 @@ DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never t
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 9
+STORAGE_VERSION: Final = 10
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
