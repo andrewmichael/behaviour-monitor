@@ -27,6 +27,10 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
@@ -37,6 +41,7 @@ from .const import (
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
+    CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
     CONF_TRACK_ATTRIBUTES,
@@ -44,6 +49,10 @@ from .const import (
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_CATEGORY_CONTACT,
+    DEFAULT_CATEGORY_LIGHT,
+    DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
@@ -52,6 +61,7 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
+    DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_TRACK_ATTRIBUTES,
@@ -96,6 +106,25 @@ def _validate_track_attribute_overrides(user_input: dict[str, Any]) -> str | Non
     return None
 
 
+_CATEGORY_LIST_KEYS: tuple[str, ...] = (
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_PLUG,
+    CONF_CATEGORY_LIGHT,
+)
+
+
+def _validate_category_overrides(user_input: dict[str, Any]) -> str | None:
+    """Return an error key if an entity appears in more than one category list."""
+    seen: set[str] = set()
+    for key in _CATEGORY_LIST_KEYS:
+        current = set(user_input.get(key) or [])
+        if current & seen:
+            return "category_overlap"
+        seen |= current
+    return None
+
+
 def _build_data_schema(
     *,
     entities_default: list[str] | None = None,
@@ -114,6 +143,11 @@ def _build_data_schema(
     track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
     track_attributes_include_default: list[str] | None = None,
     track_attributes_exclude_default: list[str] | None = None,
+    category_motion_default: list[str] | None = None,
+    category_contact_default: list[str] | None = None,
+    category_plug_default: list[str] | None = None,
+    category_light_default: list[str] | None = None,
+    motion_debounce_seconds_default: int = DEFAULT_MOTION_DEBOUNCE_SECONDS,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -153,6 +187,33 @@ def _build_data_schema(
             CONF_TRACK_ATTRIBUTES_EXCLUDE,
             default=list(track_attributes_exclude_default or DEFAULT_TRACK_ATTRIBUTES_EXCLUDE),
         ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_MOTION,
+            default=list(category_motion_default or DEFAULT_CATEGORY_MOTION),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_CONTACT,
+            default=list(category_contact_default or DEFAULT_CATEGORY_CONTACT),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_PLUG,
+            default=list(category_plug_default or DEFAULT_CATEGORY_PLUG),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_LIGHT,
+            default=list(category_light_default or DEFAULT_CATEGORY_LIGHT),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Required(
+            CONF_MOTION_DEBOUNCE_SECONDS, default=motion_debounce_seconds_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=600,
+                step=10,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
         vol.Required(
             CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
         ): NumberSelector(
@@ -324,6 +385,8 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
+            elif (category_error := _validate_category_overrides(user_input)):
+                errors["base"] = category_error
             else:
                 unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
                 await self.async_set_unique_id(unique_id)
@@ -379,6 +442,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
+            elif (category_error := _validate_category_overrides(user_input)):
+                errors["base"] = category_error
             else:
                 # Merge user input with existing data to preserve all fields
                 updated_data = dict(self._config_entry.data)
@@ -394,7 +459,11 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
 
                 # Same treatment for the per-entity override lists: a cleared
                 # entity selector may be absent from user_input entirely
-                for key in (CONF_TRACK_ATTRIBUTES_INCLUDE, CONF_TRACK_ATTRIBUTES_EXCLUDE):
+                for key in (
+                    CONF_TRACK_ATTRIBUTES_INCLUDE,
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE,
+                    *_CATEGORY_LIST_KEYS,
+                ):
                     if not user_input.get(key):
                         updated_data[key] = []
 
@@ -454,6 +523,21 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_correlation_window = self._config_entry.data.get(
             CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW
         )
+        current_category_motion = self._config_entry.data.get(
+            CONF_CATEGORY_MOTION, DEFAULT_CATEGORY_MOTION
+        )
+        current_category_contact = self._config_entry.data.get(
+            CONF_CATEGORY_CONTACT, DEFAULT_CATEGORY_CONTACT
+        )
+        current_category_plug = self._config_entry.data.get(
+            CONF_CATEGORY_PLUG, DEFAULT_CATEGORY_PLUG
+        )
+        current_category_light = self._config_entry.data.get(
+            CONF_CATEGORY_LIGHT, DEFAULT_CATEGORY_LIGHT
+        )
+        current_motion_debounce_seconds = self._config_entry.data.get(
+            CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -472,6 +556,11 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             track_attributes_default=current_track_attributes,
             track_attributes_include_default=current_track_attributes_include,
             track_attributes_exclude_default=current_track_attributes_exclude,
+            category_motion_default=current_category_motion,
+            category_contact_default=current_category_contact,
+            category_plug_default=current_category_plug,
+            category_light_default=current_category_light,
+            motion_debounce_seconds_default=current_motion_debounce_seconds,
         )
 
         return self.async_show_form(

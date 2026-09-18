@@ -19,7 +19,12 @@
           "min_inactivity_multiplier": "Min inactivity multiplier",
           "max_inactivity_multiplier": "Max inactivity multiplier",
           "track_attributes_include": "Always track attribute changes for",
-          "track_attributes_exclude": "Never track attribute changes for"
+          "track_attributes_exclude": "Never track attribute changes for",
+          "category_motion": "Motion sensors",
+          "category_contact": "Contact sensors",
+          "category_plug": "Plugs and switches",
+          "category_light": "Lights",
+          "motion_debounce_seconds": "Motion debounce window"
         },
         "data_description": {
           "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
@@ -36,13 +41,19 @@
           "min_inactivity_multiplier": "Lower bound on the adaptive threshold multiplier (default 1.5). Prevents thresholds from becoming too tight on highly regular entities.",
           "max_inactivity_multiplier": "Upper bound on the adaptive threshold multiplier (default 10.0). Prevents thresholds from becoming too loose on erratic entities.",
           "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
-          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
+          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence.",
+          "category_motion": "Force these entities into the motion category. Motion is inferred automatically from the motion, occupancy and presence device classes; use this list to correct it.",
+          "category_contact": "Force these entities into the contact category. Contact is inferred from door, window, opening and garage door device classes.",
+          "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
+          "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
+          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging."
         }
       }
     },
     "error": {
       "no_entities_selected": "Please select at least one entity to monitor.",
-      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
+      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists.",
+      "category_overlap": "An entity cannot be in more than one category list."
     },
     "abort": {
       "already_configured": "This combination of entities is already being monitored."
@@ -67,18 +78,29 @@
           "min_inactivity_multiplier": "Min inactivity multiplier",
           "max_inactivity_multiplier": "Max inactivity multiplier",
           "track_attributes_include": "Always track attribute changes for",
-          "track_attributes_exclude": "Never track attribute changes for"
+          "track_attributes_exclude": "Never track attribute changes for",
+          "category_motion": "Motion sensors",
+          "category_contact": "Contact sensors",
+          "category_plug": "Plugs and switches",
+          "category_light": "Lights",
+          "motion_debounce_seconds": "Motion debounce window"
         },
         "data_description": {
           "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
           "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
-          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
+          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence.",
+          "category_motion": "Force these entities into the motion category. Motion is inferred automatically from the motion, occupancy and presence device classes; use this list to correct it.",
+          "category_contact": "Force these entities into the contact category. Contact is inferred from door, window, opening and garage door device classes.",
+          "category_plug": "Force these entities into the plug category. Plugs are inferred from the outlet and plug device classes and the switch domain. Plug alerts carry half weight in the welfare status.",
+          "category_light": "Force these entities into the light category. Lights are inferred from the light domain. Light alerts carry half weight in the welfare status.",
+          "motion_debounce_seconds": "Motion sensors only count when they turn on, and repeated triggers within this many seconds are merged into one activity. 0 disables merging."
         }
       }
     },
     "error": {
       "no_entities_selected": "Please select at least one entity to monitor.",
-      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
+      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists.",
+      "category_overlap": "An entity cannot be in more than one category list."
     }
   },
   "entity": {
