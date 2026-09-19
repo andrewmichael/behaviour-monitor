@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .const import (
@@ -90,6 +90,15 @@ class _EntityState:
     last_open_class: str | None = None
 
 
+@dataclass
+class _Excursion:
+    entity_id: str
+    role: EntityRole
+    anchor: datetime
+    last: datetime
+    entities: list[str]
+
+
 def _seconds(value: int) -> timedelta:
     return timedelta(seconds=max(0, int(value)))
 
@@ -104,6 +113,7 @@ class ActivityPipeline:
         self._collapse = _seconds(config.retrigger_collapse_seconds)
         self._excursion_window = _seconds(config.excursion_window_seconds)
         self._states: dict[str, _EntityState] = {}
+        self._excursion: _Excursion | None = None
 
     # ------------------------------------------------------------------
     # Submit
@@ -153,7 +163,38 @@ class ActivityPipeline:
         ):
             return []
         st.last_counted = event.timestamp
+        if event.role is EntityRole.DOOR_EXTERIOR and self._excursion_window:
+            return self._join_excursion(event)
         return [ActivityEvent(event.entity_id, event.role, event.timestamp)]
+
+    def _join_excursion(self, event: PipelineEvent) -> list[ActivityEvent]:
+        ex = self._excursion
+        if ex is not None and event.timestamp - ex.anchor < self._excursion_window:
+            ex.entities.append(event.entity_id)
+            ex.last = event.timestamp
+            return []
+        out = [self._close_excursion()] if ex is not None else []
+        self._excursion = _Excursion(
+            event.entity_id,
+            event.role,
+            event.timestamp,
+            event.timestamp,
+            [event.entity_id],
+        )
+        return out
+
+    def _close_excursion(self) -> ActivityEvent:
+        ex = self._excursion
+        assert ex is not None
+        self._excursion = None
+        return ActivityEvent(
+            ex.entity_id,
+            ex.role,
+            ex.anchor,
+            kind=EXCURSION,
+            entities=tuple(ex.entities),
+            duration_seconds=(ex.last - ex.anchor).total_seconds(),
+        )
 
     def _off_edge(
         self, event: PipelineEvent, st: _EntityState, prev_on: bool
@@ -186,12 +227,16 @@ class ActivityPipeline:
 
     def flush(self, now: datetime, *, force: bool = False) -> list[ActivityEvent]:
         """Release time-dependent output. ``force`` releases everything."""
+        out: list[ActivityEvent] = []
         for st in self._states.values():
             if st.pending_off is not None and (
                 force or now - st.pending_off >= self._collapse
             ):
                 self._confirm_off(st, st.pending_off)
-        return []
+        ex = self._excursion
+        if ex is not None and (force or now - ex.anchor >= self._excursion_window):
+            out.append(self._close_excursion())
+        return out
 
     def door_status(self, entity_id: str) -> dict[str, Any]:
         st = self._states.get(entity_id)
@@ -206,3 +251,27 @@ class ActivityPipeline:
             st = self._states.setdefault(eid, _EntityState())
             st.last_open_seconds = status.get("last_open_seconds")
             st.last_open_class = status.get("last_open_class")
+
+
+def replay(
+    events: Iterable[PipelineEvent], config: PipelineConfig
+) -> tuple[list[ActivityEvent], dict[str, dict[str, Any]]]:
+    """Run one pipeline over a whole event list (recorder bootstrap, CLI).
+
+    Events are sorted by timestamp; the pipeline is flushed at each event's
+    timestamp so time-dependent stages advance, and force-flushed at the end.
+    Returns the activity events and ``door_status`` for every door entity seen.
+    """
+    pipeline = ActivityPipeline(config)
+    out: list[ActivityEvent] = []
+    doors: set[str] = set()
+    last: datetime | None = None
+    for ev in sorted(events, key=lambda e: e.timestamp):
+        if ev.role.kind == "door":
+            doors.add(ev.entity_id)
+        out.extend(pipeline.flush(ev.timestamp))
+        out.extend(pipeline.submit(ev))
+        last = ev.timestamp
+    if last is not None:
+        out.extend(pipeline.flush(last, force=True))
+    return out, {eid: pipeline.door_status(eid) for eid in sorted(doors)}

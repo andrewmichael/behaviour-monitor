@@ -14,11 +14,13 @@ from custom_components.behaviour_monitor.const import (
 )
 from custom_components.behaviour_monitor.pipeline import (
     ACTIVATION,
+    EXCURSION,
     ActivityEvent,
     ActivityPipeline,
     PipelineConfig,
     PipelineEvent,
     classify_open_duration,
+    replay,
 )
 
 T0 = datetime(2026, 9, 1, 8, 0, 0, tzinfo=timezone.utc)
@@ -257,3 +259,103 @@ class TestOpenDuration:
         p = ActivityPipeline(cfg)
         p.seed_door_status({"b.door": {"last_open_seconds": 7.5, "last_open_class": DOOR_OPEN_BRIEF}})
         assert p.door_status("b.door") == {"last_open_seconds": 7.5, "last_open_class": DOOR_OPEN_BRIEF}
+
+
+class TestExcursions:
+    def test_two_doors_inside_window_is_one_excursion(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        out = _run(p, [
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "on", "off", 6),
+            _ev("b.side", EntityRole.DOOR_EXTERIOR, "off", "on", 45),
+        ])
+        assert out == []
+        out = p.flush(_at(59))
+        assert out == []
+        out = p.flush(_at(60))
+        assert len(out) == 1
+        ex = out[0]
+        assert (ex.kind, ex.entity_id, ex.role, ex.timestamp) == (EXCURSION, "b.back", EntityRole.DOOR_EXTERIOR, _at(0))
+        assert ex.entities == ("b.back", "b.side")
+        assert ex.duration_seconds == 45.0
+        assert ex.state == "on"
+
+    def test_single_door_excursion_has_zero_span(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0)])
+        out = p.flush(_at(0), force=True)
+        assert len(out) == 1 and out[0].entities == ("b.back",) and out[0].duration_seconds == 0.0
+
+    def test_activation_after_window_closes_and_starts_new(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        out = _run(p, [
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0),
+            _ev("b.side", EntityRole.DOOR_EXTERIOR, "off", "on", 200),
+        ])
+        assert len(out) == 1 and out[0].entities == ("b.back",)
+        out = p.flush(_at(260))
+        assert len(out) == 1 and out[0].entities == ("b.side",) and out[0].timestamp == _at(200)
+
+    def test_debounced_exterior_edge_does_not_join(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "on", "off", 10),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 30),  # < 60 s door debounce
+        ])
+        out = p.flush(_at(100))
+        assert out[0].entities == ("b.back",)
+
+    def test_interior_doors_never_group(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        out = _run(p, [
+            _ev("b.hall", EntityRole.DOOR_INTERIOR, "off", "on", 0),
+            _ev("b.lounge", EntityRole.DOOR_INTERIOR, "off", "on", 5),
+        ])
+        assert [e.kind for e in out] == [ACTIVATION, ACTIVATION]
+
+    def test_window_zero_disables(self) -> None:
+        p = ActivityPipeline(PipelineConfig(excursion_window_seconds=0))
+        out = _run(p, [_ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0)])
+        assert len(out) == 1 and out[0].kind == ACTIVATION
+
+    def test_idle_flush_after_excursion_emitted_is_empty(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0)])
+        assert len(p.flush(_at(0), force=True)) == 1
+        assert p.flush(_at(1000)) == []
+
+
+class TestReplay:
+    def test_sorts_flushes_and_reports_doors(self, cfg: PipelineConfig) -> None:
+        events = [
+            _ev("b.side", EntityRole.DOOR_EXTERIOR, "off", "on", 40),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "on", "off", 8),
+            _ev("b.pir", EntityRole.MOTION_KITCHEN, "off", "on", 500),
+            _ev("b.hall", EntityRole.DOOR_INTERIOR, "off", "on", 600),
+            _ev("b.hall", EntityRole.DOOR_INTERIOR, "on", "off", 630),
+        ]
+        out, doors = replay(events, cfg)
+        assert [(e.kind, e.entity_id, e.timestamp) for e in out] == [
+            (EXCURSION, "b.back", _at(0)),
+            (ACTIVATION, "b.pir", _at(500)),
+            (ACTIVATION, "b.hall", _at(600)),
+        ]
+        assert out[0].entities == ("b.back", "b.side")
+        assert set(doors) == {"b.back", "b.side", "b.hall"}
+        assert doors["b.back"] == {"last_open_seconds": 8.0, "last_open_class": DOOR_OPEN_BRIEF}
+        assert doors["b.hall"] == {"last_open_seconds": 30.0, "last_open_class": DOOR_OPEN_EXTENDED}
+        assert doors["b.side"] == {"last_open_seconds": None, "last_open_class": None}
+
+    def test_empty(self, cfg: PipelineConfig) -> None:
+        assert replay([], cfg) == ([], {})
+
+    def test_final_force_flush_emits_open_excursion_and_pending_off(self, cfg: PipelineConfig) -> None:
+        events = [
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "off", "on", 0),
+            _ev("b.back", EntityRole.DOOR_EXTERIOR, "on", "off", 3),
+        ]
+        out, doors = replay(events, cfg)
+        assert len(out) == 1 and out[0].kind == EXCURSION
+        assert doors["b.back"]["last_open_seconds"] == 3.0
