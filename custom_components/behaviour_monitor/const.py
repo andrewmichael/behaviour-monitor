@@ -64,15 +64,11 @@ DEFAULT_TRACK_ATTRIBUTES: Final = False
 DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
 DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
 
-# Legacy v5.0 keys and defaults: read by migrations and the config flow until Task 8 removes them.
+# Legacy v5.0 keys: read by the v11 and v14 migrations only.
 CONF_CATEGORY_MOTION: Final = "category_motion"
 CONF_CATEGORY_CONTACT: Final = "category_contact"
 CONF_CATEGORY_PLUG: Final = "category_plug"
 CONF_CATEGORY_LIGHT: Final = "category_light"
-DEFAULT_CATEGORY_MOTION: Final[list[str]] = []
-DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
-DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
-DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
 
 # New v5.0 config keys (motion debounce)
 CONF_MOTION_DEBOUNCE_SECONDS: Final = "motion_debounce_seconds"
@@ -125,7 +121,7 @@ DEFAULT_DOOR_OPEN_PROLONGED_SECONDS: Final = 120  # open at least this long = "p
 
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 13
+STORAGE_VERSION: Final = 14
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60

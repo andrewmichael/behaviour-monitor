@@ -472,9 +472,9 @@ class TestIntegrationLifecycle:
 class TestStorageVersion:
     """Tests for STORAGE_VERSION constant."""
 
-    def test_storage_version_is_13(self) -> None:
-        """Test that STORAGE_VERSION equals 13 after system integrity bump."""
-        assert STORAGE_VERSION == 13
+    def test_storage_version_is_14(self) -> None:
+        """Test that STORAGE_VERSION equals 14 after role config fields added."""
+        assert STORAGE_VERSION == 14
 
 
 class TestMigrateEntry:
@@ -646,8 +646,8 @@ class TestMigrateEntry:
         assert "enable_ml" not in new_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v2_updates_version_to_13(self) -> None:
-        """Migration from v2 ends at version=13 (v2->...->v12->v13)."""
+    async def test_migrate_v2_updates_version_to_14(self) -> None:
+        """Migration from v2 ends at version=14 (v2->...->v13->v14)."""
         hass = MagicMock()
         hass.config_entries.async_update_entry = MagicMock()
         entry = self._make_config_entry(
@@ -665,9 +665,9 @@ class TestMigrateEntry:
 
         assert result is True
         # Seven calls: v3, v4, v5, v6, v7, v8, v9
-        assert hass.config_entries.async_update_entry.call_count == 11
+        assert hass.config_entries.async_update_entry.call_count == 12
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 13
+        assert last_call[1]["version"] == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v3_upgrades_to_v9(self) -> None:
@@ -687,7 +687,7 @@ class TestMigrateEntry:
 
         assert result is True
         # Six calls: v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 10
+        assert hass.config_entries.async_update_entry.call_count == 11
         # Check v3->v4 call (index 0) for v4-specific changes
         v4_call = hass.config_entries.async_update_entry.call_args_list[0]
         assert v4_call[1]["version"] == 4
@@ -697,7 +697,7 @@ class TestMigrateEntry:
         assert v4_data["drift_sensitivity"] == "medium"
         # Final call should be v9
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 13
+        assert last_call[1]["version"] == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v4_upgrades_to_v9(self) -> None:
@@ -718,9 +718,9 @@ class TestMigrateEntry:
 
         assert result is True
         # Five calls: v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 9
+        assert hass.config_entries.async_update_entry.call_count == 10
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call.kwargs.get("version") == 13 or last_call[1].get("version") == 13
+        assert last_call.kwargs.get("version") == 14 or last_call[1].get("version") == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v4_adds_learning_period(self) -> None:
@@ -759,8 +759,8 @@ class TestMigrateEntry:
         assert updated_data[CONF_TRACK_ATTRIBUTES] == DEFAULT_TRACK_ATTRIBUTES
 
     @pytest.mark.asyncio
-    async def test_migrate_v4_updates_version_to_13(self) -> None:
-        """Migration from v4 ends at version=13 (v4->...->v12->v13)."""
+    async def test_migrate_v4_updates_version_to_14(self) -> None:
+        """Migration from v4 ends at version=14 (v4->...->v13->v14)."""
         hass = MagicMock()
         hass.config_entries = MagicMock()
         entry = self._make_config_entry(
@@ -771,7 +771,7 @@ class TestMigrateEntry:
         await async_migrate_entry(hass, entry)
 
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call.kwargs.get("version") == 13 or last_call[1].get("version") == 13
+        assert last_call.kwargs.get("version") == 14 or last_call[1].get("version") == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v4_preserves_existing_learning_period(self) -> None:
@@ -861,7 +861,7 @@ class TestMigrateEntryV5ToV6:
 
         assert result is True
         # Four calls: v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 8
+        assert hass.config_entries.async_update_entry.call_count == 9
         # v5->v6 call (index 0) adds alert_repeat_interval
         v6_call = hass.config_entries.async_update_entry.call_args_list[0]
         v6_data = v6_call.kwargs.get("data") or v6_call[1].get("data")
@@ -870,7 +870,7 @@ class TestMigrateEntryV5ToV6:
         # Final call should be v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v5_to_v6_preserves_existing(self) -> None:
@@ -893,10 +893,10 @@ class TestMigrateEntryV5ToV6:
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_ALERT_REPEAT_INTERVAL] == 120
 
-    def test_config_flow_version_is_13(self) -> None:
-        """BehaviourMonitorConfigFlow.VERSION should be 13 after system integrity bump."""
+    def test_config_flow_version_is_14(self) -> None:
+        """BehaviourMonitorConfigFlow.VERSION should be 14 after role config fields added."""
         from custom_components.behaviour_monitor.config_flow import BehaviourMonitorConfigFlow
-        assert BehaviourMonitorConfigFlow.VERSION == 13
+        assert BehaviourMonitorConfigFlow.VERSION == 14
 
 
 class TestMigrateEntryV6ToV7:
@@ -931,7 +931,7 @@ class TestMigrateEntryV6ToV7:
 
         assert result is True
         # Three calls: v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 7
+        assert hass.config_entries.async_update_entry.call_count == 8
         # v6->v7 call (index 0)
         call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
@@ -978,7 +978,7 @@ class TestMigrateEntryV6ToV7:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v7_migrates_to_v9(self) -> None:
@@ -997,7 +997,7 @@ class TestMigrateEntryV6ToV7:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 6
+        assert hass.config_entries.async_update_entry.call_count == 7
         # v7->v8 call (index 0)
         v8_call = hass.config_entries.async_update_entry.call_args_list[0]
         v8_data = v8_call.kwargs.get("data") or v8_call[1].get("data")
@@ -1007,7 +1007,7 @@ class TestMigrateEntryV6ToV7:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v6_preserves_existing_min_inactivity_multiplier(self) -> None:
@@ -1050,9 +1050,9 @@ class TestMigrateEntryV6ToV7:
 
         assert result is True
         # Seven migration steps: v2->v3, v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9
-        assert hass.config_entries.async_update_entry.call_count == 11
+        assert hass.config_entries.async_update_entry.call_count == 12
         last_call = hass.config_entries.async_update_entry.call_args
-        assert last_call[1]["version"] == 13
+        assert last_call[1]["version"] == 14
 
 
 class TestMigrateEntryV7ToV8:
@@ -1110,7 +1110,7 @@ class TestMigrateEntryV7ToV8:
         # Final call is v9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v7_to_v8_preserves_existing_override(self) -> None:
@@ -1149,13 +1149,13 @@ class TestMigrateEntryV7ToV8:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 5
+        assert hass.config_entries.async_update_entry.call_count == 6
         v9_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v9_call.kwargs.get("version") or v9_call[1].get("version")
         assert version == 9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
 
 class TestMigrateEntryV8ToV9:
@@ -1202,13 +1202,13 @@ class TestMigrateEntryV8ToV9:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 5
+        assert hass.config_entries.async_update_entry.call_count == 6
         v9_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v9_call.kwargs.get("version") or v9_call[1].get("version")
         assert version == 9
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v8_to_v9_preserves_existing_window(self) -> None:
@@ -1295,13 +1295,13 @@ class TestMigrateEntryV9ToV10:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 4
+        assert hass.config_entries.async_update_entry.call_count == 5
         v10_call = hass.config_entries.async_update_entry.call_args_list[0]
         version = v10_call.kwargs.get("version") or v10_call[1].get("version")
         assert version == 10
         last_call = hass.config_entries.async_update_entry.call_args
         version = last_call.kwargs.get("version") or last_call[1].get("version")
-        assert version == 13
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v9_to_v10_preserves_existing_lists(self) -> None:
@@ -1370,7 +1370,7 @@ class TestMigrateEntryV10ToV11:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 3
+        assert hass.config_entries.async_update_entry.call_count == 4
         call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_MOTION] == []
@@ -1399,7 +1399,9 @@ class TestMigrateEntryV10ToV11:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        call_args = hass.config_entries.async_update_entry.call_args
+        # v11 step is call index 0; v12/v13/v14 steps follow and v14 converts
+        # category lists into role_overrides, so check the v11 call itself.
+        call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_MOTION] == ["binary_sensor.pir"]
         assert updated_data[CONF_MOTION_DEBOUNCE_SECONDS] == 30
@@ -1421,7 +1423,9 @@ class TestMigrateEntryV10ToV11:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        call_args = hass.config_entries.async_update_entry.call_args
+        # v12 step is call index 0; v13/v14 steps follow and v14 converts
+        # category lists into role_overrides, so check the v12 call itself.
+        call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_MOTION] == ["binary_sensor.pir"]
 
@@ -1449,7 +1453,7 @@ class TestMigrateEntryV11ToV12:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        assert hass.config_entries.async_update_entry.call_count == 2
+        assert hass.config_entries.async_update_entry.call_count == 3
         call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_CATEGORY_PANIC] == []
@@ -1520,8 +1524,9 @@ class TestMigrateEntryV12ToV13:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        hass.config_entries.async_update_entry.assert_called_once()
-        call_args = hass.config_entries.async_update_entry.call_args
+        # v12 now cascades through v13 and v14.
+        assert hass.config_entries.async_update_entry.call_count == 2
+        call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_STARTUP_GRACE_SECONDS] == DEFAULT_STARTUP_GRACE_SECONDS
         assert updated_data[CONF_BURST_DISCARD_THRESHOLD] == DEFAULT_BURST_DISCARD_THRESHOLD
@@ -1529,6 +1534,9 @@ class TestMigrateEntryV12ToV13:
         assert updated_data[CONF_PANIC_TEST_REMINDER_DAYS] == DEFAULT_PANIC_TEST_REMINDER_DAYS
         version = call_args.kwargs.get("version") or call_args[1].get("version")
         assert version == 13
+        last_call = hass.config_entries.async_update_entry.call_args
+        version = last_call.kwargs.get("version") or last_call[1].get("version")
+        assert version == 14
 
     @pytest.mark.asyncio
     async def test_migrate_v12_to_v13_preserves_existing(self) -> None:
@@ -1539,7 +1547,8 @@ class TestMigrateEntryV12ToV13:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
-        call_args = hass.config_entries.async_update_entry.call_args
+        # v13 step is call index 0; v14 step follows.
+        call_args = hass.config_entries.async_update_entry.call_args_list[0]
         updated_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert updated_data[CONF_STARTUP_GRACE_SECONDS] == 0
         assert updated_data[CONF_PANIC_HEARTBEAT_HOURS] == 6
@@ -1553,4 +1562,82 @@ class TestMigrateEntryV12ToV13:
         result = await async_migrate_entry(hass, entry)
 
         assert result is True
+        hass.config_entries.async_update_entry.assert_called_once()
+        call_args = hass.config_entries.async_update_entry.call_args
+        version = call_args.kwargs.get("version") or call_args[1].get("version")
+        assert version == 14
+
+    @pytest.mark.asyncio
+    async def test_migrate_v13_to_v14_converts_lists_and_sets_flag(self) -> None:
+        import custom_components.behaviour_monitor as init_module
+        from custom_components.behaviour_monitor.const import (
+            CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT, CONF_CATEGORY_MOTION, CONF_CATEGORY_PLUG,
+            CONF_DOOR_DEBOUNCE_SECONDS, CONF_DOOR_OPEN_EXTENDED_SECONDS, CONF_DOOR_OPEN_PROLONGED_SECONDS,
+            CONF_EXCURSION_WINDOW_SECONDS, CONF_EXTERIOR_DOORS, CONF_REBOOTSTRAP_ROLES,
+            CONF_RETRIGGER_COLLAPSE_SECONDS, CONF_ROLE_OVERRIDES,
+        )
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=13, data={
+            "monitored_entities": ["binary_sensor.pir", "binary_sensor.door", "switch.kettle", "light.hall"],
+            CONF_CATEGORY_MOTION: ["binary_sensor.pir"], CONF_CATEGORY_CONTACT: ["binary_sensor.door"],
+            CONF_CATEGORY_PLUG: ["switch.kettle"], CONF_CATEGORY_LIGHT: ["light.hall"],
+        })
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock(device_class="door", original_device_class=None) if eid == "binary_sensor.door" else MagicMock(device_class=None, original_device_class=None)
+        with patch.object(init_module.er, "async_get", return_value=registry), \
+             patch.object(init_module.ir, "async_create_issue") as create:
+            result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        call_args = hass.config_entries.async_update_entry.call_args
+        data = call_args.kwargs["data"]
+        assert call_args.kwargs["version"] == 14
+        for key in (CONF_CATEGORY_MOTION, CONF_CATEGORY_CONTACT, CONF_CATEGORY_PLUG, CONF_CATEGORY_LIGHT):
+            assert key not in data
+        assert data[CONF_ROLE_OVERRIDES].splitlines() == [
+            "binary_sensor.pir: motion", "binary_sensor.door: door", "switch.kettle: appliance", "light.hall: appliance",
+        ]
+        assert data[CONF_EXTERIOR_DOORS] == []
+        assert (data[CONF_DOOR_DEBOUNCE_SECONDS], data[CONF_RETRIGGER_COLLAPSE_SECONDS], data[CONF_EXCURSION_WINDOW_SECONDS]) == (60, 5, 60)
+        assert (data[CONF_DOOR_OPEN_EXTENDED_SECONDS], data[CONF_DOOR_OPEN_PROLONGED_SECONDS]) == (15, 120)
+        assert data[CONF_REBOOTSTRAP_ROLES] is True
+        assert create.call_args.args[2] == "exterior_doors_unconfirmed"
+        assert create.call_args.kwargs["translation_key"] == "exterior_doors_unconfirmed"
+        assert create.call_args.kwargs["is_persistent"] is True
+
+    @pytest.mark.asyncio
+    async def test_migrate_v13_to_v14_no_issue_without_contact_entities(self) -> None:
+        import custom_components.behaviour_monitor as init_module
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=13, data={"monitored_entities": ["binary_sensor.pir"]})
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock(device_class="motion", original_device_class=None)
+        with patch.object(init_module.er, "async_get", return_value=registry), \
+             patch.object(init_module.ir, "async_create_issue") as create:
+            assert await async_migrate_entry(hass, entry) is True
+        create.assert_not_called()
+        data = hass.config_entries.async_update_entry.call_args.kwargs["data"]
+        assert data["role_overrides"] == ""
+
+    @pytest.mark.asyncio
+    async def test_migrate_v13_to_v14_survives_registry_failure(self) -> None:
+        import custom_components.behaviour_monitor as init_module
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=13, data={"monitored_entities": ["binary_sensor.pir"]})
+        with patch.object(init_module.er, "async_get", side_effect=RuntimeError("boom")):
+            assert await async_migrate_entry(hass, entry) is True
+        assert hass.config_entries.async_update_entry.call_args.kwargs["version"] == 14
+
+    @pytest.mark.asyncio
+    async def test_migrate_v14_is_noop(self) -> None:
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        entry = self._make_config_entry(version=14, data={"monitored_entities": ["sensor.test"]})
+        assert await async_migrate_entry(hass, entry) is True
         hass.config_entries.async_update_entry.assert_not_called()

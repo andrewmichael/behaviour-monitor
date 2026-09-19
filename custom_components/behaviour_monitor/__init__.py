@@ -7,6 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 import voluptuous as vol
 
 from .const import (
@@ -19,30 +20,41 @@ from .const import (
     CONF_CATEGORY_PANIC,
     CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
+    CONF_DOOR_DEBOUNCE_SECONDS,
+    CONF_DOOR_OPEN_EXTENDED_SECONDS,
+    CONF_DOOR_OPEN_PROLONGED_SECONDS,
     CONF_DRIFT_SENSITIVITY,
+    CONF_EXCURSION_WINDOW_SECONDS,
+    CONF_EXTERIOR_DOORS,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
+    CONF_MONITORED_ENTITIES,
     CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_PANIC_HEARTBEAT_HOURS,
     CONF_PANIC_RENOTIFY_MINUTES,
     CONF_PANIC_TEST_REMINDER_DAYS,
     CONF_REBOOTSTRAP_MOTION,
+    CONF_REBOOTSTRAP_ROLES,
+    CONF_RETRIGGER_COLLAPSE_SECONDS,
+    CONF_ROLE_OVERRIDES,
     CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
+    CONTACT_DEVICE_CLASSES,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_BURST_DISCARD_THRESHOLD,
-    DEFAULT_CATEGORY_CONTACT,
-    DEFAULT_CATEGORY_LIGHT,
-    DEFAULT_CATEGORY_MOTION,
     DEFAULT_CATEGORY_PANIC,
-    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
+    DEFAULT_DOOR_DEBOUNCE_SECONDS,
+    DEFAULT_DOOR_OPEN_EXTENDED_SECONDS,
+    DEFAULT_DOOR_OPEN_PROLONGED_SECONDS,
+    DEFAULT_EXCURSION_WINDOW_SECONDS,
+    DEFAULT_EXTERIOR_DOORS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
@@ -52,6 +64,7 @@ from .const import (
     DEFAULT_PANIC_HEARTBEAT_HOURS,
     DEFAULT_PANIC_RENOTIFY_MINUTES,
     DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_RETRIGGER_COLLAPSE_SECONDS,
     DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
@@ -214,10 +227,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     if config_entry.version < 11:
         new_data = dict(config_entry.data)
-        new_data.setdefault(CONF_CATEGORY_MOTION, list(DEFAULT_CATEGORY_MOTION))
-        new_data.setdefault(CONF_CATEGORY_CONTACT, list(DEFAULT_CATEGORY_CONTACT))
-        new_data.setdefault(CONF_CATEGORY_PLUG, list(DEFAULT_CATEGORY_PLUG))
-        new_data.setdefault(CONF_CATEGORY_LIGHT, list(DEFAULT_CATEGORY_LIGHT))
+        new_data.setdefault(CONF_CATEGORY_MOTION, [])
+        new_data.setdefault(CONF_CATEGORY_CONTACT, [])
+        new_data.setdefault(CONF_CATEGORY_PLUG, [])
+        new_data.setdefault(CONF_CATEGORY_LIGHT, [])
         new_data.setdefault(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS)
         # One-shot: the coordinator rebuilds motion routines with debounce
         # from recorder history on its next setup, then clears this flag.
@@ -246,7 +259,56 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=13)
         _LOGGER.info("Behaviour Monitor: Config entry migrated to v13 — system integrity settings added")
 
+    if config_entry.version < 14:
+        new_data = dict(config_entry.data)
+        lines = [ln for ln in (new_data.get(CONF_ROLE_OVERRIDES) or "").splitlines() if ln.strip()]
+        for key, value in (
+            (CONF_CATEGORY_MOTION, "motion"),
+            (CONF_CATEGORY_CONTACT, "door"),
+            (CONF_CATEGORY_PLUG, "appliance"),
+            (CONF_CATEGORY_LIGHT, "appliance"),
+        ):
+            lines.extend(f"{eid}: {value}" for eid in (new_data.pop(key, None) or []))
+        new_data[CONF_ROLE_OVERRIDES] = "\n".join(lines)
+        new_data.setdefault(CONF_EXTERIOR_DOORS, list(DEFAULT_EXTERIOR_DOORS))
+        new_data.setdefault(CONF_DOOR_DEBOUNCE_SECONDS, DEFAULT_DOOR_DEBOUNCE_SECONDS)
+        new_data.setdefault(CONF_RETRIGGER_COLLAPSE_SECONDS, DEFAULT_RETRIGGER_COLLAPSE_SECONDS)
+        new_data.setdefault(CONF_EXCURSION_WINDOW_SECONDS, DEFAULT_EXCURSION_WINDOW_SECONDS)
+        new_data.setdefault(CONF_DOOR_OPEN_EXTENDED_SECONDS, DEFAULT_DOOR_OPEN_EXTENDED_SECONDS)
+        new_data.setdefault(CONF_DOOR_OPEN_PROLONGED_SECONDS, DEFAULT_DOOR_OPEN_PROLONGED_SECONDS)
+        new_data[CONF_REBOOTSTRAP_ROLES] = True
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=14)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v14 — roles replace categories; "
+            "door/appliance baselines rebuild once"
+        )
+        if not new_data[CONF_EXTERIOR_DOORS] and _has_contact_entity(hass, new_data.get(CONF_MONITORED_ENTITIES, [])):
+            try:
+                ir.async_create_issue(
+                    hass, DOMAIN, "exterior_doors_unconfirmed",
+                    is_fixable=False, is_persistent=True, severity=ir.IssueSeverity.WARNING,
+                    translation_key="exterior_doors_unconfirmed",
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not create repair issue exterior_doors_unconfirmed")
+
     return True
+
+
+def _has_contact_entity(hass: HomeAssistant, entity_ids: list[str]) -> bool:
+    """True when any monitored entity has a contact device class in the entity registry."""
+    try:
+        registry = er.async_get(hass)
+        for eid in entity_ids:
+            entry = registry.async_get(eid)
+            if entry is None:
+                continue
+            dc = entry.device_class or entry.original_device_class
+            if isinstance(dc, str) and dc in CONTACT_DEVICE_CLASSES:
+                return True
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not inspect entity registry during migration", exc_info=True)
+    return False
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -28,14 +28,15 @@ from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
     CONF_BURST_DISCARD_THRESHOLD,
-    CONF_CATEGORY_CONTACT,
-    CONF_CATEGORY_LIGHT,
-    CONF_CATEGORY_MOTION,
     CONF_CATEGORY_PANIC,
-    CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
+    CONF_DOOR_DEBOUNCE_SECONDS,
+    CONF_DOOR_OPEN_EXTENDED_SECONDS,
+    CONF_DOOR_OPEN_PROLONGED_SECONDS,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
+    CONF_EXCURSION_WINDOW_SECONDS,
+    CONF_EXTERIOR_DOORS,
     CONF_HISTORY_WINDOW_DAYS,
     CONF_INACTIVITY_MULTIPLIER,
     CONF_LEARNING_PERIOD,
@@ -49,6 +50,8 @@ from .const import (
     CONF_PANIC_HEARTBEAT_HOURS,
     CONF_PANIC_RENOTIFY_MINUTES,
     CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_RETRIGGER_COLLAPSE_SECONDS,
+    CONF_ROLE_OVERRIDES,
     CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
@@ -56,13 +59,14 @@ from .const import (
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
     DEFAULT_BURST_DISCARD_THRESHOLD,
-    DEFAULT_CATEGORY_CONTACT,
-    DEFAULT_CATEGORY_LIGHT,
-    DEFAULT_CATEGORY_MOTION,
     DEFAULT_CATEGORY_PANIC,
-    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
+    DEFAULT_DOOR_DEBOUNCE_SECONDS,
+    DEFAULT_DOOR_OPEN_EXTENDED_SECONDS,
+    DEFAULT_DOOR_OPEN_PROLONGED_SECONDS,
     DEFAULT_ENABLE_NOTIFICATIONS,
+    DEFAULT_EXCURSION_WINDOW_SECONDS,
+    DEFAULT_EXTERIOR_DOORS,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
@@ -75,11 +79,14 @@ from .const import (
     DEFAULT_PANIC_HEARTBEAT_HOURS,
     DEFAULT_PANIC_RENOTIFY_MINUTES,
     DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_RETRIGGER_COLLAPSE_SECONDS,
+    DEFAULT_ROLE_OVERRIDES,
     DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
     DOMAIN,
+    ROLE_KINDS,
     SENSITIVITY_HIGH,
     SENSITIVITY_LOW,
     SENSITIVITY_MEDIUM,
@@ -88,6 +95,7 @@ from .const import (
     SEVERITY_MODERATE,
     SEVERITY_SIGNIFICANT,
 )
+from .entity_role import parse_role_overrides
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,23 +126,21 @@ def _validate_track_attribute_overrides(user_input: dict[str, Any]) -> str | Non
     return None
 
 
-_CATEGORY_LIST_KEYS: tuple[str, ...] = (
-    CONF_CATEGORY_MOTION,
-    CONF_CATEGORY_CONTACT,
-    CONF_CATEGORY_PLUG,
-    CONF_CATEGORY_LIGHT,
-    CONF_CATEGORY_PANIC,
-)
-
-
-def _validate_category_overrides(user_input: dict[str, Any]) -> str | None:
-    """Return an error key if an entity appears in more than one category list."""
-    seen: set[str] = set()
-    for key in _CATEGORY_LIST_KEYS:
-        current = set(user_input.get(key) or [])
-        if current & seen:
-            return "category_overlap"
-        seen |= current
+def _validate_roles(user_input: dict[str, Any]) -> str | None:
+    """Return an error key when the role inputs conflict, else None."""
+    try:
+        overrides = parse_role_overrides(user_input.get(CONF_ROLE_OVERRIDES) or "")
+    except ValueError:
+        return "role_overrides_invalid"
+    panic = set(user_input.get(CONF_CATEGORY_PANIC) or [])
+    exterior = set(user_input.get(CONF_EXTERIOR_DOORS) or [])
+    full_role = {eid for eid, value in overrides.items() if value not in ROLE_KINDS}
+    if panic & exterior or full_role & (panic | exterior):
+        return "role_overlap"
+    extended = int(user_input.get(CONF_DOOR_OPEN_EXTENDED_SECONDS, DEFAULT_DOOR_OPEN_EXTENDED_SECONDS))
+    prolonged = int(user_input.get(CONF_DOOR_OPEN_PROLONGED_SECONDS, DEFAULT_DOOR_OPEN_PROLONGED_SECONDS))
+    if extended >= prolonged:
+        return "door_open_thresholds"
     return None
 
 
@@ -156,11 +162,14 @@ def _build_data_schema(
     track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
     track_attributes_include_default: list[str] | None = None,
     track_attributes_exclude_default: list[str] | None = None,
-    category_motion_default: list[str] | None = None,
-    category_contact_default: list[str] | None = None,
-    category_plug_default: list[str] | None = None,
-    category_light_default: list[str] | None = None,
+    exterior_doors_default: list[str] | None = None,
+    role_overrides_default: str = DEFAULT_ROLE_OVERRIDES,
     motion_debounce_seconds_default: int = DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    door_debounce_seconds_default: int = DEFAULT_DOOR_DEBOUNCE_SECONDS,
+    retrigger_collapse_seconds_default: int = DEFAULT_RETRIGGER_COLLAPSE_SECONDS,
+    excursion_window_seconds_default: int = DEFAULT_EXCURSION_WINDOW_SECONDS,
+    door_open_extended_seconds_default: int = DEFAULT_DOOR_OPEN_EXTENDED_SECONDS,
+    door_open_prolonged_seconds_default: int = DEFAULT_DOOR_OPEN_PROLONGED_SECONDS,
     category_panic_default: list[str] | None = None,
     panic_renotify_minutes_default: int = DEFAULT_PANIC_RENOTIFY_MINUTES,
     startup_grace_seconds_default: int = DEFAULT_STARTUP_GRACE_SECONDS,
@@ -207,21 +216,12 @@ def _build_data_schema(
             default=list(track_attributes_exclude_default or DEFAULT_TRACK_ATTRIBUTES_EXCLUDE),
         ): EntitySelector(EntitySelectorConfig(multiple=True)),
         vol.Optional(
-            CONF_CATEGORY_MOTION,
-            default=list(category_motion_default or DEFAULT_CATEGORY_MOTION),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+            CONF_EXTERIOR_DOORS,
+            default=list(exterior_doors_default or DEFAULT_EXTERIOR_DOORS),
+        ): EntitySelector(EntitySelectorConfig(multiple=True, domain="binary_sensor")),
         vol.Optional(
-            CONF_CATEGORY_CONTACT,
-            default=list(category_contact_default or DEFAULT_CATEGORY_CONTACT),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
-        vol.Optional(
-            CONF_CATEGORY_PLUG,
-            default=list(category_plug_default or DEFAULT_CATEGORY_PLUG),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
-        vol.Optional(
-            CONF_CATEGORY_LIGHT,
-            default=list(category_light_default or DEFAULT_CATEGORY_LIGHT),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+            CONF_ROLE_OVERRIDES, default=role_overrides_default
+        ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT, multiline=True)),
         vol.Required(
             CONF_MOTION_DEBOUNCE_SECONDS, default=motion_debounce_seconds_default
         ): NumberSelector(
@@ -232,6 +232,21 @@ def _build_data_schema(
                 mode=NumberSelectorMode.BOX,
                 unit_of_measurement="seconds",
             )
+        ),
+        vol.Required(CONF_DOOR_DEBOUNCE_SECONDS, default=door_debounce_seconds_default): NumberSelector(
+            NumberSelectorConfig(min=0, max=600, step=10, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
+        ),
+        vol.Required(CONF_RETRIGGER_COLLAPSE_SECONDS, default=retrigger_collapse_seconds_default): NumberSelector(
+            NumberSelectorConfig(min=0, max=30, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
+        ),
+        vol.Required(CONF_EXCURSION_WINDOW_SECONDS, default=excursion_window_seconds_default): NumberSelector(
+            NumberSelectorConfig(min=0, max=600, step=10, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
+        ),
+        vol.Required(CONF_DOOR_OPEN_EXTENDED_SECONDS, default=door_open_extended_seconds_default): NumberSelector(
+            NumberSelectorConfig(min=1, max=3600, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
+        ),
+        vol.Required(CONF_DOOR_OPEN_PROLONGED_SECONDS, default=door_open_prolonged_seconds_default): NumberSelector(
+            NumberSelectorConfig(min=1, max=86400, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
         ),
         vol.Optional(
             CONF_CATEGORY_PANIC,
@@ -437,7 +452,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 13
+    VERSION = 14
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -462,8 +477,8 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
-            elif (category_error := _validate_category_overrides(user_input)):
-                errors["base"] = category_error
+            elif (role_error := _validate_roles(user_input)):
+                errors["base"] = role_error
             else:
                 unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
                 await self.async_set_unique_id(unique_id)
@@ -519,8 +534,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
-            elif (category_error := _validate_category_overrides(user_input)):
-                errors["base"] = category_error
+            elif (role_error := _validate_roles(user_input)):
+                errors["base"] = role_error
             else:
                 # Merge user input with existing data to preserve all fields
                 updated_data = dict(self._config_entry.data)
@@ -539,10 +554,14 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 for key in (
                     CONF_TRACK_ATTRIBUTES_INCLUDE,
                     CONF_TRACK_ATTRIBUTES_EXCLUDE,
-                    *_CATEGORY_LIST_KEYS,
+                    CONF_CATEGORY_PANIC,
+                    CONF_EXTERIOR_DOORS,
                 ):
                     if not user_input.get(key):
                         updated_data[key] = []
+
+                if not user_input.get(CONF_ROLE_OVERRIDES):
+                    updated_data[CONF_ROLE_OVERRIDES] = ""
 
                 # Update the config entry data (not just options)
                 self.hass.config_entries.async_update_entry(
@@ -600,20 +619,29 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_correlation_window = self._config_entry.data.get(
             CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW
         )
-        current_category_motion = self._config_entry.data.get(
-            CONF_CATEGORY_MOTION, DEFAULT_CATEGORY_MOTION
+        current_exterior_doors = self._config_entry.data.get(
+            CONF_EXTERIOR_DOORS, DEFAULT_EXTERIOR_DOORS
         )
-        current_category_contact = self._config_entry.data.get(
-            CONF_CATEGORY_CONTACT, DEFAULT_CATEGORY_CONTACT
-        )
-        current_category_plug = self._config_entry.data.get(
-            CONF_CATEGORY_PLUG, DEFAULT_CATEGORY_PLUG
-        )
-        current_category_light = self._config_entry.data.get(
-            CONF_CATEGORY_LIGHT, DEFAULT_CATEGORY_LIGHT
+        current_role_overrides = self._config_entry.data.get(
+            CONF_ROLE_OVERRIDES, DEFAULT_ROLE_OVERRIDES
         )
         current_motion_debounce_seconds = self._config_entry.data.get(
             CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS
+        )
+        current_door_debounce_seconds = self._config_entry.data.get(
+            CONF_DOOR_DEBOUNCE_SECONDS, DEFAULT_DOOR_DEBOUNCE_SECONDS
+        )
+        current_retrigger_collapse_seconds = self._config_entry.data.get(
+            CONF_RETRIGGER_COLLAPSE_SECONDS, DEFAULT_RETRIGGER_COLLAPSE_SECONDS
+        )
+        current_excursion_window_seconds = self._config_entry.data.get(
+            CONF_EXCURSION_WINDOW_SECONDS, DEFAULT_EXCURSION_WINDOW_SECONDS
+        )
+        current_door_open_extended_seconds = self._config_entry.data.get(
+            CONF_DOOR_OPEN_EXTENDED_SECONDS, DEFAULT_DOOR_OPEN_EXTENDED_SECONDS
+        )
+        current_door_open_prolonged_seconds = self._config_entry.data.get(
+            CONF_DOOR_OPEN_PROLONGED_SECONDS, DEFAULT_DOOR_OPEN_PROLONGED_SECONDS
         )
         current_category_panic = self._config_entry.data.get(
             CONF_CATEGORY_PANIC, DEFAULT_CATEGORY_PANIC
@@ -651,11 +679,14 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             track_attributes_default=current_track_attributes,
             track_attributes_include_default=current_track_attributes_include,
             track_attributes_exclude_default=current_track_attributes_exclude,
-            category_motion_default=current_category_motion,
-            category_contact_default=current_category_contact,
-            category_plug_default=current_category_plug,
-            category_light_default=current_category_light,
+            exterior_doors_default=current_exterior_doors,
+            role_overrides_default=current_role_overrides,
             motion_debounce_seconds_default=current_motion_debounce_seconds,
+            door_debounce_seconds_default=current_door_debounce_seconds,
+            retrigger_collapse_seconds_default=current_retrigger_collapse_seconds,
+            excursion_window_seconds_default=current_excursion_window_seconds,
+            door_open_extended_seconds_default=current_door_open_extended_seconds,
+            door_open_prolonged_seconds_default=current_door_open_prolonged_seconds,
             category_panic_default=current_category_panic,
             panic_renotify_minutes_default=current_panic_renotify_minutes,
             startup_grace_seconds_default=current_startup_grace_seconds,

@@ -168,8 +168,8 @@ class TestBehaviourMonitorConfigFlow:
 
     @pytest.mark.asyncio
     async def test_version_is_13(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        """Test VERSION is 13 after system integrity additions."""
-        assert config_flow.VERSION == 13
+        """Test VERSION is 14 after role config fields added."""
+        assert config_flow.VERSION == 14
 
     @pytest.mark.asyncio
     async def test_schema_includes_activity_tier_override(self) -> None:
@@ -1007,8 +1007,8 @@ class TestTrackAttributesOverrideFields:
         assert kwargs["track_attributes_exclude_default"] == ["sensor.test2"]
 
 
-class TestCategoryFields:
-    """v5.0 category override lists and motion debounce window in both flows."""
+class TestRoleFields:
+    """v5.3 role lists, override map and pipeline thresholds in both flows."""
 
     @pytest.fixture
     def config_flow(self) -> BehaviourMonitorConfigFlow:
@@ -1025,25 +1025,18 @@ class TestCategoryFields:
         return flow
 
     @staticmethod
-    def _keys() -> tuple[str, str, str, str, str]:
+    def _keys() -> tuple[str, ...]:
         from custom_components.behaviour_monitor.const import (
-            CONF_CATEGORY_CONTACT,
-            CONF_CATEGORY_LIGHT,
-            CONF_CATEGORY_MOTION,
-            CONF_CATEGORY_PLUG,
-            CONF_MOTION_DEBOUNCE_SECONDS,
+            CONF_DOOR_DEBOUNCE_SECONDS, CONF_DOOR_OPEN_EXTENDED_SECONDS, CONF_DOOR_OPEN_PROLONGED_SECONDS,
+            CONF_EXCURSION_WINDOW_SECONDS, CONF_EXTERIOR_DOORS, CONF_RETRIGGER_COLLAPSE_SECONDS, CONF_ROLE_OVERRIDES,
         )
-
         return (
-            CONF_CATEGORY_MOTION,
-            CONF_CATEGORY_CONTACT,
-            CONF_CATEGORY_PLUG,
-            CONF_CATEGORY_LIGHT,
-            CONF_MOTION_DEBOUNCE_SECONDS,
+            CONF_EXTERIOR_DOORS, CONF_ROLE_OVERRIDES, CONF_DOOR_DEBOUNCE_SECONDS, CONF_RETRIGGER_COLLAPSE_SECONDS,
+            CONF_EXCURSION_WINDOW_SECONDS, CONF_DOOR_OPEN_EXTENDED_SECONDS, CONF_DOOR_OPEN_PROLONGED_SECONDS,
         )
 
     def _base_input(self, **extra: Any) -> dict[str, Any]:
-        motion, contact, plug, light, debounce = self._keys()
+        ext, ovr, ddb, col, exc, opx, opp = self._keys()
         data = {
             CONF_MONITORED_ENTITIES: ["sensor.test1", "sensor.test2"],
             CONF_HISTORY_WINDOW_DAYS: DEFAULT_HISTORY_WINDOW_DAYS,
@@ -1052,98 +1045,92 @@ class TestCategoryFields:
             CONF_ENABLE_NOTIFICATIONS: DEFAULT_ENABLE_NOTIFICATIONS,
             CONF_NOTIFICATION_COOLDOWN: DEFAULT_NOTIFICATION_COOLDOWN,
             CONF_TRACK_ATTRIBUTES: False,
-            motion: [],
-            contact: [],
-            plug: [],
-            light: [],
-            debounce: 120,
+            ext: [], ovr: "", ddb: 60, col: 5, exc: 60, opx: 15, opp: 120,
         }
         data.update(extra)
         return data
 
     @pytest.mark.asyncio
-    async def test_user_schema_includes_category_fields(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+    async def test_user_schema_includes_role_fields_and_not_category_lists(self, config_flow) -> None:
         result = await config_flow.async_step_user(user_input=None)
         keys = {str(k) for k in result["data_schema"].keys()}
         for key in self._keys():
             assert any(key in k for k in keys), key
+        assert not any("category_motion" in k or "category_contact" in k for k in keys)
 
     @pytest.mark.asyncio
-    async def test_options_schema_includes_category_fields(self, options_flow: BehaviourMonitorOptionsFlow) -> None:
+    async def test_options_schema_includes_role_fields(self, options_flow) -> None:
         result = await options_flow.async_step_init(user_input=None)
         keys = {str(k) for k in result["data_schema"].keys()}
         for key in self._keys():
             assert any(key in k for k in keys), key
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("pair", [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)])
-    async def test_user_rejects_entity_in_two_lists(
-        self, config_flow: BehaviourMonitorConfigFlow, pair: tuple[int, int]
-    ) -> None:
-        keys = self._keys()
-        result = await config_flow.async_step_user(
-            user_input=self._base_input(**{keys[pair[0]]: ["sensor.test1"], keys[pair[1]]: ["sensor.test1"]})
-        )
-        assert result["type"] == "form"
-        assert result["errors"]["base"] == "category_overlap"
+    async def test_user_rejects_bad_override_line(self, config_flow) -> None:
+        _, ovr, *_ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{ovr: "sensor.test1 motion"}))
+        assert result["type"] == "form" and result["errors"]["base"] == "role_overrides_invalid"
 
     @pytest.mark.asyncio
-    async def test_options_rejects_entity_in_two_lists(self, options_flow: BehaviourMonitorOptionsFlow) -> None:
-        motion, contact, *_ = self._keys()
-        result = await options_flow.async_step_init(
-            user_input=self._base_input(**{motion: ["sensor.test1"], contact: ["sensor.test1"]})
-        )
-        assert result["type"] == "form"
-        assert result["errors"]["base"] == "category_overlap"
+    async def test_user_rejects_entity_in_panic_and_exterior(self, config_flow) -> None:
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC
+
+        ext, *_ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{ext: ["binary_sensor.x"], CONF_CATEGORY_PANIC: ["binary_sensor.x"]}))
+        assert result["errors"]["base"] == "role_overlap"
 
     @pytest.mark.asyncio
-    async def test_user_accepts_disjoint_lists(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        motion, contact, plug, light, debounce = self._keys()
-        result = await config_flow.async_step_user(
-            user_input=self._base_input(**{motion: ["sensor.test1"], plug: ["sensor.test2"], debounce: 60})
-        )
+    async def test_user_rejects_full_role_override_of_exterior_door(self, config_flow) -> None:
+        ext, ovr, *_ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{ext: ["binary_sensor.x"], ovr: "binary_sensor.x: motion.kitchen"}))
+        assert result["errors"]["base"] == "role_overlap"
+
+    @pytest.mark.asyncio
+    async def test_user_accepts_kind_override_of_exterior_door(self, config_flow) -> None:
+        ext, ovr, *_ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{ext: ["binary_sensor.x"], ovr: "binary_sensor.x: door"}))
         assert result["type"] == "create_entry"
-        assert result["data"][motion] == ["sensor.test1"]
-        assert result["data"][plug] == ["sensor.test2"]
-        assert result["data"][debounce] == 60
 
     @pytest.mark.asyncio
-    async def test_options_normalises_cleared_lists(
-        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
-    ) -> None:
-        motion, contact, plug, light, _ = self._keys()
-        mock_config_entry.data[motion] = ["sensor.test1"]
-        mock_config_entry.data[light] = ["sensor.test2"]
+    async def test_user_rejects_extended_not_below_prolonged(self, config_flow) -> None:
+        *_, opx, opp = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{opx: 120, opp: 120}))
+        assert result["errors"]["base"] == "door_open_thresholds"
+
+    @pytest.mark.asyncio
+    async def test_options_rejects_bad_override_line(self, options_flow) -> None:
+        _, ovr, *_ = self._keys()
+        result = await options_flow.async_step_init(user_input=self._base_input(**{ovr: "x: y"}))
+        assert result["errors"]["base"] == "role_overrides_invalid"
+
+    @pytest.mark.asyncio
+    async def test_options_clears_absent_fields(self, options_flow) -> None:
+        ext, ovr, *_ = self._keys()
         user_input = self._base_input()
-        for key in (motion, contact, plug, light):
-            user_input.pop(key)  # cleared selectors are absent from user_input
+        user_input.pop(ext)
+        user_input.pop(ovr)
         result = await options_flow.async_step_init(user_input=user_input)
         assert result["type"] == "create_entry"
         saved = options_flow.hass.config_entries.async_update_entry.call_args.kwargs["data"]
-        for key in (motion, contact, plug, light):
-            assert saved[key] == []
+        assert saved[ext] == [] and saved[ovr] == ""
 
     @pytest.mark.asyncio
-    async def test_options_prefills_existing_values(
-        self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock
-    ) -> None:
+    async def test_options_prefills_existing_values(self, options_flow, mock_config_entry) -> None:
         from custom_components.behaviour_monitor import config_flow as cf_module
 
-        motion, contact, plug, light, debounce = self._keys()
-        mock_config_entry.data[motion] = ["binary_sensor.pir"]
-        mock_config_entry.data[contact] = ["binary_sensor.door"]
-        mock_config_entry.data[plug] = ["switch.kettle"]
-        mock_config_entry.data[light] = ["light.hall"]
-        mock_config_entry.data[debounce] = 45
+        ext, ovr, ddb, col, exc, opx, opp = self._keys()
+        mock_config_entry.data.update({ext: ["binary_sensor.front"], ovr: "a.b: motion", ddb: 30, col: 2, exc: 90, opx: 20, opp: 300})
         with patch.object(cf_module, "_build_data_schema", wraps=cf_module._build_data_schema) as build:
             result = await options_flow.async_step_init(user_input=None)
         assert result["type"] == "form"
         kwargs = build.call_args.kwargs
-        assert kwargs["category_motion_default"] == ["binary_sensor.pir"]
-        assert kwargs["category_contact_default"] == ["binary_sensor.door"]
-        assert kwargs["category_plug_default"] == ["switch.kettle"]
-        assert kwargs["category_light_default"] == ["light.hall"]
-        assert kwargs["motion_debounce_seconds_default"] == 45
+        assert kwargs["exterior_doors_default"] == ["binary_sensor.front"]
+        assert kwargs["role_overrides_default"] == "a.b: motion"
+        assert (kwargs["door_debounce_seconds_default"], kwargs["retrigger_collapse_seconds_default"], kwargs["excursion_window_seconds_default"]) == (30, 2, 90)
+        assert (kwargs["door_open_extended_seconds_default"], kwargs["door_open_prolonged_seconds_default"]) == (20, 300)
+
+    def test_version_is_14(self) -> None:
+        assert BehaviourMonitorConfigFlow.VERSION == 14
 
 
 class TestPanicFields:
@@ -1163,9 +1150,9 @@ class TestPanicFields:
 
     @staticmethod
     def _keys() -> tuple[str, str, str]:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_PANIC_RENOTIFY_MINUTES
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_EXTERIOR_DOORS, CONF_PANIC_RENOTIFY_MINUTES
 
-        return CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_PANIC_RENOTIFY_MINUTES
+        return CONF_EXTERIOR_DOORS, CONF_CATEGORY_PANIC, CONF_PANIC_RENOTIFY_MINUTES
 
     def _base_input(self, **extra: Any) -> dict[str, Any]:
         _, panic, renotify = self._keys()
@@ -1192,11 +1179,11 @@ class TestPanicFields:
             assert any(renotify in k for k in keys)
 
     @pytest.mark.asyncio
-    async def test_panic_overlap_with_motion_rejected(self, config_flow: BehaviourMonitorConfigFlow) -> None:
-        motion, panic, _ = self._keys()
-        result = await config_flow.async_step_user(user_input=self._base_input(**{motion: ["sensor.test1"], panic: ["sensor.test1"]}))
+    async def test_panic_overlap_with_exterior_door_rejected(self, config_flow: BehaviourMonitorConfigFlow) -> None:
+        exterior, panic, _ = self._keys()
+        result = await config_flow.async_step_user(user_input=self._base_input(**{exterior: ["binary_sensor.x"], panic: ["binary_sensor.x"]}))
         assert result["type"] == "form"
-        assert result["errors"]["base"] == "category_overlap"
+        assert result["errors"]["base"] == "role_overlap"
 
     @pytest.mark.asyncio
     async def test_options_normalises_cleared_panic_list(self, options_flow: BehaviourMonitorOptionsFlow, mock_config_entry: MagicMock) -> None:
