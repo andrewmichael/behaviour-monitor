@@ -556,7 +556,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entity_id=ev.entity_id, timestamp=ev.timestamp, state_value=ev.state, is_binary=is_binary_state(ev.state)
             )
             self._correlation_detector.record_event(ev.entity_id, ev.timestamp, self._last_seen)
-            if self._today_date != ev.timestamp.date():
+            if self._today_date is None or ev.timestamp.date() > self._today_date:
                 self._today_count, self._today_date = 0, ev.timestamp.date()
             self._today_count += 1
 

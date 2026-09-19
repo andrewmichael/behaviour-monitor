@@ -1540,6 +1540,25 @@ class TestEntityRoles:
         assert "binary_sensor.back" in c._routine_model._entities
         assert "binary_sensor.side" not in c._routine_model._entities
 
+    def test_backdated_excursion_does_not_reset_daily_count_across_midnight(
+        self, mock_hass, mock_config_entry
+    ) -> None:
+        """Minor 3: an excursion's anchor timestamp can be up to 60 s in the
+        past; if that lands on the previous day, the count must not reset."""
+        from custom_components.behaviour_monitor.pipeline import ActivityEvent
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.back"])
+        today = datetime(2026, 9, 19, 0, 0, 20)
+        c._today_date = today.date()
+        c._today_count = 5
+        backdated = ActivityEvent(
+            "binary_sensor.back", EntityRole.DOOR_EXTERIOR,
+            datetime(2026, 9, 18, 23, 59, 30),
+        )
+        c._consume_activity([backdated])
+        assert c._today_count == 6
+        assert c._today_date == today.date()
+
     @pytest.mark.asyncio
     async def test_pipeline_flushed_on_poll(self, mock_hass, mock_config_entry) -> None:
         from custom_components.behaviour_monitor.pipeline import ActivityEvent
