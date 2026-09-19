@@ -1,0 +1,7 @@
+binary_sensor.pir_kitchen: motion.kitchen
+binary_sensor.pir_bathroom: motion.bathroom
+binary_sensor.pir_hall: motion.transit
+binary_sensor.door_back: door.exterior
+binary_sensor.door_side: door.exterior
+binary_sensor.door_lounge: door.interior
+switch.teasmade: appliance
