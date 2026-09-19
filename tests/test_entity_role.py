@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from custom_components.behaviour_monitor.alert_result import AlertResult, AlertSeverity, AlertType
+from custom_components.behaviour_monitor.alert_result import (
+    AlertResult,
+    AlertSeverity,
+    AlertType,
+)
 from custom_components.behaviour_monitor.const import (
     AREA_ROLE_KEYWORDS,
     CONF_DOOR_DEBOUNCE_SECONDS,
@@ -45,9 +49,17 @@ from custom_components.behaviour_monitor.entity_role import (
 class TestRoleConstants:
     def test_role_values(self) -> None:
         assert {r.value for r in EntityRole} == {
-            "motion.bathroom", "motion.bedroom", "motion.living", "motion.kitchen",
-            "motion.transit", "motion.unassigned", "door.exterior", "door.interior",
-            "appliance", "panic", "other",
+            "motion.bathroom",
+            "motion.bedroom",
+            "motion.living",
+            "motion.kitchen",
+            "motion.transit",
+            "motion.unassigned",
+            "door.exterior",
+            "door.interior",
+            "appliance",
+            "panic",
+            "other",
         }
 
     @pytest.mark.parametrize(
@@ -71,20 +83,34 @@ class TestRoleConstants:
             EntityRole.from_string("door.side")
 
     def test_kinds_and_weights(self) -> None:
-        assert ROLE_KINDS == frozenset({"motion", "door", "appliance", "panic", "other"})
-        assert KIND_WEIGHT == {"motion": 1.0, "door": 0.8, "appliance": 0.5, "other": 1.0}
+        assert ROLE_KINDS == frozenset(
+            {"motion", "door", "appliance", "panic", "other"}
+        )
+        assert KIND_WEIGHT == {
+            "motion": 1.0,
+            "door": 0.8,
+            "appliance": 0.5,
+            "other": 1.0,
+        }
 
     def test_area_keywords_cover_every_room_role(self) -> None:
         roles = [role for role, _ in AREA_ROLE_KEYWORDS]
         assert roles == [
-            EntityRole.MOTION_BATHROOM, EntityRole.MOTION_BEDROOM, EntityRole.MOTION_LIVING,
-            EntityRole.MOTION_KITCHEN, EntityRole.MOTION_TRANSIT,
+            EntityRole.MOTION_BATHROOM,
+            EntityRole.MOTION_BEDROOM,
+            EntityRole.MOTION_LIVING,
+            EntityRole.MOTION_KITCHEN,
+            EntityRole.MOTION_TRANSIT,
         ]
         for _, keywords in AREA_ROLE_KEYWORDS:
             assert keywords and all(k == k.lower() for k in keywords)
 
     def test_open_classes(self) -> None:
-        assert (DOOR_OPEN_BRIEF, DOOR_OPEN_EXTENDED, DOOR_OPEN_PROLONGED) == ("brief", "extended", "prolonged")
+        assert (DOOR_OPEN_BRIEF, DOOR_OPEN_EXTENDED, DOOR_OPEN_PROLONGED) == (
+            "brief",
+            "extended",
+            "prolonged",
+        )
 
     def test_config_keys_and_defaults(self) -> None:
         assert CONF_EXTERIOR_DOORS == "exterior_doors"
@@ -129,13 +155,15 @@ class TestRoleForArea:
 
 class TestParseRoleOverrides:
     def test_parses_roles_kinds_comments_and_blanks(self) -> None:
-        text = "\n".join([
-            "# exterior doors are listed separately",
-            "",
-            "binary_sensor.pir_hall: motion.transit",
-            "  Binary_Sensor.Study : motion  ",
-            "switch.lamp: appliance",
-        ])
+        text = "\n".join(
+            [
+                "# exterior doors are listed separately",
+                "",
+                "binary_sensor.pir_hall: motion.transit",
+                "  Binary_Sensor.Study : motion  ",
+                "switch.lamp: appliance",
+            ]
+        )
         assert parse_role_overrides(text) == {
             "binary_sensor.pir_hall": "motion.transit",
             "binary_sensor.study": "motion",
@@ -149,12 +177,12 @@ class TestParseRoleOverrides:
     @pytest.mark.parametrize(
         "line",
         [
-            "binary_sensor.pir",                 # no colon
+            "binary_sensor.pir",  # no colon
             "binary_sensor.pir: motion.garage",  # unknown role
-            "binary_sensor.pir: contact",        # old category name is not a kind
-            "pir: motion",                       # entity id needs a domain
-            "binary_sensor.sos: panic",          # panic only via the panic list
-            "binary_sensor.pir: ",               # empty value
+            "binary_sensor.pir: contact",  # old category name is not a kind
+            "pir: motion",  # entity id needs a domain
+            "binary_sensor.sos: panic",  # panic only via the panic list
+            "binary_sensor.pir: ",  # empty value
         ],
     )
     def test_rejects_bad_lines(self, line: str) -> None:
@@ -170,16 +198,31 @@ class TestParseRoleOverrides:
 
 class TestInferRoles:
     def _infer(self, entity_ids, **kw):
-        base = dict(panic=(), exterior_doors=(), overrides={}, device_classes={}, area_names={}, numeric_entities=())
+        base = dict(
+            panic=(),
+            exterior_doors=(),
+            overrides={},
+            device_classes={},
+            area_names={},
+            numeric_entities=(),
+        )
         base.update(kw)
         return infer_roles(entity_ids, **base)
 
     def test_numeric_is_other_even_when_overridden(self) -> None:
-        r = self._infer(["sensor.lux"], overrides={"sensor.lux": "motion.kitchen"}, numeric_entities={"sensor.lux"})
+        r = self._infer(
+            ["sensor.lux"],
+            overrides={"sensor.lux": "motion.kitchen"},
+            numeric_entities={"sensor.lux"},
+        )
         assert r["sensor.lux"] is EntityRole.OTHER
 
     def test_panic_list_beats_override(self) -> None:
-        r = self._infer(["binary_sensor.sos"], panic=["binary_sensor.sos"], overrides={"binary_sensor.sos": "appliance"})
+        r = self._infer(
+            ["binary_sensor.sos"],
+            panic=["binary_sensor.sos"],
+            overrides={"binary_sensor.sos": "appliance"},
+        )
         assert r["binary_sensor.sos"] is EntityRole.PANIC
 
     def test_full_role_override_beats_everything_below(self) -> None:
@@ -192,11 +235,19 @@ class TestInferRoles:
         assert r["binary_sensor.x"] is EntityRole.MOTION_KITCHEN
 
     def test_exterior_list(self) -> None:
-        r = self._infer(["binary_sensor.front"], exterior_doors=["binary_sensor.front"], device_classes={"binary_sensor.front": "door"})
+        r = self._infer(
+            ["binary_sensor.front"],
+            exterior_doors=["binary_sensor.front"],
+            device_classes={"binary_sensor.front": "door"},
+        )
         assert r["binary_sensor.front"] is EntityRole.DOOR_EXTERIOR
 
     def test_kind_override_lets_area_fill_room(self) -> None:
-        r = self._infer(["sensor.presence"], overrides={"sensor.presence": "motion"}, area_names={"sensor.presence": "Kitchen"})
+        r = self._infer(
+            ["sensor.presence"],
+            overrides={"sensor.presence": "motion"},
+            area_names={"sensor.presence": "Kitchen"},
+        )
         assert r["sensor.presence"] is EntityRole.MOTION_KITCHEN
 
     def test_kind_override_door_is_interior(self) -> None:
@@ -228,10 +279,19 @@ class TestInferRoles:
         assert set(r) == {"a.b", "c.d"}
 
 
-def _alert(entity_id: str, severity: AlertSeverity, alert_type: AlertType = AlertType.INACTIVITY) -> AlertResult:
+def _alert(
+    entity_id: str,
+    severity: AlertSeverity,
+    alert_type: AlertType = AlertType.INACTIVITY,
+) -> AlertResult:
     return AlertResult(
-        entity_id=entity_id, alert_type=alert_type, severity=severity, confidence=1.0,
-        explanation="x", timestamp=datetime.now(timezone.utc).isoformat(), details={},
+        entity_id=entity_id,
+        alert_type=alert_type,
+        severity=severity,
+        confidence=1.0,
+        explanation="x",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        details={},
     )
 
 
@@ -243,24 +303,49 @@ class TestDeriveWeightedStatus:
     }
 
     def test_motion_high_is_alert(self) -> None:
-        assert derive_weighted_status([_alert("binary_sensor.pir", AlertSeverity.HIGH)], self.roles)[0] == WELFARE_ALERT
+        assert (
+            derive_weighted_status(
+                [_alert("binary_sensor.pir", AlertSeverity.HIGH)], self.roles
+            )[0]
+            == WELFARE_ALERT
+        )
 
     def test_door_high_is_alert(self) -> None:
-        assert derive_weighted_status([_alert("binary_sensor.door", AlertSeverity.HIGH)], self.roles)[0] == WELFARE_ALERT
+        assert (
+            derive_weighted_status(
+                [_alert("binary_sensor.door", AlertSeverity.HIGH)], self.roles
+            )[0]
+            == WELFARE_ALERT
+        )
 
     def test_appliance_high_is_concern(self) -> None:
-        assert derive_weighted_status([_alert("switch.kettle", AlertSeverity.HIGH)], self.roles)[0] == WELFARE_CONCERN
+        assert (
+            derive_weighted_status(
+                [_alert("switch.kettle", AlertSeverity.HIGH)], self.roles
+            )[0]
+            == WELFARE_CONCERN
+        )
 
     def test_unknown_entity_weighs_as_other(self) -> None:
-        assert derive_weighted_status([_alert("sensor.x", AlertSeverity.MEDIUM)], self.roles)[0] == WELFARE_CONCERN
+        assert (
+            derive_weighted_status(
+                [_alert("sensor.x", AlertSeverity.MEDIUM)], self.roles
+            )[0]
+            == WELFARE_CONCERN
+        )
 
     def test_max_not_sum(self) -> None:
-        alerts = [_alert("switch.kettle", AlertSeverity.HIGH), _alert("switch.kettle", AlertSeverity.HIGH)]
+        alerts = [
+            _alert("switch.kettle", AlertSeverity.HIGH),
+            _alert("switch.kettle", AlertSeverity.HIGH),
+        ]
         assert derive_weighted_status(alerts, self.roles)[0] == WELFARE_CONCERN
 
     def test_panic_and_correlation_ignored(self) -> None:
         alerts = [
             _alert("binary_sensor.pir", AlertSeverity.HIGH, AlertType.PANIC),
-            _alert("binary_sensor.pir", AlertSeverity.HIGH, AlertType.CORRELATION_BREAK),
+            _alert(
+                "binary_sensor.pir", AlertSeverity.HIGH, AlertType.CORRELATION_BREAK
+            ),
         ]
         assert derive_weighted_status(alerts, self.roles)[0] == WELFARE_CHECK
