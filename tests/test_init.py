@@ -1608,6 +1608,43 @@ class TestMigrateEntryV12ToV13:
         assert create.call_args.kwargs["is_persistent"] is True
 
     @pytest.mark.asyncio
+    async def test_migrate_v13_to_v14_dedupes_entity_across_old_lists(self) -> None:
+        """Minor 4: the same entity id in two old category lists must produce
+        one role_overrides line, not two -- two would make parse_role_overrides
+        reject the migration's own output and drop the whole map."""
+        import custom_components.behaviour_monitor as init_module
+        from custom_components.behaviour_monitor.const import (
+            CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT, CONF_CATEGORY_MOTION, CONF_CATEGORY_PLUG,
+            CONF_ROLE_OVERRIDES,
+        )
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+        # switch.dupe is misfiled under both plug and light in the old data.
+        entry = self._make_config_entry(version=13, data={
+            "monitored_entities": ["binary_sensor.pir", "switch.dupe"],
+            CONF_CATEGORY_MOTION: ["binary_sensor.pir"], CONF_CATEGORY_CONTACT: [],
+            CONF_CATEGORY_PLUG: ["switch.dupe"], CONF_CATEGORY_LIGHT: ["switch.dupe"],
+        })
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock(device_class=None, original_device_class=None)
+        with patch.object(init_module.er, "async_get", return_value=registry), \
+             patch.object(init_module.ir, "async_create_issue"):
+            result = await async_migrate_entry(hass, entry)
+
+        assert result is True
+        data = hass.config_entries.async_update_entry.call_args.kwargs["data"]
+        assert data[CONF_ROLE_OVERRIDES].splitlines() == [
+            "binary_sensor.pir: motion", "switch.dupe: appliance",
+        ]
+        # The migration's own output must parse (first kind -- plug -- wins).
+        from custom_components.behaviour_monitor.entity_role import parse_role_overrides
+
+        assert parse_role_overrides(data[CONF_ROLE_OVERRIDES]) == {
+            "binary_sensor.pir": "motion", "switch.dupe": "appliance",
+        }
+
+    @pytest.mark.asyncio
     async def test_migrate_v13_to_v14_no_issue_without_contact_entities(self) -> None:
         import custom_components.behaviour_monitor as init_module
 

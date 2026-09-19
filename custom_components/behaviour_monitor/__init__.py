@@ -262,13 +262,20 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if config_entry.version < 14:
         new_data = dict(config_entry.data)
         lines = [ln for ln in (new_data.get(CONF_ROLE_OVERRIDES) or "").splitlines() if ln.strip()]
+        overrides: dict[str, str] = {}
         for key, value in (
             (CONF_CATEGORY_MOTION, "motion"),
             (CONF_CATEGORY_CONTACT, "door"),
             (CONF_CATEGORY_PLUG, "appliance"),
             (CONF_CATEGORY_LIGHT, "appliance"),
         ):
-            lines.extend(f"{eid}: {value}" for eid in (new_data.pop(key, None) or []))
+            for eid in new_data.pop(key, None) or []:
+                overrides.setdefault(eid, value)
+        # De-duplicate entity ids across the four old lists, preserving
+        # first-seen order (first kind wins), so the migration's own output
+        # can never make parse_role_overrides reject the whole map for a
+        # repeated entity.
+        lines.extend(f"{eid}: {value}" for eid, value in overrides.items())
         new_data[CONF_ROLE_OVERRIDES] = "\n".join(lines)
         new_data.setdefault(CONF_EXTERIOR_DOORS, list(DEFAULT_EXTERIOR_DOORS))
         new_data.setdefault(CONF_DOOR_DEBOUNCE_SECONDS, DEFAULT_DOOR_DEBOUNCE_SECONDS)
