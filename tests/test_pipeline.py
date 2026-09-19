@@ -338,11 +338,12 @@ class TestReplay:
         ]
         out, doors = replay(events, cfg)
         assert [(e.kind, e.entity_id, e.timestamp) for e in out] == [
-            (EXCURSION, "b.back", _at(0)),
             (ACTIVATION, "b.pir", _at(500)),
+            (EXCURSION, "b.back", _at(0)),
             (ACTIVATION, "b.hall", _at(600)),
         ]
-        assert out[0].entities == ("b.back", "b.side")
+        ex = next(e for e in out if e.kind == EXCURSION)
+        assert ex.entities == ("b.back", "b.side")
         assert set(doors) == {"b.back", "b.side", "b.hall"}
         assert doors["b.back"] == {"last_open_seconds": 8.0, "last_open_class": DOOR_OPEN_BRIEF}
         assert doors["b.hall"] == {"last_open_seconds": 30.0, "last_open_class": DOOR_OPEN_EXTENDED}

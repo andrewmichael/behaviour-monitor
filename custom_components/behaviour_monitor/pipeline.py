@@ -269,8 +269,8 @@ def replay(
     for ev in sorted(events, key=lambda e: e.timestamp):
         if ev.role.kind == "door":
             doors.add(ev.entity_id)
-        out.extend(pipeline.flush(ev.timestamp))
         out.extend(pipeline.submit(ev))
+        out.extend(pipeline.flush(ev.timestamp))
         last = ev.timestamp
     if last is not None:
         out.extend(pipeline.flush(last, force=True))
