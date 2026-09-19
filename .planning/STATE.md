@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v5.2
 milestone_name: System Integrity
 status: shipped
-stopped_at: v5.2 shipped
-last_updated: "2026-09-18T20:13:13.000Z"
-last_activity: 2026-09-18
+stopped_at: v5.2 shipped on feat/entity-categories; PR #2 awaiting manual live-HA gate
+last_updated: "2026-09-19T09:40:00.000Z"
+last_activity: 2026-09-19
 progress:
   total_phases: 1
   completed_phases: 1
@@ -75,6 +75,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-07T10:25:23.027Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-09-19T09:40:00.000Z
+Stopped at: v5.2 shipped on feat/entity-categories; PR #2 awaiting manual live-HA gate. Next: v5.3 event pipeline and roles spec
 Resume file: None
