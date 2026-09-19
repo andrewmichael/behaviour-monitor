@@ -11,6 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from collections.abc import Mapping
+from typing import Any
+
 from .const import (
     DEFAULT_DOOR_DEBOUNCE_SECONDS,
     DEFAULT_DOOR_OPEN_EXTENDED_SECONDS,
@@ -18,6 +21,9 @@ from .const import (
     DEFAULT_EXCURSION_WINDOW_SECONDS,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_RETRIGGER_COLLAPSE_SECONDS,
+    DOOR_OPEN_BRIEF,
+    DOOR_OPEN_EXTENDED,
+    DOOR_OPEN_PROLONGED,
     EntityRole,
 )
 from .routine_model import is_binary_state
@@ -26,6 +32,15 @@ ACTIVATION = "activation"
 EXCURSION = "excursion"
 _DROPOUT = ("unavailable", "unknown")
 _EDGE_KINDS = ("motion", "door")
+
+
+def classify_open_duration(seconds: float, extended: int, prolonged: int) -> str:
+    """Brief below ``extended``, extended below ``prolonged``, else prolonged."""
+    if seconds < extended:
+        return DOOR_OPEN_BRIEF
+    if seconds < prolonged:
+        return DOOR_OPEN_EXTENDED
+    return DOOR_OPEN_PROLONGED
 
 
 @dataclass(frozen=True)
@@ -117,6 +132,14 @@ class ActivityPipeline:
     def _on_edge(
         self, event: PipelineEvent, st: _EntityState, prev_on: bool
     ) -> list[ActivityEvent]:
+        if st.pending_off is not None:
+            if self._collapse and event.timestamp - st.pending_off < self._collapse:
+                # off/on bounce: the entity never really turned off
+                st.pending_off = None
+                st.is_on = True
+                return []
+            self._confirm_off(st, st.pending_off)
+            prev_on = False
         if prev_on:
             st.is_on = True
             return []
@@ -136,12 +159,50 @@ class ActivityPipeline:
         self, event: PipelineEvent, st: _EntityState, prev_on: bool
     ) -> list[ActivityEvent]:
         st.is_on = False
+        if not prev_on:
+            return []
+        if self._collapse:
+            st.pending_off = event.timestamp
+        else:
+            self._confirm_off(st, event.timestamp)
         return []
 
+    def _confirm_off(self, st: _EntityState, off_at: datetime) -> None:
+        """The off edge is real: close the open interval for door roles."""
+        st.pending_off = None
+        if st.role is None or st.role.kind != "door" or st.last_on is None:
+            return
+        seconds = (off_at - st.last_on).total_seconds()
+        st.last_open_seconds = seconds
+        st.last_open_class = classify_open_duration(
+            seconds,
+            self._cfg.door_open_extended_seconds,
+            self._cfg.door_open_prolonged_seconds,
+        )
+
     # ------------------------------------------------------------------
-    # Flush
+    # Flush and status
     # ------------------------------------------------------------------
 
     def flush(self, now: datetime, *, force: bool = False) -> list[ActivityEvent]:
         """Release time-dependent output. ``force`` releases everything."""
+        for st in self._states.values():
+            if st.pending_off is not None and (
+                force or now - st.pending_off >= self._collapse
+            ):
+                self._confirm_off(st, st.pending_off)
         return []
+
+    def door_status(self, entity_id: str) -> dict[str, Any]:
+        st = self._states.get(entity_id)
+        return {
+            "last_open_seconds": st.last_open_seconds if st else None,
+            "last_open_class": st.last_open_class if st else None,
+        }
+
+    def seed_door_status(self, statuses: Mapping[str, Mapping[str, Any]]) -> None:
+        """Restore per-door open-duration status (used after a recorder replay)."""
+        for eid, status in statuses.items():
+            st = self._states.setdefault(eid, _EntityState())
+            st.last_open_seconds = status.get("last_open_seconds")
+            st.last_open_class = status.get("last_open_class")

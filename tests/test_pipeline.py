@@ -6,13 +6,19 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from custom_components.behaviour_monitor.const import EntityRole
+from custom_components.behaviour_monitor.const import (
+    DOOR_OPEN_BRIEF,
+    DOOR_OPEN_EXTENDED,
+    DOOR_OPEN_PROLONGED,
+    EntityRole,
+)
 from custom_components.behaviour_monitor.pipeline import (
     ACTIVATION,
     ActivityEvent,
     ActivityPipeline,
     PipelineConfig,
     PipelineEvent,
+    classify_open_duration,
 )
 
 T0 = datetime(2026, 9, 1, 8, 0, 0, tzinfo=timezone.utc)
@@ -142,3 +148,112 @@ class TestRisingEdgeDebounce:
 
     def test_flush_returns_nothing_when_idle(self, cfg: PipelineConfig) -> None:
         assert ActivityPipeline(cfg).flush(_at(0)) == []
+
+
+class TestRetriggerCollapse:
+    def test_pair_inside_window_is_discarded(self) -> None:
+        p = ActivityPipeline(PipelineConfig(motion_debounce_seconds=0))
+        out = _run(p, [
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 0),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "on", "off", 10),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 10.023),  # 23 ms retrigger
+            _ev("b.pir", EntityRole.MOTION_LIVING, "on", "off", 30),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 40),  # 10 s later: real edge
+        ])
+        assert [e.timestamp for e in out] == [_at(0), _at(40)]
+
+    def test_pair_outside_window_is_two_edges(self) -> None:
+        p = ActivityPipeline(PipelineConfig(motion_debounce_seconds=0))
+        out = _run(p, [
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 0),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "on", "off", 10),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 15),  # exactly the window: not collapsed
+        ])
+        assert [e.timestamp for e in out] == [_at(0), _at(15)]
+
+    def test_collapse_zero_disables(self) -> None:
+        p = ActivityPipeline(PipelineConfig(motion_debounce_seconds=0, retrigger_collapse_seconds=0))
+        out = _run(p, [
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 0),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "on", "off", 10),
+            _ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 10.5),
+        ])
+        assert len(out) == 2
+
+    def test_collapsed_off_does_not_close_open_interval(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 20),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 21),   # bounce: still open
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 50),
+        ])
+        p.flush(_at(60))
+        assert p.door_status("b.door") == {"last_open_seconds": 50.0, "last_open_class": DOOR_OPEN_EXTENDED}
+
+
+class TestOpenDuration:
+    @pytest.mark.parametrize(
+        ("seconds", "cls"),
+        [(0.0, DOOR_OPEN_BRIEF), (14.999, DOOR_OPEN_BRIEF), (15.0, DOOR_OPEN_EXTENDED), (119.9, DOOR_OPEN_EXTENDED), (120.0, DOOR_OPEN_PROLONGED), (4000.0, DOOR_OPEN_PROLONGED)],
+    )
+    def test_classify(self, seconds: float, cls: str) -> None:
+        assert classify_open_duration(seconds, 15, 120) == cls
+
+    def test_status_none_until_first_close(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        assert p.door_status("b.door") == {"last_open_seconds": None, "last_open_class": None}
+        _run(p, [_ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0)])
+        assert p.door_status("b.door")["last_open_seconds"] is None
+
+    def test_off_confirmed_by_flush_after_collapse_window(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0), _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 8)])
+        p.flush(_at(12))  # 4 s after the off: still pending
+        assert p.door_status("b.door")["last_open_seconds"] is None
+        p.flush(_at(13))  # 5 s: confirmed
+        assert p.door_status("b.door") == {"last_open_seconds": 8.0, "last_open_class": DOOR_OPEN_BRIEF}
+
+    def test_force_flush_confirms_immediately(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0), _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 200)])
+        p.flush(_at(200), force=True)
+        assert p.door_status("b.door")["last_open_class"] == DOOR_OPEN_PROLONGED
+
+    def test_next_on_confirms_pending_off(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 10),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 100),
+        ])
+        assert p.door_status("b.door")["last_open_seconds"] == 10.0
+
+    def test_debounced_reopen_starts_new_interval(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        out = _run(p, [
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 0),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 5),
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "off", "on", 30),   # debounced (< 60 s), but it IS the new last_on
+            _ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 40),
+        ])
+        p.flush(_at(100))
+        assert len(out) == 1
+        assert p.door_status("b.door")["last_open_seconds"] == 10.0
+
+    def test_open_at_start_records_nothing(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.door", EntityRole.DOOR_INTERIOR, "on", "off", 0)])
+        p.flush(_at(100))
+        assert p.door_status("b.door")["last_open_seconds"] is None
+
+    def test_motion_never_gets_open_duration(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        _run(p, [_ev("b.pir", EntityRole.MOTION_LIVING, "off", "on", 0), _ev("b.pir", EntityRole.MOTION_LIVING, "on", "off", 30)])
+        p.flush(_at(100))
+        assert p.door_status("b.pir")["last_open_seconds"] is None
+
+    def test_seed_door_status(self, cfg: PipelineConfig) -> None:
+        p = ActivityPipeline(cfg)
+        p.seed_door_status({"b.door": {"last_open_seconds": 7.5, "last_open_class": DOOR_OPEN_BRIEF}})
+        assert p.door_status("b.door") == {"last_open_seconds": 7.5, "last_open_class": DOOR_OPEN_BRIEF}
