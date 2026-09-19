@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v5.2
-milestone_name: System Integrity
+milestone: v5.3
+milestone_name: Event Pipeline and Roles
 status: shipped
-stopped_at: v5.2 shipped on feat/entity-categories; PR #2 awaiting manual live-HA gate
-last_updated: "2026-09-19T09:40:00.000Z"
+stopped_at: v5.3 built and reviewed on feat/event-pipeline-roles (stacked on feat/entity-categories, PR #2); awaiting integration decision and live-HA gate
+last_updated: "2026-09-19T17:30:00.000Z"
 last_activity: 2026-09-19
 progress:
   total_phases: 1
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 25 — System Integrity
+**Current focus:** v5.3 — Event pipeline and roles (built; integration pending)
 
 ## Current Position
 
-Phase: 25
+Phase: 26
 Plan: Not started
 Status: Shipped
 Last activity: 2026-09-18
 
-Progress: [██████████] 100% (1/1 v5.2 phases)
+Progress: [██████████] 100% (1/1 v5.3 phases)
 
 ## Accumulated Context
 
@@ -58,6 +58,9 @@ See PROJECT.md Key Decisions table for full log.
 - [v5.2]: Welfare precedence is panic > blind > ordinary alert/concern/check > degraded > ok — an ordinary alert outranks degraded, but blind (nothing reporting) outranks an ordinary alert
 - [v5.2]: Event gate is armed at coordinator setup, which runs on both Home Assistant start and integration reload, so both synthetic-state moments get the start-up grace period
 - [v5.2]: Device-health alerts travel the ordinary notification path (severity gate, repeat interval) rather than a separate channel; snooze and holiday do not suppress them because they concern the equipment, not the resident
+- [v5.3]: Roles replace categories; kind is the derived grouping; motion room roles come from Home Assistant area names with an override map as the escape hatch
+- [v5.3]: Pipeline is a pure module composing the v5.2 event gate; burst-dropped events still resync pipeline edge state via note_state
+- [v5.3]: Upgrade re-bootstraps door and appliance baselines only; adjacency graph deferred to v6.0
 
 ### Blockers/Concerns
 
@@ -75,6 +78,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-09-19T09:40:00.000Z
-Stopped at: v5.2 shipped on feat/entity-categories; PR #2 awaiting manual live-HA gate. Next: v5.3 event pipeline and roles spec
+Last session: 2026-09-19T17:30:00.000Z
+Stopped at: v5.3 built and reviewed on feat/event-pipeline-roles; next: integrate branch, live-HA gate for PR #2 + v5.3, then v5.4 entropy weighting spec
 Resume file: None
