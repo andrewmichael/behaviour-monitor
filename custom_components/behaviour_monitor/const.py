@@ -101,6 +101,27 @@ DEFAULT_PANIC_TEST_REMINDER_DAYS: Final = 30  # days without a test press before
 PANIC_TEST_WINDOW_SECONDS: Final = 120
 PANIC_LOW_BATTERY_PERCENT: Final = 20
 
+# New v5.3 config keys (roles + event pipeline)
+CONF_EXTERIOR_DOORS: Final = "exterior_doors"
+CONF_ROLE_OVERRIDES: Final = "role_overrides"
+CONF_DOOR_DEBOUNCE_SECONDS: Final = "door_debounce_seconds"
+CONF_RETRIGGER_COLLAPSE_SECONDS: Final = "retrigger_collapse_seconds"
+CONF_EXCURSION_WINDOW_SECONDS: Final = "excursion_window_seconds"
+CONF_DOOR_OPEN_EXTENDED_SECONDS: Final = "door_open_extended_seconds"
+CONF_DOOR_OPEN_PROLONGED_SECONDS: Final = "door_open_prolonged_seconds"
+# One-shot flag written by the v14 migration; cleared by the coordinator
+# after it re-bootstraps door and appliance entities from recorder history.
+CONF_REBOOTSTRAP_ROLES: Final = "rebootstrap_roles"
+
+# New v5.3 defaults
+DEFAULT_EXTERIOR_DOORS: Final[list[str]] = []  # door.exterior is never inferred
+DEFAULT_ROLE_OVERRIDES: Final = ""  # multiline "entity_id: role-or-kind"
+DEFAULT_DOOR_DEBOUNCE_SECONDS: Final = 60  # seconds; 0 disables
+DEFAULT_RETRIGGER_COLLAPSE_SECONDS: Final = 5  # seconds; off/on pairs closer than this are noise; 0 disables
+DEFAULT_EXCURSION_WINDOW_SECONDS: Final = 60  # seconds; exterior-door events inside this window are one excursion; 0 disables
+DEFAULT_DOOR_OPEN_EXTENDED_SECONDS: Final = 15  # open at least this long = "extended"
+DEFAULT_DOOR_OPEN_PROLONGED_SECONDS: Final = 120  # open at least this long = "prolonged"
+
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 13
@@ -285,6 +306,64 @@ class EntityCategory(Enum):
 MOTION_DEVICE_CLASSES: Final = frozenset({"motion", "occupancy", "presence"})
 CONTACT_DEVICE_CLASSES: Final = frozenset({"door", "window", "opening", "garage_door"})
 PLUG_DEVICE_CLASSES: Final = frozenset({"outlet", "plug"})
+
+# ---------------------------------------------------------------------------
+# Entity roles and event pipeline (v5.3)
+# ---------------------------------------------------------------------------
+
+
+class EntityRole(Enum):
+    """Semantic role of a monitored entity. The part before the dot is its kind."""
+
+    MOTION_BATHROOM = "motion.bathroom"
+    MOTION_BEDROOM = "motion.bedroom"
+    MOTION_LIVING = "motion.living"
+    MOTION_KITCHEN = "motion.kitchen"
+    MOTION_TRANSIT = "motion.transit"
+    MOTION_UNASSIGNED = "motion.unassigned"  # motion sensor with no recognised area
+    DOOR_EXTERIOR = "door.exterior"  # exterior-door list only; never inferred
+    DOOR_INTERIOR = "door.interior"  # default for every contact class, windows included
+    APPLIANCE = "appliance"
+    PANIC = "panic"  # panic list only; instant alert, no learning
+    OTHER = "other"
+
+    @property
+    def kind(self) -> str:
+        return self.value.split(".", 1)[0]
+
+    @classmethod
+    def from_string(cls, value: str) -> "EntityRole":
+        try:
+            return cls(value)
+        except ValueError:
+            raise ValueError(f"unknown role: {value!r}") from None
+
+
+ROLE_KINDS: Final = frozenset({"motion", "door", "appliance", "panic", "other"})
+
+# Interim welfare weight per kind until v5.4 entropy weighting.
+KIND_WEIGHT: Final[dict[str, float]] = {
+    "motion": 1.0,
+    "door": 0.8,
+    "appliance": 0.5,
+    "other": 1.0,
+}
+
+# Lower-case substrings of a Home Assistant area name that place a motion
+# sensor in a room role. First hit in table order wins. English only; other
+# languages use the role override map.
+AREA_ROLE_KEYWORDS: Final[tuple[tuple[EntityRole, tuple[str, ...]], ...]] = (
+    (EntityRole.MOTION_BATHROOM, ("bathroom", "toilet", "ensuite", "en-suite", "shower", "wc", "loo", "cloakroom")),
+    (EntityRole.MOTION_BEDROOM, ("bedroom", "bed")),
+    (EntityRole.MOTION_LIVING, ("living", "lounge", "sitting", "dining", "study", "office", "conservatory", "snug")),
+    (EntityRole.MOTION_KITCHEN, ("kitchen", "utility", "pantry")),
+    (EntityRole.MOTION_TRANSIT, ("hall", "landing", "stairs", "stairway", "corridor", "porch", "entrance", "passage")),
+)
+
+# Door open-duration classes (pipeline stage 3)
+DOOR_OPEN_BRIEF: Final = "brief"
+DOOR_OPEN_EXTENDED: Final = "extended"
+DOOR_OPEN_PROLONGED: Final = "prolonged"
 
 # Welfare weight per category — how strongly an alert from this kind of
 # device evidences something about the person, not the device.
