@@ -44,15 +44,14 @@ def _load_pure_modules() -> tuple[Any, Any, Any]:
 
 CONST, ENTITY_ROLE, PIPELINE = _load_pure_modules()
 EntityRole = CONST.EntityRole
-ROLE_KINDS = CONST.ROLE_KINDS
 
 
 def load_roles(path: Path) -> dict[str, str]:
     """Parse the roles file; every value must resolve to a full role, not an
-    ambiguous bare kind. ``appliance``, ``panic`` and ``other`` have no
-    sub-roles, so their kind name and full role value coincide and both are
-    accepted; ``motion`` and ``door`` need a specific sub-role (e.g.
-    ``motion.kitchen``, ``door.interior``) and are rejected bare.
+    ambiguous bare kind. ``appliance`` and ``other`` have no sub-roles, so
+    their kind name and full role value coincide and both are accepted;
+    ``motion`` and ``door`` need a specific sub-role (e.g. ``motion.kitchen``,
+    ``door.interior``) and are rejected bare.
     """
     parsed = ENTITY_ROLE.parse_role_overrides(path.read_text())
     bad = []
