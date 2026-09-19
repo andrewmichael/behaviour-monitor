@@ -23,6 +23,7 @@ from custom_components.behaviour_monitor.routine_model import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_timestamps(count: int, start_offset_seconds: int = 0) -> list[str]:
     """Return ISO timestamp strings spaced 3600 s apart starting from epoch."""
     base = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
@@ -353,7 +354,9 @@ class TestEntityRoutine:
 
     def test_confidence_half_window(self) -> None:
         """first_observation 14 days ago with 28-day window → ~0.5."""
-        er = EntityRoutine(entity_id="sensor.test", is_binary=True, history_window_days=28)
+        er = EntityRoutine(
+            entity_id="sensor.test", is_binary=True, history_window_days=28
+        )
         now = datetime(2024, 2, 12, tzinfo=timezone.utc)
         first = now - timedelta(days=14)
         er.record(first, "on")
@@ -362,7 +365,9 @@ class TestEntityRoutine:
 
     def test_confidence_full_window(self) -> None:
         """first_observation 28+ days ago → 1.0."""
-        er = EntityRoutine(entity_id="sensor.test", is_binary=True, history_window_days=28)
+        er = EntityRoutine(
+            entity_id="sensor.test", is_binary=True, history_window_days=28
+        )
         now = datetime(2024, 2, 12, tzinfo=timezone.utc)
         first = now - timedelta(days=30)
         er.record(first, "on")
@@ -371,7 +376,9 @@ class TestEntityRoutine:
 
     def test_confidence_capped_at_one(self) -> None:
         """Confidence never exceeds 1.0."""
-        er = EntityRoutine(entity_id="sensor.test", is_binary=True, history_window_days=28)
+        er = EntityRoutine(
+            entity_id="sensor.test", is_binary=True, history_window_days=28
+        )
         now = datetime(2024, 2, 12, tzinfo=timezone.utc)
         first = now - timedelta(days=100)
         er.record(first, "on")
@@ -394,7 +401,9 @@ class TestEntityRoutineSerialization:
         assert restored.first_observation is None
 
     def test_round_trip_with_data(self) -> None:
-        er = EntityRoutine(entity_id="sensor.door", is_binary=True, history_window_days=14)
+        er = EntityRoutine(
+            entity_id="sensor.door", is_binary=True, history_window_days=14
+        )
         base = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         for i in range(5):
             er.record(base + timedelta(hours=i), "on")
@@ -405,7 +414,9 @@ class TestEntityRoutineSerialization:
         assert restored.history_window_days == 14
         assert restored.first_observation == er.first_observation
         slot_idx = er.slot_index(hour=10, dow=0)
-        assert len(restored.slots[slot_idx].event_times) == len(er.slots[slot_idx].event_times)
+        assert len(restored.slots[slot_idx].event_times) == len(
+            er.slots[slot_idx].event_times
+        )
 
     def test_round_trip_numeric(self) -> None:
         er = EntityRoutine(entity_id="sensor.temp", is_binary=False)
@@ -417,7 +428,10 @@ class TestEntityRoutineSerialization:
         assert restored.is_binary is False
         slot_idx = er.slot_index(hour=10, dow=0)
         assert restored.slots[slot_idx].numeric_count == 5
-        assert abs(restored.slots[slot_idx].numeric_mean - er.slots[slot_idx].numeric_mean) < 1e-9
+        assert (
+            abs(restored.slots[slot_idx].numeric_mean - er.slots[slot_idx].numeric_mean)
+            < 1e-9
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -702,36 +716,44 @@ class TestFormatDuration:
 
     def test_zero_seconds(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(0) == "0m"
 
     def test_sub_minute(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(59) == "0m"
 
     def test_one_minute(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(60) == "1m"
 
     def test_sub_hour_minutes(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(120) == "2m"
         assert format_duration(3599) == "59m"
 
     def test_exactly_one_hour(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(3600) == "1h 0m"
 
     def test_hours_and_minutes(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(5400) == "1h 30m"
 
     def test_large_values_no_day_rollover(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(86400) == "24h 0m"
         assert format_duration(90061) == "25h 1m"
 
     def test_float_input(self):
         from custom_components.behaviour_monitor.routine_model import format_duration
+
         assert format_duration(45.7) == "0m"
         assert format_duration(3661.9) == "1h 1m"
 
@@ -983,3 +1005,30 @@ class TestTierClassification:
 
         er.classify_tier(now)  # Should NOT be blocked by guard
         assert er.activity_tier == ActivityTier.HIGH
+
+
+class TestOverallConfidenceExpected:
+    def test_expected_ids_count_absent_as_zero(self) -> None:
+        from datetime import datetime, timezone
+
+        model = RoutineModel(history_window_days=7)
+        now = datetime(2026, 9, 18, tzinfo=timezone.utc)
+        er = model.get_or_create("a", is_binary=True)
+        # a fully learned entity: confidence 1.0
+        er.first_observation = (now - timedelta(days=30)).isoformat()
+        conf_a = er.confidence(now)
+        assert conf_a > 0
+        assert model.overall_confidence(now) == conf_a
+        assert model.overall_confidence(now, expected_ids=["a", "b"]) == conf_a / 2
+        assert model.overall_confidence(now, expected_ids=["b"]) == 0.0
+        assert model.overall_confidence(now, expected_ids=[]) == 0.0
+
+    def test_learning_status_uses_expected(self) -> None:
+        from datetime import datetime, timezone
+
+        model = RoutineModel(history_window_days=7)
+        now = datetime(2026, 9, 18, tzinfo=timezone.utc)
+        er = model.get_or_create("a", is_binary=True)
+        er.first_observation = (now - timedelta(days=30)).isoformat()
+        assert model.learning_status(now) == "ready"
+        assert model.learning_status(now, expected_ids=["a", "b", "c", "d"]) != "ready"

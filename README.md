@@ -89,12 +89,23 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Track attributes | Also track attribute changes, not just state changes | No |
 | Always track attribute changes for | Entities that count attribute-only changes regardless of the global toggle | Empty |
 | Never track attribute changes for | Entities that ignore attribute-only changes regardless of the global toggle | Empty |
+| Motion sensors | Force these entities into the motion category (auto-inferred from motion/occupancy/presence device class) | Empty |
+| Contact sensors | Force these entities into the contact category (auto-inferred from door/window/opening/garage door device class) | Empty |
+| Plugs and switches | Force these entities into the plug category (auto-inferred from outlet/plug device class or the switch domain) | Empty |
+| Lights | Force these entities into the light category (auto-inferred from the light domain) | Empty |
+| Motion debounce window | Merge repeated motion triggers within this many seconds into one activity; 0 disables (0–600) | 120 seconds |
+| Panic buttons | Binary sensors that act as panic buttons; a press alerts instantly and bypasses every suppression | Empty |
+| Panic re-notify interval | Minutes between repeat panic notifications until acknowledged (1–60) | 5 |
+| Start-up grace period | Seconds after Home Assistant starts or the integration reloads during which state changes are ignored, because restarts write synthetic states to every entity (0–300; 0 disables) | 90 seconds |
+| Burst discard threshold | If at least this many different entities change within the same second, the whole second is discarded as a reload artifact (0–10; 0 disables) | 3 |
+| Panic device heartbeat | Raise a device-health alert when a panic button has not reported for this many hours (0–168; 0 disables) | 24 hours |
+| Panic test reminder | Raise a reminder when a panic button has not been test-pressed for this many days (0–365; 0 disables) | 30 days |
 
 Per-entity overrides take precedence over the global "Track attributes" toggle. This lets you keep attribute tracking off globally (so noisy PIR motion sensors that update battery, illuminance, or last-seen attributes are not counted as activity) while opting in specific entities that only ever change attributes, or the reverse. An entity cannot appear in both lists.
 
 ### Upgrading
 
-Existing config entries migrate automatically through the full migration chain (v2 through v9). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
+Existing config entries migrate automatically through the full migration chain (v2 through v13). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
 
 Notable migrations:
 - **v2→v4**: Removed ML-related options, added detection controls
@@ -103,6 +114,10 @@ Notable migrations:
 - **v7**: Added adaptive inactivity multiplier bounds
 - **v8**: Added activity tier override (defaults to "Auto")
 - **v9**: Added correlation window (defaults to 120 seconds)
+- **v10**: Added per-entity track_attributes override lists
+- **v11**: Added entity category override lists and motion debounce window; motion baselines are rebuilt from recorder history once after upgrade. Dropped (debounced) motion events no longer trigger an immediate sensor refresh; the next 60-second poll picks them up.
+- **v12**: Added panic button category and re-notify interval
+- **v13**: Added start-up grace period, burst discard threshold, panic device heartbeat and panic test reminder settings
 
 ## Holiday Mode and Visitor Snooze
 
@@ -222,6 +237,8 @@ The integration provides the following services:
 | `behaviour_monitor.snooze` | Snooze notifications for specified duration (requires `duration` parameter) |
 | `behaviour_monitor.clear_snooze` | Clear active snooze - immediately resume notifications |
 | `behaviour_monitor.routine_reset` | Reset drift detection for an entity after an intentional routine change (requires `entity_id` parameter) |
+| `behaviour_monitor.acknowledge_panic` | Acknowledge active panic alerts and stop repeat notifications until the button is released (optional `entity_id` parameter) |
+| `behaviour_monitor.panic_test` | Open a two-minute test window; a panic button pressed inside it is recorded as a test, not an alert (optional `entity_id` parameter, all panic buttons if omitted) |
 
 **Service call examples:**
 ```yaml
@@ -252,6 +269,7 @@ The integration creates the following sensors and control entities:
 |--------|------|-------------|
 | `switch.behaviour_monitor_holiday_mode` | Switch | Enable/disable holiday mode (complete pause of all tracking) |
 | `select.behaviour_monitor_snooze_notifications` | Select | Choose snooze duration (Off, 1hr, 2hr, 4hr, 1 day) |
+| `button.behaviour_monitor_acknowledge_panic` | Button | Acknowledges every active panic alert; attributes list active and unacknowledged panics plus a `devices` map of per-entity liveness (availability, last report, battery, last test) |
 
 ### Core Sensors
 
@@ -306,6 +324,43 @@ Entities are automatically classified into frequency tiers based on their observ
 Classification is gated on learning confidence (requires ~80% of the history window to be observed) and reclassifies at most once per day to prevent flapping. Each entity's tier is visible in the `entity_status_summary` sensor attributes.
 
 A global override is available in the config UI to force all entities to a specific tier (useful for testing or edge cases). Set to "Auto" (default) to use automatic classification.
+
+### Entity Categories
+
+Each monitored entity is assigned a category at startup so that noisy devices and automated devices are treated appropriately.
+
+**Inference order** (first match wins):
+
+1. The entity is in one of the four category override lists.
+2. Its entity-registry device class: `motion`, `occupancy`, `presence` → motion; `door`, `window`, `opening`, `garage_door` → contact; `outlet`, `plug` → plug.
+3. Its domain: `switch` → plug; `light` → light; anything else → other.
+
+Numeric entities are always "other". The inferred category is shown as the `category` attribute on each entry of the `entity_status_summary` sensor.
+
+**Motion debounce.** Motion entities only count when they turn *on*, and repeated triggers within the debounce window (default 2 minutes) are merged into a single activity. The learned routine, correlation detection and daily count all see the debounced stream; the entity's last-seen time still updates on every raw transition so inactivity detection is not delayed. Recorder history is debounced the same way on first install, and existing installs rebuild their motion baselines from recorder history when upgrading to v5.0.
+
+**Weighted welfare.** The welfare status is derived from the highest-scoring active alert, where score = severity points × category weight:
+
+| Category | Weight | Rationale |
+|---|---|---|
+| motion | 1.0 | Direct evidence of presence |
+| other | 1.0 | Unchanged from previous versions |
+| contact | 0.8 | Strong but sparser evidence; at the current thresholds it lands in the same bands as motion, so the weight is headroom for future tuning |
+| plug | 0.5 | Often driven by automations |
+| light | 0.5 | Often driven by automations |
+
+Severity points are LOW 1, MEDIUM 2, HIGH 3. A score of 2.25 or more gives `alert`, 1.25 or more gives `concern`, anything else gives `check_recommended`. In practice motion, contact and other behave as before; a plug or light alert alone tops out at `concern`. Individual alert severities and notifications are not affected.
+
+#### Panic Button
+
+Add a binary sensor to the **Panic buttons** list to treat it as a panic button. Panic is never inferred from a device class; it must be listed explicitly. Panic buttons do not need to be in the **Entities to monitor** list; they are monitored automatically.
+
+- **Instant alert.** The moment the sensor turns `on`, a notification titled "Behaviour Monitor: PANIC" is sent to the persistent notification area and every configured mobile service. This ignores the notification toggle, holiday mode, snooze, the minimum severity and the repeat interval.
+- **Re-notification.** While the panic is active and unacknowledged, the notification repeats every *Panic re-notify interval* minutes (checked on the 60-second poll).
+- **Acknowledge.** Press `button.behaviour_monitor_acknowledge_panic` or call `behaviour_monitor.acknowledge_panic` (optionally with an `entity_id`). Acknowledging stops the repeats; the welfare status stays at `alert` until the button is released.
+- **Release.** When the sensor returns to `off` the panic clears, including its acknowledgement, so the next press alerts again.
+
+Panic entities never contribute to routine learning, tier classification, correlation or motion debounce. The `entity_status_summary` sensor shows `category: panic` and `panic_active` per entity, and a top-level `panic` attribute lists active and unacknowledged buttons. Events `behaviour_monitor_panic_pressed`, `behaviour_monitor_panic_released` and `behaviour_monitor_panic_acknowledged` fire on the bus for automations.
 
 ### Acute Detection
 
@@ -402,6 +457,32 @@ The integration stores data in Home Assistant's `.storage` directory:
 
 All data persists across Home Assistant restarts. Daily counts are only restored if from the same day (resets automatically at midnight).
 
+## System Integrity
+
+The integration tracks whether it can actually see what is happening, not just what it thinks is happening.
+
+### Entity Health
+
+Each poll, every monitored entity is classified as `present`, `unavailable` (exists but has no usable state, or is `unavailable`/`unknown`), or `missing` (removed from Home Assistant entirely). A `missing` entity raises a repair issue that clears automatically once the entity returns or is removed from the integration options. Each entry in `entity_status` carries `health` and a `contributing` flag (`true` only when the entity is `present` and not a panic button), so automations can tell "not reporting" apart from "nothing to report".
+
+### Blind and Degraded Welfare
+
+If no monitored entity is reporting at all, the welfare status becomes `blind` instead of a false "ok", and a one-off "Behaviour Monitor: no data" persistent notification fires (it does not repeat until the monitor recovers and goes blind again). If some but not all entities are reporting — or a panic device has a health problem — the status becomes `degraded`. The welfare sensor always exposes `contributing_entities`, `expected_entities`, `missing_entities`, and `unavailable_entities`, and lost inputs count as zero rather than being averaged away, so `baseline_confidence` and `activity_score` drop when sensors go dark instead of holding steady on stale data.
+
+Precedence when more than one condition applies: a panic alert always outranks `blind`; `blind` outranks an ordinary alert because there is no live evidence behind it once nothing is reporting; an ordinary alert outranks `degraded`; and `degraded` outranks `ok`.
+
+### Status Summary
+
+`entity_status_summary` reads `"X OK, Y Need Attention"`, with `", Z Missing"` appended when entities have been removed from Home Assistant and `", W Unavailable"` appended when entities exist but have no usable state. Panic buttons are excluded from the OK/Need Attention/Unavailable counts, but a missing panic button is still counted under Missing — so the four counts need not sum to the total number of monitored entities.
+
+### Panic Device Liveness
+
+Each panic button's availability, last report time, and battery level are tracked alongside its panic state. The monitor raises a device-health alert (through the normal notification path, not suppressed by snooze or holiday mode) when a panic button is unavailable, hasn't reported within the configured heartbeat window, has a battery at or below 20%, or hasn't been test-pressed within the configured reminder window. Use the `panic_test` service to open a two-minute window during which a press on the button is recorded as a test rather than raising a real alert. The Acknowledge Panic button's `devices` attribute exposes this liveness data per entity.
+
+### Start-up Grace and Burst Discard
+
+Home Assistant restarts and integration reloads write synthetic states to every entity at once, which can look like a burst of real activity. The start-up grace period ignores state changes for a configurable window after setup; the burst discard threshold drops any one-second window in which too many distinct entities change together, treating it as a reload artifact rather than genuine activity.
+
 ## Troubleshooting
 
 ### No Anomalies Detected
@@ -418,6 +499,12 @@ All data persists across Home Assistant restarts. Daily counts are only restored
 - Check the entity is not in the "Never track attribute changes for" list
 - **Check if Holiday Mode is enabled** — all tracking is paused when ON
 - **Check if Snoozed** — pattern learning is paused during snooze
+
+### Motion Sensor Generates Too Many or Too Few Activities
+
+- Check the `category` attribute on `entity_status_summary` shows `motion`. If not, add the entity to the "Motion sensors" list.
+- Increase the "Motion debounce window" if a single walk through a room still produces several activities; decrease it (or set 0) if genuinely separate visits are being merged.
+- After changing the window, the learned routine adapts as the history window rolls over.
 
 ### Drift Alerts After Intentional Routine Change
 

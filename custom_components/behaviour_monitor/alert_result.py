@@ -18,6 +18,8 @@ class AlertType(str, Enum):
     UNUSUAL_TIME = "unusual_time"
     DRIFT = "drift"
     CORRELATION_BREAK = "correlation_break"
+    PANIC = "panic"
+    DEVICE_HEALTH = "device_health"
 
 
 class AlertSeverity(str, Enum):

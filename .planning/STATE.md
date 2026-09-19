@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: Cross-Entity Correlation
-status: executing
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-04-07T15:56:52.187Z"
-last_activity: 2026-04-07
+milestone: v5.2
+milestone_name: System Integrity
+status: shipped
+stopped_at: v5.2 shipped
+last_updated: "2026-09-18T20:13:13.000Z"
+last_activity: 2026-09-18
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 8
-  completed_plans: 8
-  percent: 0
+  total_phases: 1
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 20 — Correlation Lifecycle
+**Current focus:** Phase 25 — System Integrity
 
 ## Current Position
 
-Phase: 20
+Phase: 25
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-07
+Status: Shipped
+Last activity: 2026-09-18
 
-Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
+Progress: [██████████] 100% (1/1 v5.2 phases)
 
 ## Accumulated Context
 
@@ -48,6 +48,16 @@ See PROJECT.md Key Decisions table for full log.
 - [Phase 19]: Confidence uses co_occurrence_rate of highest-rate missing partner
 - [Phase 19]: Correlation breaks excluded entirely from welfare derivation (reasons, counts, status) per D-03
 - [Phase 20]: Cleanup runs inside existing correlation_state restore block, only after from_dict
+- [v5.0]: Category lives in entity_category.py (pure Python); coordinator supplies registry device classes and numeric-ness
+- [v5.0]: Welfare uses max weighted score, not sum; plugs/lights 0.5, contact 0.8, motion/other 1.0
+- [v5.0]: Motion debounce default 120s, on by default; last_seen updates on raw events, model/correlation/daily count on debounced events
+- [v5.0]: Upgrade re-bootstraps motion routines from recorder via one-shot rebootstrap_motion entry flag
+- [v5.1]: Panic is override-list only; no device-class inference (safety/problem are too ambiguous)
+- [v5.1]: Panic notifications bypass every suppression; re-notify rides the 60 s poll (≤60 s jitter accepted)
+- [v5.1]: Release clears acknowledgement; acknowledge stops repeats but keeps welfare at alert
+- [v5.2]: Welfare precedence is panic > blind > ordinary alert/concern/check > degraded > ok — an ordinary alert outranks degraded, but blind (nothing reporting) outranks an ordinary alert
+- [v5.2]: Event gate is armed at coordinator setup, which runs on both Home Assistant start and integration reload, so both synthetic-state moments get the start-up grace period
+- [v5.2]: Device-health alerts travel the ordinary notification path (severity gate, repeat interval) rather than a separate channel; snooze and holiday do not suppress them because they concern the equipment, not the resident
 
 ### Blockers/Concerns
 

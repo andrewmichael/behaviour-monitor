@@ -12,6 +12,12 @@ import voluptuous as vol
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_BURST_DISCARD_THRESHOLD,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PANIC,
+    CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_HISTORY_WINDOW_DAYS,
@@ -19,25 +25,44 @@ from .const import (
     CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER,
     CONF_MIN_INACTIVITY_MULTIPLIER,
+    CONF_MOTION_DEBOUNCE_SECONDS,
+    CONF_PANIC_HEARTBEAT_HOURS,
+    CONF_PANIC_RENOTIFY_MINUTES,
+    CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_REBOOTSTRAP_MOTION,
+    CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_BURST_DISCARD_THRESHOLD,
+    DEFAULT_CATEGORY_CONTACT,
+    DEFAULT_CATEGORY_LIGHT,
+    DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PANIC,
+    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER,
     DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
+    DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    DEFAULT_PANIC_HEARTBEAT_HOURS,
+    DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
     DOMAIN,
     SENSITIVITY_MEDIUM,
+    SERVICE_ACKNOWLEDGE_PANIC,
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_ENABLE_HOLIDAY_MODE,
+    SERVICE_PANIC_TEST,
     SERVICE_ROUTINE_RESET,
     SERVICE_SNOOZE,
     SNOOZE_DURATIONS,
@@ -46,7 +71,7 @@ from .coordinator import BehaviourMonitorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT, Platform.BUTTON]
 
 # ML config keys removed in v1.1
 _ML_KEYS_REMOVED_V3 = (
@@ -187,6 +212,40 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             "per-entity track_attributes overrides added"
         )
 
+    if config_entry.version < 11:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_CATEGORY_MOTION, list(DEFAULT_CATEGORY_MOTION))
+        new_data.setdefault(CONF_CATEGORY_CONTACT, list(DEFAULT_CATEGORY_CONTACT))
+        new_data.setdefault(CONF_CATEGORY_PLUG, list(DEFAULT_CATEGORY_PLUG))
+        new_data.setdefault(CONF_CATEGORY_LIGHT, list(DEFAULT_CATEGORY_LIGHT))
+        new_data.setdefault(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS)
+        # One-shot: the coordinator rebuilds motion routines with debounce
+        # from recorder history on its next setup, then clears this flag.
+        new_data[CONF_REBOOTSTRAP_MOTION] = True
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=11)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v11 — "
+            "entity categories and motion debounce added"
+        )
+
+    if config_entry.version < 12:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_CATEGORY_PANIC, list(DEFAULT_CATEGORY_PANIC))
+        new_data.setdefault(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=12)
+        _LOGGER.info(
+            "Behaviour Monitor: Config entry migrated to v12 — panic button category added"
+        )
+
+    if config_entry.version < 13:
+        new_data = dict(config_entry.data)
+        new_data.setdefault(CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS)
+        new_data.setdefault(CONF_BURST_DISCARD_THRESHOLD, DEFAULT_BURST_DISCARD_THRESHOLD)
+        new_data.setdefault(CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS)
+        new_data.setdefault(CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS)
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=13)
+        _LOGGER.info("Behaviour Monitor: Config entry migrated to v13 — system integrity settings added")
+
     return True
 
 
@@ -230,6 +289,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entity_id = call.data["entity_id"]
         await coordinator.async_routine_reset(entity_id)
 
+    async def handle_acknowledge_panic(call: ServiceCall) -> None:
+        """Handle acknowledge panic service call."""
+        await coordinator.async_acknowledge_panic(call.data.get("entity_id"))
+
+    async def handle_panic_test(call: ServiceCall) -> None:
+        """Handle panic test service call."""
+        await coordinator.async_panic_test(call.data.get("entity_id"))
+
     # Register services for this instance
     hass.services.async_register(
         DOMAIN,
@@ -265,6 +332,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({vol.Required("entity_id"): str}),
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ACKNOWLEDGE_PANIC,
+        handle_acknowledge_panic,
+        schema=vol.Schema({vol.Optional("entity_id"): str}),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PANIC_TEST,
+        handle_panic_test,
+        schema=vol.Schema({vol.Optional("entity_id"): str}),
+    )
+
     # Register update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -292,6 +373,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SNOOZE)
         hass.services.async_remove(DOMAIN, SERVICE_ROUTINE_RESET)
+        hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_PANIC)
+        hass.services.async_remove(DOMAIN, SERVICE_PANIC_TEST)
 
         # Remove from hass data
         hass.data[DOMAIN].pop(entry.entry_id)

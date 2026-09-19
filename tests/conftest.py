@@ -34,6 +34,7 @@ def _setup_ha_mocks():
         SENSOR = "sensor"
         SWITCH = "switch"
         SELECT = "select"
+        BUTTON = "button"
         BINARY_SENSOR = "binary_sensor"
 
     mock_ha_const.Platform = MockPlatform
@@ -124,6 +125,14 @@ def _setup_ha_mocks():
     # Mock homeassistant.helpers modules
     mock_ha_helpers.config_validation = MagicMock()
     mock_ha_helpers.entity_registry = MagicMock()
+    mock_ha_helpers.issue_registry = MagicMock()
+
+    class MockIssueSeverity:
+        CRITICAL = "critical"
+        ERROR = "error"
+        WARNING = "warning"
+
+    mock_ha_helpers.issue_registry.IssueSeverity = MockIssueSeverity
     mock_ha_helpers.entity = MagicMock()
     mock_ha_helpers.entity_platform = MagicMock()
     mock_ha_helpers.selector = MagicMock()
@@ -330,11 +339,33 @@ def _setup_ha_mocks():
 
     mock_switch.SwitchEntity = MockSwitchEntity
 
+    # Mock button component
+    mock_button = MagicMock()
+
+    class MockButtonEntity:
+        """Mock ButtonEntity base class."""
+        def __init__(self):
+            self._attr_unique_id = None
+            self._attr_name = None
+            self._attr_device_info = None
+
+        @property
+        def unique_id(self):
+            """Return unique ID."""
+            return self._attr_unique_id
+
+        async def async_press(self):
+            """Press the button."""
+            raise NotImplementedError
+
+    mock_button.ButtonEntity = MockButtonEntity
+
     # Mock components
     mock_components = MagicMock()
     mock_components.sensor = mock_sensor
     mock_components.select = mock_select
     mock_components.switch = mock_switch
+    mock_components.button = mock_button
 
     # Mock dt utilities
     mock_dt_util = MagicMock()
@@ -359,6 +390,7 @@ def _setup_ha_mocks():
     sys.modules['homeassistant.helpers'] = mock_ha_helpers
     sys.modules['homeassistant.helpers.config_validation'] = mock_ha_helpers.config_validation
     sys.modules['homeassistant.helpers.entity_registry'] = mock_ha_helpers.entity_registry
+    sys.modules['homeassistant.helpers.issue_registry'] = mock_ha_helpers.issue_registry
     sys.modules['homeassistant.helpers.entity'] = mock_ha_helpers.entity
     sys.modules['homeassistant.helpers.entity_platform'] = mock_ha_helpers.entity_platform
     sys.modules['homeassistant.helpers.selector'] = mock_ha_helpers.selector
@@ -368,6 +400,7 @@ def _setup_ha_mocks():
     sys.modules['homeassistant.components.sensor'] = mock_sensor
     sys.modules['homeassistant.components.select'] = mock_select
     sys.modules['homeassistant.components.switch'] = mock_switch
+    sys.modules['homeassistant.components.button'] = mock_button
     sys.modules['homeassistant.util'] = mock_ha_util
     sys.modules['homeassistant.util.dt'] = mock_dt_util
     sys.modules['voluptuous'] = mock_voluptuous

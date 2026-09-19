@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from math import sqrt
 from statistics import median
-from typing import Any
+from typing import Any, Iterable
 
 from .const import ActivityTier, TIER_BOUNDARY_HIGH, TIER_BOUNDARY_LOW
 
@@ -85,9 +85,7 @@ class ActivitySlot:
     """
 
     # Binary fields
-    event_times: deque[str] = field(
-        default_factory=lambda: deque(maxlen=_DEQUE_MAXLEN)
-    )
+    event_times: deque[str] = field(default_factory=lambda: deque(maxlen=_DEQUE_MAXLEN))
 
     # Numeric fields (Welford online algorithm accumulators)
     numeric_mean: float = 0.0
@@ -138,14 +136,11 @@ class ActivitySlot:
             return None
         # Parse timestamps and compute inter-event intervals
         try:
-            times = sorted(
-                datetime.fromisoformat(ts) for ts in self.event_times
-            )
+            times = sorted(datetime.fromisoformat(ts) for ts in self.event_times)
         except (ValueError, TypeError):
             return None
         intervals = [
-            (times[i + 1] - times[i]).total_seconds()
-            for i in range(len(times) - 1)
+            (times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)
         ]
         if not intervals:
             return None
@@ -162,14 +157,11 @@ class ActivitySlot:
         if len(self.event_times) < MIN_SLOT_OBSERVATIONS:
             return None
         try:
-            times = sorted(
-                datetime.fromisoformat(ts) for ts in self.event_times
-            )
+            times = sorted(datetime.fromisoformat(ts) for ts in self.event_times)
         except (ValueError, TypeError):
             return None
         intervals = [
-            (times[i + 1] - times[i]).total_seconds()
-            for i in range(len(times) - 1)
+            (times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)
         ]
         if len(intervals) < 2:
             return None
@@ -242,12 +234,8 @@ class EntityRoutine:
     first_observation: str | None = None
 
     # Tier classification state (not serialized — recomputed on startup)
-    _activity_tier: ActivityTier | None = field(
-        default=None, init=False, repr=False
-    )
-    _tier_classified_date: date | None = field(
-        default=None, init=False, repr=False
-    )
+    _activity_tier: ActivityTier | None = field(default=None, init=False, repr=False)
+    _tier_classified_date: date | None = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------
     # Indexing
@@ -438,9 +426,7 @@ class EntityRoutine:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EntityRoutine":
         """Restore from a serialized dict."""
-        slots = [
-            ActivitySlot.from_dict(s) for s in data.get("slots", [])
-        ]
+        slots = [ActivitySlot.from_dict(s) for s in data.get("slots", [])]
         # Pad with empty slots if fewer than expected (forward-compat guard)
         while len(slots) < SLOTS_PER_ENTITY:
             slots.append(ActivitySlot())
@@ -505,27 +491,39 @@ class RoutineModel:
     # Aggregate metrics
     # ------------------------------------------------------------------
 
-    def overall_confidence(self, now: datetime | None = None) -> float:
-        """Return the average confidence across all tracked entities.
+    def overall_confidence(
+        self, now: datetime | None = None, expected_ids: Iterable[str] | None = None
+    ) -> float:
+        """Mean confidence across entities.
 
-        Returns 0.0 when no entities are tracked.
+        With ``expected_ids`` the mean is taken over that set, and any expected
+        entity absent from the model counts as 0.0 — input loss lowers the
+        score instead of being renormalised away. Without it, the mean is over
+        tracked entities (0.0 when none).
         """
-        if not self._entities:
-            return 0.0
         if now is None:
             now = datetime.now(tz=timezone.utc)
-        total = sum(er.confidence(now) for er in self._entities.values())
-        return total / len(self._entities)
+        if expected_ids is None:
+            if not self._entities:
+                return 0.0
+            return sum(er.confidence(now) for er in self._entities.values()) / len(
+                self._entities
+            )
+        ids = list(expected_ids)
+        if not ids:
+            return 0.0
+        total = sum(
+            er.confidence(now)
+            for eid in ids
+            if (er := self._entities.get(eid)) is not None
+        )
+        return total / len(ids)
 
-    def learning_status(self, now: datetime | None = None) -> str:
-        """Return the current learning phase.
-
-        Returns:
-            "inactive"  — overall_confidence < 0.1
-            "learning"  — 0.1 <= overall_confidence < 0.8
-            "ready"     — overall_confidence >= 0.8
-        """
-        conf = self.overall_confidence(now=now)
+    def learning_status(
+        self, now: datetime | None = None, expected_ids: Iterable[str] | None = None
+    ) -> str:
+        """inactive (< 0.1) / learning (< 0.8) / ready."""
+        conf = self.overall_confidence(now=now, expected_ids=expected_ids)
         if conf < 0.1:
             return "inactive"
         if conf < 0.8:
@@ -541,8 +539,7 @@ class RoutineModel:
         return {
             "history_window_days": self._history_window_days,
             "entities": {
-                entity_id: er.to_dict()
-                for entity_id, er in self._entities.items()
+                entity_id: er.to_dict() for entity_id, er in self._entities.items()
             },
         }
 

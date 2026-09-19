@@ -143,6 +143,7 @@ class TestCorrelationRecordEvent:
         ) as mock_dt:
             mock_dt.now.return_value = NOW
             coord._handle_state_changed(event)
+            coord._flush_gate(force=True)
 
         coord._correlation_detector.record_event.assert_called_once_with(
             "sensor.a", NOW, coord._last_seen

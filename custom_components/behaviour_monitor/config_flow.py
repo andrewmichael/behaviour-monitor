@@ -27,6 +27,12 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
     CONF_ALERT_REPEAT_INTERVAL,
+    CONF_BURST_DISCARD_THRESHOLD,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_PANIC,
+    CONF_CATEGORY_PLUG,
     CONF_CORRELATION_WINDOW,
     CONF_DRIFT_SENSITIVITY,
     CONF_ENABLE_NOTIFICATIONS,
@@ -37,13 +43,24 @@ from .const import (
     CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY,
     CONF_MONITORED_ENTITIES,
+    CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES,
+    CONF_PANIC_HEARTBEAT_HOURS,
+    CONF_PANIC_RENOTIFY_MINUTES,
+    CONF_PANIC_TEST_REMINDER_DAYS,
+    CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES,
     CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    DEFAULT_BURST_DISCARD_THRESHOLD,
+    DEFAULT_CATEGORY_CONTACT,
+    DEFAULT_CATEGORY_LIGHT,
+    DEFAULT_CATEGORY_MOTION,
+    DEFAULT_CATEGORY_PANIC,
+    DEFAULT_CATEGORY_PLUG,
     DEFAULT_CORRELATION_WINDOW,
     DEFAULT_ENABLE_NOTIFICATIONS,
     DEFAULT_HISTORY_WINDOW_DAYS,
@@ -52,8 +69,13 @@ from .const import (
     DEFAULT_MAX_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
+    DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN,
     DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_PANIC_HEARTBEAT_HOURS,
+    DEFAULT_PANIC_RENOTIFY_MINUTES,
+    DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_STARTUP_GRACE_SECONDS,
     DEFAULT_TRACK_ATTRIBUTES,
     DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
     DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
@@ -96,6 +118,26 @@ def _validate_track_attribute_overrides(user_input: dict[str, Any]) -> str | Non
     return None
 
 
+_CATEGORY_LIST_KEYS: tuple[str, ...] = (
+    CONF_CATEGORY_MOTION,
+    CONF_CATEGORY_CONTACT,
+    CONF_CATEGORY_PLUG,
+    CONF_CATEGORY_LIGHT,
+    CONF_CATEGORY_PANIC,
+)
+
+
+def _validate_category_overrides(user_input: dict[str, Any]) -> str | None:
+    """Return an error key if an entity appears in more than one category list."""
+    seen: set[str] = set()
+    for key in _CATEGORY_LIST_KEYS:
+        current = set(user_input.get(key) or [])
+        if current & seen:
+            return "category_overlap"
+        seen |= current
+    return None
+
+
 def _build_data_schema(
     *,
     entities_default: list[str] | None = None,
@@ -114,6 +156,17 @@ def _build_data_schema(
     track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
     track_attributes_include_default: list[str] | None = None,
     track_attributes_exclude_default: list[str] | None = None,
+    category_motion_default: list[str] | None = None,
+    category_contact_default: list[str] | None = None,
+    category_plug_default: list[str] | None = None,
+    category_light_default: list[str] | None = None,
+    motion_debounce_seconds_default: int = DEFAULT_MOTION_DEBOUNCE_SECONDS,
+    category_panic_default: list[str] | None = None,
+    panic_renotify_minutes_default: int = DEFAULT_PANIC_RENOTIFY_MINUTES,
+    startup_grace_seconds_default: int = DEFAULT_STARTUP_GRACE_SECONDS,
+    burst_discard_threshold_default: int = DEFAULT_BURST_DISCARD_THRESHOLD,
+    panic_heartbeat_hours_default: int = DEFAULT_PANIC_HEARTBEAT_HOURS,
+    panic_test_reminder_days_default: int = DEFAULT_PANIC_TEST_REMINDER_DAYS,
 ) -> vol.Schema:
     """Build the shared config/options schema."""
     schema_dict: dict[vol.Marker, Any] = {
@@ -153,6 +206,91 @@ def _build_data_schema(
             CONF_TRACK_ATTRIBUTES_EXCLUDE,
             default=list(track_attributes_exclude_default or DEFAULT_TRACK_ATTRIBUTES_EXCLUDE),
         ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_MOTION,
+            default=list(category_motion_default or DEFAULT_CATEGORY_MOTION),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_CONTACT,
+            default=list(category_contact_default or DEFAULT_CATEGORY_CONTACT),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_PLUG,
+            default=list(category_plug_default or DEFAULT_CATEGORY_PLUG),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Optional(
+            CONF_CATEGORY_LIGHT,
+            default=list(category_light_default or DEFAULT_CATEGORY_LIGHT),
+        ): EntitySelector(EntitySelectorConfig(multiple=True)),
+        vol.Required(
+            CONF_MOTION_DEBOUNCE_SECONDS, default=motion_debounce_seconds_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=600,
+                step=10,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
+        vol.Optional(
+            CONF_CATEGORY_PANIC,
+            default=list(category_panic_default or DEFAULT_CATEGORY_PANIC),
+        ): EntitySelector(EntitySelectorConfig(multiple=True, domain="binary_sensor")),
+        vol.Required(
+            CONF_PANIC_RENOTIFY_MINUTES, default=panic_renotify_minutes_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1,
+                max=60,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="minutes",
+            )
+        ),
+        vol.Required(
+            CONF_STARTUP_GRACE_SECONDS, default=startup_grace_seconds_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=300,
+                step=10,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
+        vol.Required(
+            CONF_BURST_DISCARD_THRESHOLD, default=burst_discard_threshold_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=10,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required(
+            CONF_PANIC_HEARTBEAT_HOURS, default=panic_heartbeat_hours_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=168,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="hours",
+            )
+        ),
+        vol.Required(
+            CONF_PANIC_TEST_REMINDER_DAYS, default=panic_test_reminder_days_default
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=365,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="days",
+            )
+        ),
         vol.Required(
             CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
         ): NumberSelector(
@@ -299,7 +437,7 @@ def _build_data_schema(
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Behaviour Monitor."""
 
-    VERSION = 10
+    VERSION = 13
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -324,6 +462,8 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
+            elif (category_error := _validate_category_overrides(user_input)):
+                errors["base"] = category_error
             else:
                 unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
                 await self.async_set_unique_id(unique_id)
@@ -379,6 +519,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
                 errors["base"] = "no_entities_selected"
             elif (override_error := _validate_track_attribute_overrides(user_input)):
                 errors["base"] = override_error
+            elif (category_error := _validate_category_overrides(user_input)):
+                errors["base"] = category_error
             else:
                 # Merge user input with existing data to preserve all fields
                 updated_data = dict(self._config_entry.data)
@@ -394,7 +536,11 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
 
                 # Same treatment for the per-entity override lists: a cleared
                 # entity selector may be absent from user_input entirely
-                for key in (CONF_TRACK_ATTRIBUTES_INCLUDE, CONF_TRACK_ATTRIBUTES_EXCLUDE):
+                for key in (
+                    CONF_TRACK_ATTRIBUTES_INCLUDE,
+                    CONF_TRACK_ATTRIBUTES_EXCLUDE,
+                    *_CATEGORY_LIST_KEYS,
+                ):
                     if not user_input.get(key):
                         updated_data[key] = []
 
@@ -454,6 +600,39 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current_correlation_window = self._config_entry.data.get(
             CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW
         )
+        current_category_motion = self._config_entry.data.get(
+            CONF_CATEGORY_MOTION, DEFAULT_CATEGORY_MOTION
+        )
+        current_category_contact = self._config_entry.data.get(
+            CONF_CATEGORY_CONTACT, DEFAULT_CATEGORY_CONTACT
+        )
+        current_category_plug = self._config_entry.data.get(
+            CONF_CATEGORY_PLUG, DEFAULT_CATEGORY_PLUG
+        )
+        current_category_light = self._config_entry.data.get(
+            CONF_CATEGORY_LIGHT, DEFAULT_CATEGORY_LIGHT
+        )
+        current_motion_debounce_seconds = self._config_entry.data.get(
+            CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS
+        )
+        current_category_panic = self._config_entry.data.get(
+            CONF_CATEGORY_PANIC, DEFAULT_CATEGORY_PANIC
+        )
+        current_panic_renotify_minutes = self._config_entry.data.get(
+            CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES
+        )
+        current_startup_grace_seconds = self._config_entry.data.get(
+            CONF_STARTUP_GRACE_SECONDS, DEFAULT_STARTUP_GRACE_SECONDS
+        )
+        current_burst_discard_threshold = self._config_entry.data.get(
+            CONF_BURST_DISCARD_THRESHOLD, DEFAULT_BURST_DISCARD_THRESHOLD
+        )
+        current_panic_heartbeat_hours = self._config_entry.data.get(
+            CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS
+        )
+        current_panic_test_reminder_days = self._config_entry.data.get(
+            CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS
+        )
 
         data_schema = _build_data_schema(
             entities_default=current_entities,
@@ -472,6 +651,17 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             track_attributes_default=current_track_attributes,
             track_attributes_include_default=current_track_attributes_include,
             track_attributes_exclude_default=current_track_attributes_exclude,
+            category_motion_default=current_category_motion,
+            category_contact_default=current_category_contact,
+            category_plug_default=current_category_plug,
+            category_light_default=current_category_light,
+            motion_debounce_seconds_default=current_motion_debounce_seconds,
+            category_panic_default=current_category_panic,
+            panic_renotify_minutes_default=current_panic_renotify_minutes,
+            startup_grace_seconds_default=current_startup_grace_seconds,
+            burst_discard_threshold_default=current_burst_discard_threshold,
+            panic_heartbeat_hours_default=current_panic_heartbeat_hours,
+            panic_test_reminder_days_default=current_panic_test_reminder_days,
         )
 
         return self.async_show_form(

@@ -40,3 +40,34 @@ clear_snooze:
   name: Clear Snooze
   description: >
     Clear active snooze and immediately resume anomaly detection and notifications.
+
+acknowledge_panic:
+  name: Acknowledge Panic
+  description: >
+    Acknowledge active panic button alerts. Stops repeat notifications until the
+    button is released. Omit entity_id to acknowledge every active panic.
+  fields:
+    entity_id:
+      name: Entity
+      description: The panic button to acknowledge (optional; all if omitted).
+      required: false
+      example: binary_sensor.sos_pendant
+      selector:
+        entity:
+          domain: binary_sensor
+
+panic_test:
+  name: Panic Test
+  description: >
+    Open a two-minute test window. A panic button pressed inside the window is
+    recorded as a test and does not raise an alert. Omit entity_id to open the
+    window for every panic button.
+  fields:
+    entity_id:
+      name: Entity
+      description: The panic button to test (optional; all if omitted).
+      required: false
+      example: binary_sensor.sos_pendant
+      selector:
+        entity:
+          domain: binary_sensor

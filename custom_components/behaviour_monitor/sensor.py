@@ -44,6 +44,15 @@ class BehaviourMonitorSensorDescription(SensorEntityDescription):
     ) = None
 
 
+def _summary_text(counts: dict) -> str:
+    text = f"{counts.get('ok', 0)} OK, {counts.get('attention', 0)} Need Attention"
+    if counts.get("missing", 0):
+        text += f", {counts['missing']} Missing"
+    if counts.get("unavailable", 0):
+        text += f", {counts['unavailable']} Unavailable"
+    return text
+
+
 SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
     BehaviourMonitorSensorDescription(
         key="last_activity",
@@ -108,6 +117,11 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "entity_count_by_status": data.get("welfare", {}).get(
                 "entity_count_by_status", {}
             ),
+            "contributing_entities": data.get("welfare", {}).get("contributing_entities", 0),
+            "expected_entities": data.get("welfare", {}).get("expected_entities", 0),
+            "missing_entities": data.get("welfare", {}).get("missing_entities", []),
+            "unavailable_entities": data.get("welfare", {}).get("unavailable_entities", []),
+            "alert_count_by_entity": data.get("welfare", {}).get("alert_count_by_entity", {}),
         },
     ),
     BehaviourMonitorSensorDescription(
@@ -151,10 +165,7 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         key="entity_status_summary",
         name="Entity Status Summary",
         icon="mdi:format-list-checks",
-        value_fn=lambda data: (
-            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('normal', 0)} OK, "
-            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('attention', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('concern', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('alert', 0)} Need Attention"
-        ),
+        value_fn=lambda data: _summary_text(data.get("welfare", {}).get("entity_count_by_status", {})),
         extra_attrs_fn=lambda coord, data: {
             ATTR_ENTITY_STATUS: data.get("entity_status", []),
         },

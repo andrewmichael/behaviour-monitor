@@ -3,6 +3,8 @@
 from enum import Enum
 from typing import Final
 
+from .alert_result import AlertSeverity
+
 DOMAIN: Final = "behaviour_monitor"
 
 # Configuration keys
@@ -62,9 +64,46 @@ DEFAULT_TRACK_ATTRIBUTES: Final = False
 DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
 DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
 
+# New v5.0 config keys (entity categories + motion debounce)
+CONF_CATEGORY_MOTION: Final = "category_motion"
+CONF_CATEGORY_CONTACT: Final = "category_contact"
+CONF_CATEGORY_PLUG: Final = "category_plug"
+CONF_CATEGORY_LIGHT: Final = "category_light"
+CONF_MOTION_DEBOUNCE_SECONDS: Final = "motion_debounce_seconds"
+# New v5.1 config keys (panic button)
+CONF_CATEGORY_PANIC: Final = "category_panic"
+CONF_PANIC_RENOTIFY_MINUTES: Final = "panic_renotify_minutes"
+# One-shot flag written by the v11 migration; cleared by the coordinator
+# after it re-bootstraps motion entities from recorder history.
+CONF_REBOOTSTRAP_MOTION: Final = "rebootstrap_motion"
+
+# New v5.0 defaults
+DEFAULT_CATEGORY_MOTION: Final[list[str]] = []
+DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
+DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
+DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
+DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
+# New v5.1 defaults
+DEFAULT_CATEGORY_PANIC: Final[list[str]] = []  # override-list only; never inferred
+DEFAULT_PANIC_RENOTIFY_MINUTES: Final = 5  # minutes between re-notifications until acknowledged
+
+# New v5.2 config keys (system integrity)
+CONF_STARTUP_GRACE_SECONDS: Final = "startup_grace_seconds"
+CONF_BURST_DISCARD_THRESHOLD: Final = "burst_discard_threshold"
+CONF_PANIC_HEARTBEAT_HOURS: Final = "panic_heartbeat_hours"
+CONF_PANIC_TEST_REMINDER_DAYS: Final = "panic_test_reminder_days"
+
+# New v5.2 defaults
+DEFAULT_STARTUP_GRACE_SECONDS: Final = 90  # seconds after setup during which events are ignored; 0 disables
+DEFAULT_BURST_DISCARD_THRESHOLD: Final = 3  # distinct entities changing in one second = artifact; 0 disables
+DEFAULT_PANIC_HEARTBEAT_HOURS: Final = 24  # hours without a report before a panic device alert; 0 disables
+DEFAULT_PANIC_TEST_REMINDER_DAYS: Final = 30  # days without a test press before a reminder; 0 disables
+PANIC_TEST_WINDOW_SECONDS: Final = 120
+PANIC_LOW_BATTERY_PERCENT: Final = 20
+
 # Storage
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 10
+STORAGE_VERSION: Final = 13
 
 # Update interval (seconds)
 UPDATE_INTERVAL: Final = 60
@@ -104,6 +143,8 @@ WELFARE_OK: Final = "ok"
 WELFARE_CHECK: Final = "check_recommended"
 WELFARE_CONCERN: Final = "concern"
 WELFARE_ALERT: Final = "alert"
+WELFARE_BLIND: Final = "blind"  # no monitored entity is reporting
+WELFARE_DEGRADED: Final = "degraded"  # some inputs lost or a device-health alert is active
 
 # Holiday mode and snooze
 ATTR_HOLIDAY_MODE: Final = "holiday_mode"
@@ -147,6 +188,8 @@ SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
 SERVICE_ROUTINE_RESET: Final = "routine_reset"
+SERVICE_ACKNOWLEDGE_PANIC: Final = "acknowledge_panic"
+SERVICE_PANIC_TEST: Final = "panic_test"
 
 # ---------------------------------------------------------------------------
 # Detection engine constants (v1.1)
@@ -221,3 +264,53 @@ MIN_CO_OCCURRENCES: Final = 10
 # PMI threshold — pairs with PMI > this are considered correlated
 # PMI > 1.0 means 2x more likely than chance (medium-confidence, tunable)
 PMI_THRESHOLD: Final[float] = 1.0
+
+# ---------------------------------------------------------------------------
+# Entity categories, motion debounce and weighted welfare (v5.0)
+# ---------------------------------------------------------------------------
+
+
+class EntityCategory(Enum):
+    """Kind of device an entity represents, for debounce and welfare weighting."""
+
+    MOTION = "motion"
+    CONTACT = "contact"
+    PLUG = "plug"
+    LIGHT = "light"
+    PANIC = "panic"  # override-list only; instant alert, no learning
+    OTHER = "other"
+
+
+# Entity-registry device classes that map to each category
+MOTION_DEVICE_CLASSES: Final = frozenset({"motion", "occupancy", "presence"})
+CONTACT_DEVICE_CLASSES: Final = frozenset({"door", "window", "opening", "garage_door"})
+PLUG_DEVICE_CLASSES: Final = frozenset({"outlet", "plug"})
+
+# Welfare weight per category — how strongly an alert from this kind of
+# device evidences something about the person, not the device.
+CATEGORY_WEIGHT: Final = {
+    EntityCategory.MOTION: 1.0,
+    EntityCategory.CONTACT: 0.8,
+    EntityCategory.OTHER: 1.0,
+    EntityCategory.PLUG: 0.5,
+    EntityCategory.LIGHT: 0.5,
+}
+
+# Severity points multiplied by CATEGORY_WEIGHT to score an alert.
+SEVERITY_POINTS: Final = {
+    AlertSeverity.LOW: 1,
+    AlertSeverity.MEDIUM: 2,
+    AlertSeverity.HIGH: 3,
+}
+
+WELFARE_ALERT_SCORE: Final[float] = 2.25
+WELFARE_CONCERN_SCORE: Final[float] = 1.25
+# Recommendation text when any panic button is active
+WELFARE_PANIC_RECOMMENDATION: Final = "Panic button pressed. Respond now."
+WELFARE_BLIND_RECOMMENDATION: Final = "No monitored entities are reporting. Check sensors and the integration options."
+WELFARE_DEGRADED_RECOMMENDATION: Final = "Some monitored entities are not reporting."
+
+# Entity health classification (v5.2)
+HEALTH_PRESENT: Final = "present"
+HEALTH_UNAVAILABLE: Final = "unavailable"
+HEALTH_MISSING: Final = "missing"
