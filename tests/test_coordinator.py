@@ -2602,3 +2602,146 @@ class TestPanicDeviceLiveness:
             ev.data = {"entity_id": "binary_sensor.sos", "old_state": MagicMock(state="off"), "new_state": MagicMock(state="on")}
             c._handle_state_changed(ev)
         assert c.panic_active == ["binary_sensor.sos"]
+
+
+# ---------------------------------------------------------------------------
+# TestRoleWiring — area lookup, role repair issue, role re-bootstrap, status
+# ---------------------------------------------------------------------------
+
+
+class TestRoleWiring:
+    def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, entities: list[str], **extra: Any) -> BehaviourMonitorCoordinator:
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
+
+        mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: entities, **extra}
+        return BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+
+    def test_area_names_entity_then_device(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.a", "binary_sensor.b", "binary_sensor.c", "binary_sensor.d"])
+        ent = {
+            "binary_sensor.a": MagicMock(area_id="area_kitchen", device_id=None),
+            "binary_sensor.b": MagicMock(area_id=None, device_id="dev1"),
+            "binary_sensor.c": MagicMock(area_id=None, device_id=None),
+        }
+        ent_reg = MagicMock()
+        ent_reg.async_get = lambda eid: ent.get(eid)
+        dev_reg = MagicMock()
+        dev_reg.async_get = lambda did: MagicMock(area_id="area_bath") if did == "dev1" else None
+        kitchen, bath = MagicMock(), MagicMock()
+        kitchen.name, bath.name = "Kitchen", "Bathroom"
+        areas = {"area_kitchen": kitchen, "area_bath": bath}
+        area_reg = MagicMock()
+        area_reg.async_get_area = lambda aid: areas.get(aid)
+        with patch.object(coord_module.er, "async_get", return_value=ent_reg), \
+             patch.object(coord_module.dr, "async_get", return_value=dev_reg), \
+             patch.object(coord_module.ar, "async_get", return_value=area_reg):
+            names = c._registry_area_names()
+        assert names == {"binary_sensor.a": "Kitchen", "binary_sensor.b": "Bathroom", "binary_sensor.c": None, "binary_sensor.d": None}
+
+    def test_area_names_survive_registry_failure(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.a"])
+        with patch.object(coord_module.er, "async_get", side_effect=RuntimeError("boom")):
+            assert c._registry_area_names() == {"binary_sensor.a": None}
+
+    def test_unassigned_motion_raises_issue_and_clears(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+        from custom_components.behaviour_monitor.const import EntityRole
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.a", "binary_sensor.b"])
+        c._roles = {"binary_sensor.a": EntityRole.MOTION_UNASSIGNED, "binary_sensor.b": EntityRole.MOTION_UNASSIGNED}
+        mock_hass.states.get = lambda eid: MagicMock(state="off")
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock()
+        registry.issues = {}
+        with patch.object(coord_module.er, "async_get", return_value=registry), \
+             patch.object(coord_module.ir, "async_get", return_value=registry), \
+             patch.object(coord_module.ir, "async_create_issue") as create, \
+             patch.object(coord_module.ir, "async_delete_issue") as delete:
+            c._refresh_health()
+            assert "roles_need_assignment" in c._open_issues
+            kwargs = create.call_args.kwargs
+            assert kwargs["translation_key"] == "roles_need_assignment"
+            assert kwargs["translation_placeholders"] == {"entity_ids": "binary_sensor.a, binary_sensor.b"}
+            assert kwargs["is_fixable"] is False
+            c._roles = {"binary_sensor.a": EntityRole.MOTION_KITCHEN, "binary_sensor.b": EntityRole.MOTION_LIVING}
+            c._refresh_health()
+        assert "roles_need_assignment" not in c._open_issues
+        assert any("roles_need_assignment" in call.args for call in delete.call_args_list)
+
+    def test_roles_issue_seeded_from_registry(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor import coordinator as coord_module
+        from custom_components.behaviour_monitor.const import EntityRole
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.a"])
+        c._roles = {"binary_sensor.a": EntityRole.MOTION_KITCHEN}
+        mock_hass.states.get = lambda eid: MagicMock(state="off")
+        registry = MagicMock()
+        registry.async_get = lambda eid: MagicMock()
+        registry.issues = {("behaviour_monitor", "roles_need_assignment"): object(), ("behaviour_monitor", "exterior_doors_unconfirmed"): object()}
+        with patch.object(coord_module.er, "async_get", return_value=registry), \
+             patch.object(coord_module.ir, "async_get", return_value=registry), \
+             patch.object(coord_module.ir, "async_create_issue"), \
+             patch.object(coord_module.ir, "async_delete_issue") as delete:
+            c._refresh_health()
+        deleted = [call.args[-1] for call in delete.call_args_list]
+        assert "roles_need_assignment" in deleted
+        assert "exterior_doors_unconfirmed" not in deleted  # migration-owned; user dismisses it
+
+    @pytest.mark.asyncio
+    async def test_rebootstrap_roles_clears_door_and_appliance_only(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_REBOOTSTRAP_ROLES, EntityRole
+        from custom_components.behaviour_monitor.drift_detector import CUSUMState
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "binary_sensor.door", "switch.kettle"], **{CONF_REBOOTSTRAP_ROLES: True})
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING, "binary_sensor.door": EntityRole.DOOR_INTERIOR, "switch.kettle": EntityRole.APPLIANCE}
+        for eid in c._roles:
+            c._routine_model.get_or_create(eid, is_binary=True)
+            c._correlation_detector._entity_event_counts[eid] = 5
+        c._drift_detector._states["binary_sensor.door"] = CUSUMState()
+        c._last_seen["binary_sensor.door"] = datetime.now(timezone.utc)
+        pir_before = c._routine_model._entities["binary_sensor.pir"]
+        with patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock) as boot, \
+             patch.object(c._store, "async_save", new_callable=AsyncMock) as save:
+            await c._rebootstrap_role_entities()
+        boot.assert_awaited_once_with(entity_ids=["binary_sensor.door", "switch.kettle"])
+        assert c._routine_model._entities["binary_sensor.pir"] is pir_before
+        assert "binary_sensor.door" not in c._routine_model._entities
+        assert "switch.kettle" not in c._routine_model._entities
+        assert "binary_sensor.pir" in c._correlation_detector._entity_event_counts
+        assert "binary_sensor.door" not in c._correlation_detector._entity_event_counts
+        assert "binary_sensor.door" in c._drift_detector._states and "binary_sensor.door" in c._last_seen
+        save.assert_awaited_once()
+        assert CONF_REBOOTSTRAP_ROLES not in mock_hass.config_entries.async_update_entry.call_args.kwargs["data"]
+
+    @pytest.mark.asyncio
+    async def test_async_setup_runs_role_rebootstrap_when_flag_set(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_REBOOTSTRAP_ROLES
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.door"], **{CONF_REBOOTSTRAP_ROLES: True})
+        stored = {"routine_model": c._routine_model.to_dict(), "coordinator": {}}
+        with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=stored), \
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}), \
+             patch.object(c, "_rebootstrap_role_entities", new_callable=AsyncMock) as reboot, \
+             patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock) as boot:
+            await c.async_setup()
+        reboot.assert_awaited_once()
+        boot.assert_not_awaited()
+
+    def test_status_has_role_counts_and_door_fields(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import EntityRole
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "binary_sensor.door", "switch.kettle"])
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_KITCHEN, "binary_sensor.door": EntityRole.DOOR_EXTERIOR, "switch.kettle": EntityRole.APPLIANCE}
+        c._pipeline.seed_door_status({"binary_sensor.door": {"last_open_seconds": 9.0, "last_open_class": "brief"}})
+        data = c._build_sensor_data([], datetime.now())
+        assert data["roles"]["motion.kitchen"] == 1 and data["roles"]["door.exterior"] == 1 and data["roles"]["appliance"] == 1
+        assert data["roles"]["motion.bathroom"] == 0 and "panic" in data["roles"]
+        by_id = {e["entity_id"]: e for e in data["entity_status"]}
+        assert by_id["binary_sensor.door"]["last_open_seconds"] == 9.0 and by_id["binary_sensor.door"]["last_open_class"] == "brief"
+        assert "last_open_seconds" not in by_id["binary_sensor.pir"]
+        assert "category" not in by_id["binary_sensor.pir"]

@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -28,7 +28,7 @@ from .const import (
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES, CONF_PANIC_HEARTBEAT_HOURS, CONF_PANIC_RENOTIFY_MINUTES, CONF_PANIC_TEST_REMINDER_DAYS,
-    CONF_REBOOTSTRAP_MOTION, CONF_RETRIGGER_COLLAPSE_SECONDS, CONF_ROLE_OVERRIDES, CONF_STARTUP_GRACE_SECONDS,
+    CONF_REBOOTSTRAP_MOTION, CONF_REBOOTSTRAP_ROLES, CONF_RETRIGGER_COLLAPSE_SECONDS, CONF_ROLE_OVERRIDES, CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
@@ -252,6 +252,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if stored:
             if self._entry.data.get(CONF_REBOOTSTRAP_MOTION, False):
                 await self._rebootstrap_motion_entities()
+            if self._entry.data.get(CONF_REBOOTSTRAP_ROLES, False):
+                await self._rebootstrap_role_entities()
         elif not self._routine_model._entities:
             await self._bootstrap_from_recorder()
             await self._save_data()
@@ -297,8 +299,29 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return out
 
     def _registry_area_names(self) -> dict[str, str | None]:
-        """Area name per monitored entity (entity area, else its device's area). Task 7 fills this in."""
-        return {eid: None for eid in self._monitored_entities}
+        """Area name per monitored entity: the entity's area, else its device's area."""
+        out: dict[str, str | None] = {eid: None for eid in self._monitored_entities}
+        try:
+            ent_reg, dev_reg, area_reg = er.async_get(self.hass), dr.async_get(self.hass), ar.async_get(self.hass)
+        except Exception:  # noqa: BLE001
+            return out
+        for eid in self._monitored_entities:
+            try:
+                entry = ent_reg.async_get(eid)
+                if entry is None:
+                    continue
+                area_id = getattr(entry, "area_id", None)
+                if not area_id and getattr(entry, "device_id", None):
+                    device = dev_reg.async_get(entry.device_id)
+                    area_id = getattr(device, "area_id", None) if device is not None else None
+                if not isinstance(area_id, str) or not area_id:
+                    continue
+                area = area_reg.async_get_area(area_id)
+                name = getattr(area, "name", None)
+                out[eid] = name if isinstance(name, str) else None
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Could not resolve area for %s", eid, exc_info=True)
+        return out
 
     def _refresh_roles(self) -> None:
         """Rebuild the entity -> role map from lists, overrides, registry, areas and model."""
@@ -354,30 +377,41 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 registry = ir.async_get(self.hass)
                 self._open_issues = {
                     iid for (dom, iid) in registry.issues
-                    if dom == DOMAIN and isinstance(iid, str) and iid.startswith("missing_entity_")
+                    if dom == DOMAIN and isinstance(iid, str) and self._owns_issue(iid)
                 }
             except Exception:  # noqa: BLE001
                 self._open_issues = set()
         states, in_registry = self._entity_facts()
         self._entity_health = resolve_entity_health(self._monitored_entities, states, in_registry)
-        wanted = {f"missing_entity_{eid}" for eid, h in self._entity_health.items() if h == HEALTH_MISSING}
-        for issue_id in wanted - self._open_issues:
+        wanted: dict[str, tuple[str, dict[str, str], Any]] = {
+            f"missing_entity_{eid}": ("missing_entity", {"entity_id": eid}, ir.IssueSeverity.ERROR)
+            for eid, h in self._entity_health.items() if h == HEALTH_MISSING
+        }
+        unassigned = sorted(e for e, r in self._roles.items() if r is EntityRole.MOTION_UNASSIGNED)
+        if unassigned:
+            wanted["roles_need_assignment"] = ("roles_need_assignment", {"entity_ids": ", ".join(unassigned)}, ir.IssueSeverity.WARNING)
+        for issue_id in set(wanted) - self._open_issues:
+            key, placeholders, severity = wanted[issue_id]
             try:
                 ir.async_create_issue(
                     self.hass, DOMAIN, issue_id,
-                    is_fixable=False, is_persistent=False, severity=ir.IssueSeverity.ERROR,
-                    translation_key="missing_entity",
-                    translation_placeholders={"entity_id": issue_id[len("missing_entity_"):]},
+                    is_fixable=False, is_persistent=False, severity=severity,
+                    translation_key=key, translation_placeholders=placeholders,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not create repair issue %s", issue_id)
-        for issue_id in self._open_issues - wanted:
+        for issue_id in self._open_issues - set(wanted):
             try:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not delete repair issue %s", issue_id)
-        self._open_issues = wanted
+        self._open_issues = set(wanted)
         self._refresh_panic_devices()
+
+    @staticmethod
+    def _owns_issue(issue_id: str) -> bool:
+        """Issues the coordinator raises and clears itself (not the migration-owned one)."""
+        return issue_id.startswith("missing_entity_") or issue_id == "roles_need_assignment"
 
     def _refresh_panic_devices(self) -> None:
         """Feed availability, last-report time and battery of each panic entity to the monitor."""
@@ -800,6 +834,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "panic_active": self._panic_monitor.is_active(e),
                     "correlated_with": self._correlation_detector.get_correlated_entities(e),
                     **(self._panic_monitor.device_status(e) if self._roles.get(e) is EntityRole.PANIC else {}),
+                    **(self._pipeline.door_status(e) if self._roles.get(e, EntityRole.OTHER).kind == "door" else {}),
                 }
                 for e in self._monitored_entities
             ],
@@ -810,7 +845,14 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
             "learning_status": ls, "baseline_confidence": round(conf, 1),
             "panic": self._panic_payload(),
+            "roles": self._role_counts(),
         }
+
+    def _role_counts(self) -> dict[str, int]:
+        counts = {role.value: 0 for role in EntityRole}
+        for eid in self._monitored_entities:
+            counts[self._roles.get(eid, EntityRole.OTHER).value] += 1
+        return counts
 
     def _build_safe_defaults(self) -> dict[str, Any]:
         return {"last_activity": None, "activity_score": 0.0, "anomaly_detected": False, "anomalies": [],
@@ -822,7 +864,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "ml_status": {"enabled": False}, "cross_sensor_patterns": [], "panic": self._panic_payload(),
                 "last_notification": self._last_notification_info,
                 "holiday_mode": self._holiday_mode, "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-                "learning_status": "inactive", "baseline_confidence": 0.0}
+                "learning_status": "inactive", "baseline_confidence": 0.0,
+                "roles": {role.value: 0 for role in EntityRole}}
 
     async def _save_fire_refresh(self, event: str, data: dict | None = None) -> None:
         await self._save_data(); self.hass.bus.async_fire(event, data or {}); await self.async_request_refresh()
@@ -909,4 +952,22 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info("Behaviour Monitor: re-bootstrapped %d motion entities with debounce", len(motion))
         await self._save_data()
         new_data = {k: v for k, v in self._entry.data.items() if k != CONF_REBOOTSTRAP_MOTION}
+        self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+
+    async def _rebootstrap_role_entities(self) -> None:
+        """One-shot after the v14 migration: rebuild door and appliance routines with the pipeline.
+
+        Drops the learned routine and correlation counts for every door- and
+        appliance-kind entity, replays recorder history for them, saves, then
+        clears the rebootstrap_roles flag. Motion, CUSUM drift and last_seen are kept.
+        """
+        targets = [e for e in self._monitored_entities if self._roles.get(e, EntityRole.OTHER).kind in ("door", "appliance")]
+        for eid in targets:
+            self._routine_model._entities.pop(eid, None)
+            self._correlation_detector.remove_entity(eid)
+        if targets:
+            await self._bootstrap_from_recorder(entity_ids=targets)
+            _LOGGER.info("Behaviour Monitor: re-bootstrapped %d door/appliance entities through the pipeline", len(targets))
+        await self._save_data()
+        new_data = {k: v for k, v in self._entry.data.items() if k != CONF_REBOOTSTRAP_ROLES}
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
