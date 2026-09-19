@@ -14,6 +14,7 @@ from custom_components.behaviour_monitor.const import (
     CONF_ALERT_REPEAT_INTERVAL,
     ActivityTier,
     DEFAULT_ALERT_REPEAT_INTERVAL,
+    EntityRole,
     WELFARE_DEBOUNCE_CYCLES,
 )
 from custom_components.behaviour_monitor.alert_result import (
@@ -1391,8 +1392,8 @@ class TestTrackAttributesPerEntityOverrides:
 # ---------------------------------------------------------------------------
 
 
-class TestEntityCategories:
-    """Category inference on the coordinator and motion debounce at ingestion."""
+class TestEntityRoles:
+    """Role inference on the coordinator and pipeline debounce at ingestion."""
 
     def _make(
         self,
@@ -1417,47 +1418,54 @@ class TestEntityCategories:
         return event
 
     def test_defaults(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import DEFAULT_MOTION_DEBOUNCE_SECONDS
+        from custom_components.behaviour_monitor.const import DEFAULT_DOOR_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS
 
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
-        assert c._motion_debounce_seconds == DEFAULT_MOTION_DEBOUNCE_SECONDS
-        assert c._categories == {}
+        assert c._pipeline_config.motion_debounce_seconds == DEFAULT_MOTION_DEBOUNCE_SECONDS
+        assert c._pipeline_config.door_debounce_seconds == DEFAULT_DOOR_DEBOUNCE_SECONDS
+        assert c._roles == {}
+        assert c._exterior_doors == [] and c._role_overrides == {}
 
-    def test_refresh_categories_uses_registry_and_overrides(
+    def test_refresh_roles_uses_registry_lists_and_overrides(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
     ) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_CONTACT, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_EXTERIOR_DOORS, CONF_ROLE_OVERRIDES, EntityRole
 
         c = self._make(
             mock_hass,
             mock_config_entry,
-            ["binary_sensor.pir", "binary_sensor.door", "switch.kettle", "light.hall", "sensor.temp"],
-            **{CONF_CATEGORY_CONTACT: ["sensor.temp"]},
+            ["binary_sensor.pir", "binary_sensor.door", "binary_sensor.front", "switch.kettle", "light.hall", "sensor.temp"],
+            **{CONF_EXTERIOR_DOORS: ["binary_sensor.front"], CONF_ROLE_OVERRIDES: "sensor.temp: door\n"},
         )
-        with patch.object(
-            c,
-            "_registry_device_classes",
-            return_value={"binary_sensor.pir": "motion", "binary_sensor.door": "door"},
-        ):
-            c._refresh_categories()
-        assert c._categories == {
-            "binary_sensor.pir": EntityCategory.MOTION,
-            "binary_sensor.door": EntityCategory.CONTACT,
-            "switch.kettle": EntityCategory.PLUG,
-            "light.hall": EntityCategory.LIGHT,
-            "sensor.temp": EntityCategory.CONTACT,
+        with patch.object(c, "_registry_device_classes", return_value={"binary_sensor.pir": "motion", "binary_sensor.door": "door", "binary_sensor.front": "door"}), \
+             patch.object(c, "_registry_area_names", return_value={"binary_sensor.pir": "Kitchen"}):
+            c._refresh_roles()
+        assert c._roles == {
+            "binary_sensor.pir": EntityRole.MOTION_KITCHEN,
+            "binary_sensor.door": EntityRole.DOOR_INTERIOR,
+            "binary_sensor.front": EntityRole.DOOR_EXTERIOR,
+            "switch.kettle": EntityRole.APPLIANCE,
+            "light.hall": EntityRole.APPLIANCE,
+            "sensor.temp": EntityRole.DOOR_INTERIOR,
         }
 
-    def test_refresh_categories_forces_numeric_to_other(
+    def test_invalid_overrides_are_ignored_with_warning(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
+        from custom_components.behaviour_monitor.const import CONF_ROLE_OVERRIDES
+
+        c = self._make(mock_hass, mock_config_entry, ["a.b"], **{CONF_ROLE_OVERRIDES: "nonsense"})
+        assert c._role_overrides == {}
+
+    def test_refresh_roles_forces_numeric_to_other(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
     ) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_ROLE_OVERRIDES, EntityRole
 
-        c = self._make(mock_hass, mock_config_entry, ["sensor.lux"], **{CONF_CATEGORY_MOTION: ["sensor.lux"]})
+        c = self._make(mock_hass, mock_config_entry, ["sensor.lux"], **{CONF_ROLE_OVERRIDES: "sensor.lux: motion.kitchen\n"})
         c._routine_model.get_or_create("sensor.lux", is_binary=False)
-        with patch.object(c, "_registry_device_classes", return_value={}):
-            c._refresh_categories()
-        assert c._categories["sensor.lux"] is EntityCategory.OTHER
+        with patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}):
+            c._refresh_roles()
+        assert c._roles["sensor.lux"] is EntityRole.OTHER
 
     def test_registry_device_classes_handles_missing_entries(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
@@ -1474,104 +1482,129 @@ class TestEntityCategories:
             result = c._registry_device_classes()
         assert result == {"binary_sensor.pir": "motion", "switch.x": None}
 
-    def test_motion_off_transition_updates_last_seen_but_not_model(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
-
+    def test_motion_off_transition_updates_last_seen_but_not_model(self, mock_hass, mock_config_entry) -> None:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
-        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
         _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert "binary_sensor.pir" in c._last_seen
         assert "binary_sensor.pir" not in c._routine_model._entities
         assert c._today_count == 0
 
-    def test_motion_rising_edge_records(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
-
+    def test_motion_rising_edge_records(self, mock_hass, mock_config_entry) -> None:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
-        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
         _fire(c, self._event("binary_sensor.pir", "off", "on"))
         assert "binary_sensor.pir" in c._routine_model._entities
         assert c._today_count == 1
+        assert "binary_sensor.pir" in c._correlation_detector._entity_event_counts
 
-    def test_motion_burst_counts_once(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
-
+    def test_motion_burst_counts_once(self, mock_hass, mock_config_entry) -> None:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
-        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
         for _ in range(3):
             _fire(c, self._event("binary_sensor.pir", "off", "on"))
             _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert c._today_count == 1
 
-    def test_zero_window_counts_every_edge(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import CONF_MOTION_DEBOUNCE_SECONDS, EntityCategory
+    def test_zero_windows_count_every_edge(self, mock_hass, mock_config_entry) -> None:
+        from custom_components.behaviour_monitor.const import CONF_MOTION_DEBOUNCE_SECONDS, CONF_RETRIGGER_COLLAPSE_SECONDS
 
-        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"], **{CONF_MOTION_DEBOUNCE_SECONDS: 0})
-        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"], **{CONF_MOTION_DEBOUNCE_SECONDS: 0, CONF_RETRIGGER_COLLAPSE_SECONDS: 0})
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
         for _ in range(3):
             _fire(c, self._event("binary_sensor.pir", "off", "on"))
             _fire(c, self._event("binary_sensor.pir", "on", "off"))
         assert c._today_count == 3
 
-    def test_non_motion_unchanged(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
-
+    def test_door_counts_rising_edge_only(self, mock_hass, mock_config_entry) -> None:
         c = self._make(mock_hass, mock_config_entry, ["binary_sensor.door"])
-        c._categories = {"binary_sensor.door": EntityCategory.CONTACT}
+        c._roles = {"binary_sensor.door": EntityRole.DOOR_INTERIOR}
         _fire(c, self._event("binary_sensor.door", "off", "on"))
         _fire(c, self._event("binary_sensor.door", "on", "off"))
+        assert c._today_count == 1
+
+    def test_appliance_counts_every_change(self, mock_hass, mock_config_entry) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["switch.kettle"])
+        c._roles = {"switch.kettle": EntityRole.APPLIANCE}
+        _fire(c, self._event("switch.kettle", "off", "on"))
+        _fire(c, self._event("switch.kettle", "on", "off"))
         assert c._today_count == 2
 
-    def test_sensor_data_includes_category(
-        self, mock_hass: MagicMock, mock_config_entry: MagicMock
-    ) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
-
-        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "sensor.other"])
-        c._categories = {"binary_sensor.pir": EntityCategory.MOTION}
-        data = c._build_sensor_data([], datetime.now())
-        by_id = {e["entity_id"]: e for e in data["entity_status"]}
-        assert by_id["binary_sensor.pir"]["category"] == "motion"
-        assert by_id["sensor.other"]["category"] == "other"
+    def test_excursion_records_once_under_first_door(self, mock_hass, mock_config_entry) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.back", "binary_sensor.side"])
+        c._roles = {"binary_sensor.back": EntityRole.DOOR_EXTERIOR, "binary_sensor.side": EntityRole.DOOR_EXTERIOR}
+        c._handle_state_changed(self._event("binary_sensor.back", "off", "on"))
+        c._handle_state_changed(self._event("binary_sensor.side", "off", "on"))
+        c._flush_gate(force=True)  # force flush closes the excursion immediately
+        assert c._today_count == 1
+        assert "binary_sensor.back" in c._routine_model._entities
+        assert "binary_sensor.side" not in c._routine_model._entities
 
     @pytest.mark.asyncio
-    async def test_async_setup_refreshes_categories(
+    async def test_pipeline_flushed_on_poll(self, mock_hass, mock_config_entry) -> None:
+        from custom_components.behaviour_monitor.pipeline import ActivityEvent
+
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.back"])
+        c._roles = {"binary_sensor.back": EntityRole.DOOR_EXTERIOR}
+        pending = [ActivityEvent("binary_sensor.back", EntityRole.DOOR_EXTERIOR, datetime.now())]
+        with patch.object(c._pipeline, "flush", return_value=pending) as flush, \
+             patch.object(c, "_refresh_health"), patch.object(c, "_run_detection", return_value=[]), \
+             patch.object(c, "_handle_alerts", new_callable=AsyncMock):
+            await c._async_update_data()
+        flush.assert_called()
+        assert c._today_count == 1
+
+    def test_refresh_requested_only_for_activity(self, mock_hass, mock_config_entry) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir"])
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
+        c._handle_state_changed(self._event("binary_sensor.pir", "off", "on"))
+        c._flush_gate()  # not forced: first rising edge is activity -> refresh
+        first = mock_hass.async_create_task.call_count
+        c._handle_state_changed(self._event("binary_sensor.pir", "on", "off"))
+        c._flush_gate()  # off edge is not activity -> no refresh
+        assert mock_hass.async_create_task.call_count == first
+
+    def test_sensor_data_includes_role(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        c = self._make(mock_hass, mock_config_entry, ["binary_sensor.pir", "sensor.other"])
+        c._roles = {"binary_sensor.pir": EntityRole.MOTION_LIVING}
+        data = c._build_sensor_data([], datetime.now())
+        by_id = {e["entity_id"]: e for e in data["entity_status"]}
+        assert by_id["binary_sensor.pir"]["role"] == "motion.living"
+        assert by_id["sensor.other"]["role"] == "other"
+        assert "category" not in by_id["binary_sensor.pir"]
+
+    @pytest.mark.asyncio
+    async def test_async_setup_refreshes_roles(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
     ) -> None:
         c = self._make(mock_hass, mock_config_entry, ["switch.kettle"])
         with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=None), \
              patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
              patch.object(c._store, "async_save", new_callable=AsyncMock), \
-             patch.object(c, "_registry_device_classes", return_value={}):
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}):
             await c.async_setup()
-        assert c._categories["switch.kettle"].value == "plug"
+        assert c._roles["switch.kettle"].value == "appliance"
 
-    def test_refresh_categories_uses_live_state_when_model_empty(
+    def test_refresh_roles_uses_live_state_when_model_empty(
         self, mock_hass: MagicMock, mock_config_entry: MagicMock
     ) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_MOTION, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_ROLE_OVERRIDES, EntityRole
 
-        c = self._make(mock_hass, mock_config_entry, ["sensor.lux", "binary_sensor.pir"], **{CONF_CATEGORY_MOTION: ["sensor.lux", "binary_sensor.pir"]})
+        c = self._make(mock_hass, mock_config_entry, ["sensor.lux", "binary_sensor.pir"], **{CONF_ROLE_OVERRIDES: "sensor.lux: motion.kitchen\nbinary_sensor.pir: motion"})
         states = {"sensor.lux": MagicMock(state="23.5"), "binary_sensor.pir": MagicMock(state="off")}
         mock_hass.states.get = lambda eid: states.get(eid)
-        with patch.object(c, "_registry_device_classes", return_value={}):
-            c._refresh_categories()
-        assert c._categories["sensor.lux"] is EntityCategory.OTHER
-        assert c._categories["binary_sensor.pir"] is EntityCategory.MOTION
+        with patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}):
+            c._refresh_roles()
+        assert c._roles["sensor.lux"] is EntityRole.OTHER
+        assert c._roles["binary_sensor.pir"] is EntityRole.MOTION_UNASSIGNED
 
 
 class TestWeightedWelfare:
-    """_derive_welfare uses category-weighted scoring."""
+    """_derive_welfare uses role-weighted scoring."""
 
     @pytest.fixture
     def coordinator(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> BehaviourMonitorCoordinator:
@@ -1582,15 +1615,13 @@ class TestWeightedWelfare:
             CONF_MONITORED_ENTITIES: ["binary_sensor.pir", "switch.kettle"],
         }
         c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        from custom_components.behaviour_monitor.const import EntityCategory
-
-        c._categories = {
-            "binary_sensor.pir": EntityCategory.MOTION,
-            "switch.kettle": EntityCategory.PLUG,
+        c._roles = {
+            "binary_sensor.pir": EntityRole.MOTION_LIVING,
+            "switch.kettle": EntityRole.APPLIANCE,
         }
         return c
 
-    def test_plug_high_is_concern_not_alert(self, coordinator: BehaviourMonitorCoordinator) -> None:
+    def test_appliance_high_is_concern_not_alert(self, coordinator: BehaviourMonitorCoordinator) -> None:
         welfare = coordinator._derive_welfare([_make_alert("switch.kettle", severity=AlertSeverity.HIGH)])
         assert welfare["status"] == "concern"
         assert welfare["recommendation"] == "Schedule a welfare check soon."
@@ -1622,7 +1653,7 @@ class TestBootstrapDebounceAndRebootstrap:
     """Recorder replay goes through the debouncer; v11 flag triggers motion re-bootstrap."""
 
     def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
-        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_MONITORED_ENTITIES
 
         mock_config_entry.data = {
             **mock_config_entry.data,
@@ -1630,9 +1661,9 @@ class TestBootstrapDebounceAndRebootstrap:
             **extra,
         }
         c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        c._categories = {
-            "binary_sensor.pir": EntityCategory.MOTION,
-            "binary_sensor.door": EntityCategory.CONTACT,
+        c._roles = {
+            "binary_sensor.pir": EntityRole.MOTION_LIVING,
+            "binary_sensor.door": EntityRole.DOOR_INTERIOR,
         }
         return c
 
@@ -1674,7 +1705,7 @@ class TestBootstrapDebounceAndRebootstrap:
         pir = c._routine_model._entities["binary_sensor.pir"]
         door = c._routine_model._entities["binary_sensor.door"]
         assert sum(len(s.event_times) for s in pir.slots) == 1
-        assert sum(len(s.event_times) for s in door.slots) == 2
+        assert sum(len(s.event_times) for s in door.slots) == 1
 
     @pytest.mark.asyncio
     async def test_bootstrap_respects_entity_subset(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
@@ -1765,6 +1796,7 @@ class TestBootstrapDebounceAndRebootstrap:
         stored = {"routine_model": c._routine_model.to_dict(), "coordinator": {}}
         with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=stored), \
              patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}), \
              patch.object(c, "_rebootstrap_motion_entities", new_callable=AsyncMock) as reboot, \
              patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock) as boot:
             await c.async_setup()
@@ -1779,6 +1811,7 @@ class TestBootstrapDebounceAndRebootstrap:
         stored = {"routine_model": c._routine_model.to_dict(), "coordinator": {}}
         with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=stored), \
              patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}), \
              patch.object(c, "_rebootstrap_motion_entities", new_callable=AsyncMock) as reboot:
             await c.async_setup()
         reboot.assert_not_awaited()
@@ -1805,7 +1838,7 @@ class TestStoreMigration:
 
 class TestPanicPressRelease:
     def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityRole
 
         mock_config_entry.data = {
             **mock_config_entry.data,
@@ -1814,7 +1847,7 @@ class TestPanicPressRelease:
             **extra,
         }
         c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        c._categories = {"binary_sensor.sos": EntityCategory.PANIC, "binary_sensor.door": EntityCategory.CONTACT}
+        c._roles = {"binary_sensor.sos": EntityRole.PANIC, "binary_sensor.door": EntityRole.DOOR_INTERIOR}
         return c
 
     @staticmethod
@@ -1909,13 +1942,13 @@ class TestPanicPressRelease:
 
     @pytest.mark.asyncio
     async def test_acknowledge_all_and_one(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityRole
 
         c = self._make(
             mock_hass, mock_config_entry,
             **{CONF_MONITORED_ENTITIES: ["binary_sensor.a", "binary_sensor.b"], CONF_CATEGORY_PANIC: ["binary_sensor.a", "binary_sensor.b"]},
         )
-        c._categories = {"binary_sensor.a": EntityCategory.PANIC, "binary_sensor.b": EntityCategory.PANIC}
+        c._roles = {"binary_sensor.a": EntityRole.PANIC, "binary_sensor.b": EntityRole.PANIC}
         now = datetime.now(timezone.utc)
         c._panic_monitor.press("binary_sensor.a", now)
         c._panic_monitor.press("binary_sensor.b", now)
@@ -1945,7 +1978,8 @@ class TestPanicPressRelease:
 
         c2 = self._make(mock_hass, mock_config_entry)
         with patch.object(c2._store, "async_load", new_callable=AsyncMock, return_value=stored), \
-             patch.object(c2, "_registry_device_classes", return_value={}):
+             patch.object(c2, "_registry_device_classes", return_value={}), \
+             patch.object(c2, "_registry_area_names", return_value={}):
             await c2.async_setup()
         assert c2.panic_active == ["binary_sensor.sos"]
         assert c2.panic_unacknowledged == []
@@ -1968,7 +2002,8 @@ class TestPanicPressRelease:
         c2 = self._make(mock_hass, mock_config_entry)
         mock_hass.states.get = lambda eid: MagicMock(state="off") if eid == "binary_sensor.sos" else None
         with patch.object(c2._store, "async_load", new_callable=AsyncMock, return_value=stored), \
-             patch.object(c2, "_registry_device_classes", return_value={}):
+             patch.object(c2, "_registry_device_classes", return_value={}), \
+             patch.object(c2, "_registry_area_names", return_value={}):
             await c2.async_setup()
         assert c2.panic_active == []
 
@@ -1984,7 +2019,7 @@ class TestPanicPressRelease:
 class TestPanicPoll:
     # Uses naive datetime.now() to match the mocked dt_util.now (real HA is tz-aware end to end).
     def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityRole
 
         mock_config_entry.data = {
             **mock_config_entry.data,
@@ -1993,7 +2028,7 @@ class TestPanicPoll:
             **extra,
         }
         c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        c._categories = {"binary_sensor.sos": EntityCategory.PANIC, "switch.kettle": EntityCategory.PLUG}
+        c._roles = {"binary_sensor.sos": EntityRole.PANIC, "switch.kettle": EntityRole.APPLIANCE}
         return c
 
     def test_panic_alerts_built_per_active_entity(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
@@ -2117,14 +2152,15 @@ class TestPanicPoll:
         assert data["panic"]["active"] == ["binary_sensor.sos"]
 
     def test_stale_routine_for_panic_entity_is_purged_and_skipped(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import EntityCategory
+        from custom_components.behaviour_monitor.const import EntityRole
 
         c = self._make(mock_hass, mock_config_entry)
         c._routine_model.get_or_create("binary_sensor.sos", is_binary=True)
         c._correlation_detector._entity_event_counts["binary_sensor.sos"] = 3
-        with patch.object(c, "_registry_device_classes", return_value={}):
-            c._refresh_categories()
-        assert c._categories["binary_sensor.sos"] is EntityCategory.PANIC
+        with patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}):
+            c._refresh_roles()
+        assert c._roles["binary_sensor.sos"] is EntityRole.PANIC
         assert "binary_sensor.sos" not in c._routine_model._entities
         assert "binary_sensor.sos" not in c._correlation_detector._entity_event_counts
         # even if a record sneaks back in, detection skips panic entities
@@ -2188,10 +2224,10 @@ class TestEntityHealthIntegration:
         assert c._open_issues == set()
 
     def test_expected_and_contributing(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityRole
 
         c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d", "binary_sensor.sos"], **{CONF_CATEGORY_PANIC: ["binary_sensor.sos"]})
-        c._categories = {"a.b": EntityCategory.OTHER, "c.d": EntityCategory.OTHER, "binary_sensor.sos": EntityCategory.PANIC}
+        c._roles = {"a.b": EntityRole.OTHER, "c.d": EntityRole.OTHER, "binary_sensor.sos": EntityRole.PANIC}
         c._entity_health = {"a.b": "present", "c.d": "missing", "binary_sensor.sos": "present"}
         assert c._expected_entities() == ["a.b", "c.d"]
         assert c._contributing_entities() == ["a.b"]
@@ -2232,10 +2268,10 @@ class TestEntityHealthIntegration:
 
     @pytest.mark.asyncio
     async def test_panic_outranks_blind(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityRole
 
         c = self._make(mock_hass, mock_config_entry, ["a.b", "c.d", "binary_sensor.sos"], **{CONF_CATEGORY_PANIC: ["binary_sensor.sos"]})
-        c._categories = {"a.b": EntityCategory.OTHER, "c.d": EntityCategory.OTHER, "binary_sensor.sos": EntityCategory.PANIC}
+        c._roles = {"a.b": EntityRole.OTHER, "c.d": EntityRole.OTHER, "binary_sensor.sos": EntityRole.PANIC}
         c._panic_monitor.press("binary_sensor.sos", datetime.now())
         with patch.object(c, "_entity_facts", return_value=({"a.b": None, "c.d": None, "binary_sensor.sos": "on"}, set())), \
              patch.object(c._store, "async_save", new_callable=AsyncMock), \
@@ -2328,6 +2364,7 @@ class TestEntityHealthIntegration:
              patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
              patch.object(c._store, "async_save", new_callable=AsyncMock), \
              patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}), \
              patch.object(c, "_entity_facts", return_value=({"a.b": "on"}, set())):
             await c.async_setup()
         assert c._entity_health == {"a.b": "present"}
@@ -2403,7 +2440,8 @@ class TestEventGateWiring:
         with patch.object(c._store, "async_load", new_callable=AsyncMock, return_value=None), \
              patch.object(c, "_bootstrap_from_recorder", new_callable=AsyncMock), \
              patch.object(c._store, "async_save", new_callable=AsyncMock), \
-             patch.object(c, "_registry_device_classes", return_value={}):
+             patch.object(c, "_registry_device_classes", return_value={}), \
+             patch.object(c, "_registry_area_names", return_value={}):
             await c.async_setup()
         c._handle_state_changed(self._event("s.a", "off", "on"))
         c._flush_gate(force=True)
@@ -2411,10 +2449,10 @@ class TestEventGateWiring:
         mock_hass.loop.call_later.assert_not_called()
 
     def test_panic_bypasses_gate(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, EntityRole
 
         c = self._make(mock_hass, mock_config_entry, **{CONF_CATEGORY_PANIC: ["binary_sensor.sos"]})
-        c._categories["binary_sensor.sos"] = EntityCategory.PANIC
+        c._roles["binary_sensor.sos"] = EntityRole.PANIC
         c._gate.arm(datetime.now())  # even during grace
         c._handle_state_changed(self._event("binary_sensor.sos", "off", "on"))
         assert c.panic_active == ["binary_sensor.sos"]
@@ -2441,11 +2479,11 @@ class TestEventGateWiring:
 
 class TestPanicDeviceLiveness:
     def _make(self, mock_hass: MagicMock, mock_config_entry: MagicMock, **extra: Any) -> BehaviourMonitorCoordinator:
-        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityCategory
+        from custom_components.behaviour_monitor.const import CONF_CATEGORY_PANIC, CONF_MONITORED_ENTITIES, EntityRole
 
         mock_config_entry.data = {**mock_config_entry.data, CONF_MONITORED_ENTITIES: ["s.a"], CONF_CATEGORY_PANIC: ["binary_sensor.sos"], **extra}
         c = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
-        c._categories = {"s.a": EntityCategory.OTHER, "binary_sensor.sos": EntityCategory.PANIC}
+        c._roles = {"s.a": EntityRole.OTHER, "binary_sensor.sos": EntityRole.PANIC}
         return c
 
     @staticmethod

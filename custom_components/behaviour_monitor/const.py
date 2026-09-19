@@ -64,12 +64,19 @@ DEFAULT_TRACK_ATTRIBUTES: Final = False
 DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
 DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
 
-# New v5.0 config keys (entity categories + motion debounce)
+# Legacy v5.0 keys and defaults: read by migrations and the config flow until Task 8 removes them.
 CONF_CATEGORY_MOTION: Final = "category_motion"
 CONF_CATEGORY_CONTACT: Final = "category_contact"
 CONF_CATEGORY_PLUG: Final = "category_plug"
 CONF_CATEGORY_LIGHT: Final = "category_light"
+DEFAULT_CATEGORY_MOTION: Final[list[str]] = []
+DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
+DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
+DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
+
+# New v5.0 config keys (motion debounce)
 CONF_MOTION_DEBOUNCE_SECONDS: Final = "motion_debounce_seconds"
+DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
 # New v5.1 config keys (panic button)
 CONF_CATEGORY_PANIC: Final = "category_panic"
 CONF_PANIC_RENOTIFY_MINUTES: Final = "panic_renotify_minutes"
@@ -77,12 +84,6 @@ CONF_PANIC_RENOTIFY_MINUTES: Final = "panic_renotify_minutes"
 # after it re-bootstraps motion entities from recorder history.
 CONF_REBOOTSTRAP_MOTION: Final = "rebootstrap_motion"
 
-# New v5.0 defaults
-DEFAULT_CATEGORY_MOTION: Final[list[str]] = []
-DEFAULT_CATEGORY_CONTACT: Final[list[str]] = []
-DEFAULT_CATEGORY_PLUG: Final[list[str]] = []
-DEFAULT_CATEGORY_LIGHT: Final[list[str]] = []
-DEFAULT_MOTION_DEBOUNCE_SECONDS: Final = 120  # seconds; 0 disables debounce
 # New v5.1 defaults
 DEFAULT_CATEGORY_PANIC: Final[list[str]] = []  # override-list only; never inferred
 DEFAULT_PANIC_RENOTIFY_MINUTES: Final = 5  # minutes between re-notifications until acknowledged
@@ -290,18 +291,6 @@ PMI_THRESHOLD: Final[float] = 1.0
 # Entity categories, motion debounce and weighted welfare (v5.0)
 # ---------------------------------------------------------------------------
 
-
-class EntityCategory(Enum):
-    """Kind of device an entity represents, for debounce and welfare weighting."""
-
-    MOTION = "motion"
-    CONTACT = "contact"
-    PLUG = "plug"
-    LIGHT = "light"
-    PANIC = "panic"  # override-list only; instant alert, no learning
-    OTHER = "other"
-
-
 # Entity-registry device classes that map to each category
 MOTION_DEVICE_CLASSES: Final = frozenset({"motion", "occupancy", "presence"})
 CONTACT_DEVICE_CLASSES: Final = frozenset({"door", "window", "opening", "garage_door"})
@@ -365,17 +354,7 @@ DOOR_OPEN_BRIEF: Final = "brief"
 DOOR_OPEN_EXTENDED: Final = "extended"
 DOOR_OPEN_PROLONGED: Final = "prolonged"
 
-# Welfare weight per category — how strongly an alert from this kind of
-# device evidences something about the person, not the device.
-CATEGORY_WEIGHT: Final = {
-    EntityCategory.MOTION: 1.0,
-    EntityCategory.CONTACT: 0.8,
-    EntityCategory.OTHER: 1.0,
-    EntityCategory.PLUG: 0.5,
-    EntityCategory.LIGHT: 0.5,
-}
-
-# Severity points multiplied by CATEGORY_WEIGHT to score an alert.
+# Severity points multiplied by KIND_WEIGHT to score an alert.
 SEVERITY_POINTS: Final = {
     AlertSeverity.LOW: 1,
     AlertSeverity.MEDIUM: 2,

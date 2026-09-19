@@ -19,39 +19,44 @@ from .acute_detector import AcuteDetector
 from .alert_result import AlertResult, AlertSeverity, AlertType
 from .const import (
     CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL, CONF_BURST_DISCARD_THRESHOLD, CONF_CATEGORY_CONTACT, CONF_CATEGORY_LIGHT,
-    CONF_CATEGORY_MOTION, CONF_CATEGORY_PANIC, CONF_CATEGORY_PLUG, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
-    CONF_ENABLE_NOTIFICATIONS,
+    CONF_ALERT_REPEAT_INTERVAL, CONF_BURST_DISCARD_THRESHOLD, CONF_CATEGORY_PANIC,
+    CONF_CORRELATION_WINDOW, CONF_DOOR_DEBOUNCE_SECONDS, CONF_DOOR_OPEN_EXTENDED_SECONDS,
+    CONF_DOOR_OPEN_PROLONGED_SECONDS, CONF_DRIFT_SENSITIVITY,
+    CONF_ENABLE_NOTIFICATIONS, CONF_EXCURSION_WINDOW_SECONDS, CONF_EXTERIOR_DOORS,
     CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
     CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
     CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_MOTION_DEBOUNCE_SECONDS,
     CONF_NOTIFICATION_COOLDOWN,
     CONF_NOTIFY_SERVICES, CONF_PANIC_HEARTBEAT_HOURS, CONF_PANIC_RENOTIFY_MINUTES, CONF_PANIC_TEST_REMINDER_DAYS,
-    CONF_REBOOTSTRAP_MOTION, CONF_STARTUP_GRACE_SECONDS,
+    CONF_REBOOTSTRAP_MOTION, CONF_RETRIGGER_COLLAPSE_SECONDS, CONF_ROLE_OVERRIDES, CONF_STARTUP_GRACE_SECONDS,
     CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
     CONF_TRACK_ATTRIBUTES_INCLUDE,
     ActivityTier,
     DEFAULT_ACTIVITY_TIER_OVERRIDE,
     DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_BURST_DISCARD_THRESHOLD, DEFAULT_CORRELATION_WINDOW,
-    DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
+    DEFAULT_DOOR_DEBOUNCE_SECONDS, DEFAULT_DOOR_OPEN_EXTENDED_SECONDS, DEFAULT_DOOR_OPEN_PROLONGED_SECONDS,
+    DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_EXCURSION_WINDOW_SECONDS, DEFAULT_EXTERIOR_DOORS,
+    DEFAULT_HISTORY_WINDOW_DAYS,
     DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
     DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
     DEFAULT_MIN_NOTIFICATION_SEVERITY,
     DEFAULT_MOTION_DEBOUNCE_SECONDS,
     DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_PANIC_HEARTBEAT_HOURS,
     DEFAULT_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_TEST_REMINDER_DAYS,
+    DEFAULT_RETRIGGER_COLLAPSE_SECONDS, DEFAULT_ROLE_OVERRIDES,
     DEFAULT_STARTUP_GRACE_SECONDS, DEFAULT_TRACK_ATTRIBUTES,
-    DOMAIN, EntityCategory, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, PANIC_LOW_BATTERY_PERCENT,
+    DOMAIN, EntityRole, HEALTH_MISSING, HEALTH_PRESENT, HEALTH_UNAVAILABLE, PANIC_LOW_BATTERY_PERCENT,
     PANIC_TEST_WINDOW_SECONDS, SENSITIVITY_MEDIUM,
     SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY,
     STORAGE_VERSION, UPDATE_INTERVAL, WELFARE_BLIND, WELFARE_DEBOUNCE_CYCLES, WELFARE_PANIC_RECOMMENDATION,
 )
 from .correlation_detector import CorrelationDetector
 from .drift_detector import CUSUMState, DriftDetector
-from .entity_category import MotionDebouncer, derive_weighted_status, infer_categories
 from .entity_health import count_by_status, qualify_welfare, resolve_entity_health
+from .entity_role import derive_weighted_status, infer_roles, parse_role_overrides
 from .event_gate import EventGate
 from .panic_monitor import PanicMonitor
+from .pipeline import ActivityEvent, ActivityPipeline, PipelineConfig, PipelineEvent, replay
 from .routine_model import RoutineModel, format_duration, is_binary_state
 
 try:
@@ -117,19 +122,26 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_attributes: bool = bool(d.get(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES))
         self._track_attributes_include: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
         self._track_attributes_exclude: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
-        self._category_overrides: dict[EntityCategory, list[str]] = {
-            EntityCategory.MOTION: list(d.get(CONF_CATEGORY_MOTION) or []),
-            EntityCategory.CONTACT: list(d.get(CONF_CATEGORY_CONTACT) or []),
-            EntityCategory.PLUG: list(d.get(CONF_CATEGORY_PLUG) or []),
-            EntityCategory.LIGHT: list(d.get(CONF_CATEGORY_LIGHT) or []),
-            EntityCategory.PANIC: list(d.get(CONF_CATEGORY_PANIC) or []),
-        }
-        for eid in self._category_overrides[EntityCategory.PANIC]:
+        self._panic_entities: list[str] = list(d.get(CONF_CATEGORY_PANIC) or [])
+        for eid in self._panic_entities:
             if eid not in self._monitored_entities:
                 self._monitored_entities.append(eid)
-        self._motion_debounce_seconds: int = int(d.get(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS))
-        self._categories: dict[str, EntityCategory] = {}
-        self._debouncer = MotionDebouncer(self._motion_debounce_seconds)
+        self._exterior_doors: list[str] = list(d.get(CONF_EXTERIOR_DOORS) or DEFAULT_EXTERIOR_DOORS)
+        try:
+            self._role_overrides: dict[str, str] = parse_role_overrides(d.get(CONF_ROLE_OVERRIDES) or DEFAULT_ROLE_OVERRIDES)
+        except ValueError as err:
+            _LOGGER.warning("Behaviour Monitor: ignoring role overrides: %s", err)
+            self._role_overrides = {}
+        self._roles: dict[str, EntityRole] = {}
+        self._pipeline_config = PipelineConfig(
+            motion_debounce_seconds=int(d.get(CONF_MOTION_DEBOUNCE_SECONDS, DEFAULT_MOTION_DEBOUNCE_SECONDS)),
+            door_debounce_seconds=int(d.get(CONF_DOOR_DEBOUNCE_SECONDS, DEFAULT_DOOR_DEBOUNCE_SECONDS)),
+            retrigger_collapse_seconds=int(d.get(CONF_RETRIGGER_COLLAPSE_SECONDS, DEFAULT_RETRIGGER_COLLAPSE_SECONDS)),
+            excursion_window_seconds=int(d.get(CONF_EXCURSION_WINDOW_SECONDS, DEFAULT_EXCURSION_WINDOW_SECONDS)),
+            door_open_extended_seconds=int(d.get(CONF_DOOR_OPEN_EXTENDED_SECONDS, DEFAULT_DOOR_OPEN_EXTENDED_SECONDS)),
+            door_open_prolonged_seconds=int(d.get(CONF_DOOR_OPEN_PROLONGED_SECONDS, DEFAULT_DOOR_OPEN_PROLONGED_SECONDS)),
+        )
+        self._pipeline = ActivityPipeline(self._pipeline_config)
         self._panic_renotify_minutes: int = int(d.get(CONF_PANIC_RENOTIFY_MINUTES, DEFAULT_PANIC_RENOTIFY_MINUTES))
         self._panic_heartbeat_hours: int = int(d.get(CONF_PANIC_HEARTBEAT_HOURS, DEFAULT_PANIC_HEARTBEAT_HOURS))
         self._panic_test_reminder_days: int = int(d.get(CONF_PANIC_TEST_REMINDER_DAYS, DEFAULT_PANIC_TEST_REMINDER_DAYS))
@@ -228,8 +240,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_notification_info = c.get("last_notification_info", {"timestamp": None, "type": None})
             self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
             self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
-        # Categories must be inferred from restored data before either bootstrap path.
-        self._refresh_categories()
+        # Roles must be inferred from restored data before either bootstrap path.
+        self._refresh_roles()
         self._refresh_health()
         # A panic released while HA was down never sends an `off` event; drop it.
         for eid in self.panic_active:
@@ -284,8 +296,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             out[eid] = dc if isinstance(dc, str) else None
         return out
 
-    def _refresh_categories(self) -> None:
-        """Rebuild the entity -> category map from overrides, registry and model."""
+    def _registry_area_names(self) -> dict[str, str | None]:
+        """Area name per monitored entity (entity area, else its device's area). Task 7 fills this in."""
+        return {eid: None for eid in self._monitored_entities}
+
+    def _refresh_roles(self) -> None:
+        """Rebuild the entity -> role map from lists, overrides, registry, areas and model."""
         numeric: set[str] = set()
         for eid in self._monitored_entities:
             r = self._routine_model._entities.get(eid)
@@ -297,14 +313,17 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sv = getattr(state, "state", None)
             if isinstance(sv, str) and sv not in ("unavailable", "unknown") and not is_binary_state(sv):
                 numeric.add(eid)
-        self._categories = infer_categories(
+        self._roles = infer_roles(
             self._monitored_entities,
-            self._category_overrides,
+            self._panic_entities,
+            self._exterior_doors,
+            self._role_overrides,
             self._registry_device_classes(),
+            self._registry_area_names(),
             numeric,
         )
-        for eid, cat in self._categories.items():
-            if cat is EntityCategory.PANIC:
+        for eid, role in self._roles.items():
+            if role is EntityRole.PANIC:
                 self._routine_model._entities.pop(eid, None)
                 self._correlation_detector.remove_entity(eid)
 
@@ -363,7 +382,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _refresh_panic_devices(self) -> None:
         """Feed availability, last-report time and battery of each panic entity to the monitor."""
         for eid in self._monitored_entities:
-            if self._categories.get(eid) is not EntityCategory.PANIC:
+            if self._roles.get(eid) is not EntityRole.PANIC:
                 continue
             st = self.hass.states.get(eid)
             reported = None
@@ -409,7 +428,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return opened
 
     def _expected_entities(self) -> list[str]:
-        return [e for e in self._monitored_entities if self._categories.get(e) is not EntityCategory.PANIC]
+        return [e for e in self._monitored_entities if self._roles.get(e) is not EntityRole.PANIC]
 
     def _contributing_entities(self) -> list[str]:
         return [e for e in self._expected_entities() if self._entity_health.get(e) == HEALTH_PRESENT]
@@ -450,7 +469,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ns = event.data.get("new_state")
         if ns is None:
             return
-        if self._categories.get(eid) is EntityCategory.PANIC:
+        if self._roles.get(eid) is EntityRole.PANIC:
             self._handle_panic_event(eid, event.data.get("old_state"), ns)
             return
         old_state = event.data.get("old_state")
@@ -467,37 +486,43 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _flush_gate(self, force: bool = False) -> None:
-        """Release completed one-second buckets from the gate and process them."""
+        """Release completed one-second buckets from the gate, run the pipeline, consume activity."""
         self._gate_flush_pending = False
-        events, dropped = self._gate.flush(dt_util.now(), force=force)
+        now = dt_util.now()
+        events, dropped = self._gate.flush(now, force=force)
+        # Last seen is the load-bearing welfare metric: every gated event proves the
+        # entity reported, whether or not the pipeline counts it as activity.
         for ev in events:
-            self._process_activity(ev.entity_id, ev.old_state, ev.new_state, ev.timestamp)
+            self._last_seen[ev.entity_id] = ev.timestamp
+        for ev in dropped:
+            self._last_seen[ev.entity_id] = ev.timestamp
         if dropped:
-            # A discarded burst still proves the entities were seen, just not
-            # enough to trust for learning, correlation or the daily count.
-            for ev in dropped:
-                self._last_seen[ev.entity_id] = ev.timestamp
             _LOGGER.debug(
                 "Discarded burst of %d events across %d entities",
                 len(dropped), len({ev.entity_id for ev in dropped}),
             )
+        activity: list[ActivityEvent] = []
+        for ev in events:
+            role = self._roles.get(ev.entity_id, EntityRole.OTHER)
+            activity.extend(self._pipeline.submit(PipelineEvent(ev.entity_id, role, ev.old_state, ev.new_state, ev.timestamp)))
+        activity.extend(self._pipeline.flush(now, force=force))
+        self._consume_activity(activity)
         if self._gate.pending and not force:
             self._gate_flush_pending = True
             self.hass.loop.call_later(1.0, self._flush_gate)
-        if events and not force:
+        if activity and not force:
             self.hass.async_create_task(self.async_request_refresh())
 
-    def _process_activity(self, eid: str, old_sv: str | None, sv: str, now: datetime) -> None:
-        """The pre-gate activity path: last-seen, debounce, record, correlate, count."""
-        self._last_seen[eid] = now
-        is_motion = self._categories.get(eid) is EntityCategory.MOTION
-        if not self._debouncer.should_count(eid, is_motion, old_sv, sv, now):
-            return
-        self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
-        self._correlation_detector.record_event(eid, now, self._last_seen)
-        if self._today_date != now.date():
-            self._today_count, self._today_date = 0, now.date()
-        self._today_count += 1
+    def _consume_activity(self, events: list[ActivityEvent]) -> None:
+        """Feed activity events to the routine model, correlation detector and daily count."""
+        for ev in events:
+            self._routine_model.record(
+                entity_id=ev.entity_id, timestamp=ev.timestamp, state_value=ev.state, is_binary=is_binary_state(ev.state)
+            )
+            self._correlation_detector.record_event(ev.entity_id, ev.timestamp, self._last_seen)
+            if self._today_date != ev.timestamp.date():
+                self._today_count, self._today_date = 0, ev.timestamp.date()
+            self._today_count += 1
 
     def _handle_panic_event(self, eid: str, old_state: Any, new_state: Any) -> None:
         """Panic entities bypass learning entirely: press notifies now, release clears."""
@@ -586,6 +611,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
+        self._consume_activity(self._pipeline.flush(now))
         self._refresh_health()
         if self._today_date != now.date():
             self._today_count = 0
@@ -640,7 +666,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         alerts: list[AlertResult] = []
         d = now.date()
         for eid in self._monitored_entities:
-            if self._categories.get(eid) is EntityCategory.PANIC:
+            if self._roles.get(eid) is EntityRole.PANIC:
                 continue
             if (r := self._routine_model._entities.get(eid)) is None:
                 continue
@@ -651,7 +677,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) if x is not None)
         # Correlation break detection
         for eid in self._monitored_entities:
-            if self._categories.get(eid) is EntityCategory.PANIC:
+            if self._roles.get(eid) is EntityRole.PANIC:
                 continue
             alerts.extend(
                 self._correlation_detector.check_breaks(eid, now, self._last_seen)
@@ -721,7 +747,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         welfare_alerts = [a for a in alerts if a.alert_type not in (AlertType.CORRELATION_BREAK, AlertType.DEVICE_HEALTH)]
         if not welfare_alerts:
             return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "alert_count_by_entity": {}}
-        st, rec = derive_weighted_status(welfare_alerts, self._categories)
+        st, rec = derive_weighted_status(welfare_alerts, self._roles)
         cnt: dict[str, int] = {}
         for a in welfare_alerts:
             cnt[a.entity_id] = cnt.get(a.entity_id, 0) + 1
@@ -767,13 +793,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "entity_id": e,
                     "status": ("active" if e in self._last_seen else "unknown") if self._entity_health.get(e, HEALTH_PRESENT) == HEALTH_PRESENT else self._entity_health[e],
                     "health": self._entity_health.get(e, HEALTH_PRESENT),
-                    "contributing": self._entity_health.get(e) == HEALTH_PRESENT and self._categories.get(e) is not EntityCategory.PANIC,
+                    "contributing": self._entity_health.get(e) == HEALTH_PRESENT and self._roles.get(e) is not EntityRole.PANIC,
                     "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
                     "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
-                    "category": self._categories.get(e, EntityCategory.OTHER).value,
+                    "role": self._roles.get(e, EntityRole.OTHER).value,
                     "panic_active": self._panic_monitor.is_active(e),
                     "correlated_with": self._correlation_detector.get_correlated_entities(e),
-                    **(self._panic_monitor.device_status(e) if self._categories.get(e) is EntityCategory.PANIC else {}),
+                    **(self._panic_monitor.device_status(e) if self._roles.get(e) is EntityRole.PANIC else {}),
                 }
                 for e in self._monitored_entities
             ],
@@ -827,43 +853,44 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._save_fire_refresh(f"{DOMAIN}_routine_reset", {"entity_id": entity_id})
 
     async def _bootstrap_from_recorder(self, entity_ids: list[str] | None = None) -> None:
-        """Replay recorder history into the routine model, debouncing motion entities.
+        """Replay recorder history through a private pipeline into the routine model.
 
-        Uses a private MotionDebouncer so replay never disturbs live debounce state.
-        A skipped unavailable/unknown state resets the edge-detection ``prev`` value,
-        matching live handling: on -> unavailable -> on is a rising edge.
+        All targets are replayed together so cross-entity excursion grouping works.
+        Dropout states (unavailable/unknown) are passed to the pipeline, which resets
+        edge tracking for that entity: on -> unavailable -> on is a rising edge.
         """
         if recorder_get_instance is None or recorder_state_changes_during_period is None:
             _LOGGER.warning("Behaviour Monitor: recorder unavailable, skipping bootstrap")
             return
         targets = list(entity_ids) if entity_ids is not None else list(self._monitored_entities)
-        debouncer = MotionDebouncer(self._motion_debounce_seconds)
+        events: list[PipelineEvent] = []
         try:
             instance = recorder_get_instance(self.hass)
             if instance is None:
                 return
             end, start = dt_util.now(), dt_util.now() - timedelta(days=self._history_window_days)
             for eid in targets:
-                if self._categories.get(eid) is EntityCategory.PANIC:
+                role = self._roles.get(eid, EntityRole.OTHER)
+                if role is EntityRole.PANIC:
                     continue
-                is_motion = self._categories.get(eid) is EntityCategory.MOTION
                 prev: str | None = None
                 try:
                     for sl in (await instance.async_add_executor_job(
                         recorder_state_changes_during_period, self.hass, start, end, [eid], False,
                     )).values():
                         for s in sl:
-                            if s.state in ("unavailable", "unknown"):
-                                prev = None
-                                continue
                             sv = str(s.state)
-                            if debouncer.should_count(eid, is_motion, prev, sv, s.last_changed):
-                                self._routine_model.record(eid, s.last_changed, sv, is_binary_state(sv))
-                            prev = sv
+                            events.append(PipelineEvent(eid, role, prev, sv, s.last_changed))
+                            prev = None if sv in ("unavailable", "unknown") else sv
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning("Could not load recorder history for %s", eid)
         except Exception:  # noqa: BLE001
             _LOGGER.warning("Behaviour Monitor: recorder bootstrap failed", exc_info=True)
+            return
+        activity, door_status = replay(events, self._pipeline_config)
+        for ev in activity:
+            self._routine_model.record(ev.entity_id, ev.timestamp, ev.state, is_binary_state(ev.state))
+        self._pipeline.seed_door_status(door_status)
 
     async def _rebootstrap_motion_entities(self) -> None:
         """One-shot after the v11 migration: rebuild motion routines with debounce.
@@ -873,7 +900,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         the rebootstrap_motion flag on the config entry. CUSUM drift state and
         last_seen are kept.
         """
-        motion = [e for e in self._monitored_entities if self._categories.get(e) is EntityCategory.MOTION]
+        motion = [e for e in self._monitored_entities if self._roles.get(e, EntityRole.OTHER).kind == "motion"]
         for eid in motion:
             self._routine_model._entities.pop(eid, None)
             self._correlation_detector.remove_entity(eid)
