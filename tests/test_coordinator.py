@@ -2422,6 +2422,39 @@ class TestEventGateWiring:
         assert c._today_count == 0
         assert c._gate.dropped_bursts == 1
 
+    def test_burst_dropped_off_resyncs_pipeline_so_next_on_counts(
+        self, mock_hass: MagicMock, mock_config_entry: MagicMock
+    ) -> None:
+        """Important-1 regression: a burst-dropped off must not leave the
+        pipeline's edge state stale, or the next real rising edge is lost."""
+        from custom_components.behaviour_monitor.const import CONF_MOTION_DEBOUNCE_SECONDS, EntityRole
+        from custom_components.behaviour_monitor import coordinator as coord_module
+
+        c = self._make(mock_hass, mock_config_entry, **{CONF_MOTION_DEBOUNCE_SECONDS: 0})
+        c._roles["s.a"] = EntityRole.MOTION_KITCHEN
+        base = datetime(2026, 9, 18, 12, 0, 0)
+        with patch.object(coord_module.dt_util, "now", return_value=base):
+            c._handle_state_changed(self._event("s.a", "off", "on"))
+            c._flush_gate(force=True)
+        assert c._today_count == 1
+
+        burst_time = base + timedelta(seconds=60)
+        with patch.object(coord_module.dt_util, "now", return_value=burst_time):
+            # 3 distinct entities in the same second, including s.a's off, so
+            # the burst gate drops the whole bucket -- including that off.
+            c._handle_state_changed(self._event("s.a", "on", "off"))
+            c._handle_state_changed(self._event("s.b", "off", "on"))
+            c._handle_state_changed(self._event("s.c", "off", "on"))
+            c._flush_gate(force=True)
+        assert c._gate.dropped_bursts == 1
+        assert c._today_count == 1  # the dropped burst counted nothing
+
+        later = burst_time + timedelta(seconds=10)
+        with patch.object(coord_module.dt_util, "now", return_value=later):
+            c._handle_state_changed(self._event("s.a", "off", "on"))
+            c._flush_gate(force=True)
+        assert c._today_count == 2  # the rising edge after the dropped off still counts
+
     def test_threshold_zero_keeps_burst(self, mock_hass: MagicMock, mock_config_entry: MagicMock) -> None:
         from custom_components.behaviour_monitor.const import CONF_BURST_DISCARD_THRESHOLD
         from custom_components.behaviour_monitor import coordinator as coord_module

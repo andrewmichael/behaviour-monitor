@@ -530,6 +530,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_seen[ev.entity_id] = ev.timestamp
         for ev in dropped:
             self._last_seen[ev.entity_id] = ev.timestamp
+            role = self._roles.get(ev.entity_id, EntityRole.OTHER)
+            self._pipeline.note_state(ev.entity_id, role, ev.new_state, ev.timestamp)
         if dropped:
             _LOGGER.debug(
                 "Discarded burst of %d events across %d entities",

@@ -139,6 +139,35 @@ class ActivityPipeline:
             return self._on_edge(event, st, prev_on)
         return self._off_edge(event, st, prev_on)
 
+    def note_state(
+        self, entity_id: str, role: EntityRole, new_state: str, timestamp: datetime
+    ) -> None:
+        """Resynchronise edge state for an event never shown to ``submit``.
+
+        Used for events the burst gate dropped: the pipeline's ``is_on``
+        must not go stale, but a dropped event is not activity, so this
+        never emits, never touches ``last_counted``, and never starts or
+        joins an excursion. Retrigger collapse is preserved: a real off
+        noted here while collapse is enabled is held as ``pending_off``,
+        exactly like ``_off_edge``.
+        """
+        st = self._states.setdefault(entity_id, _EntityState())
+        st.role = role
+        sv = new_state.lower()
+        if sv in _DROPOUT:
+            st.is_on = None
+            st.pending_off = None
+            return
+        if role.kind not in _EDGE_KINDS or not is_binary_state(new_state):
+            return
+        if sv == "on":
+            if not st.is_on:
+                st.is_on = True
+                st.last_on = timestamp
+            return
+        if st.is_on:
+            self._hold_or_confirm_off(st, timestamp)
+
     def _on_edge(
         self, event: PipelineEvent, st: _EntityState, prev_on: bool
     ) -> list[ActivityEvent]:
@@ -202,11 +231,16 @@ class ActivityPipeline:
         st.is_on = False
         if not prev_on:
             return []
-        if self._collapse:
-            st.pending_off = event.timestamp
-        else:
-            self._confirm_off(st, event.timestamp)
+        self._hold_or_confirm_off(st, event.timestamp)
         return []
+
+    def _hold_or_confirm_off(self, st: _EntityState, timestamp: datetime) -> None:
+        """A real off edge: hold for retrigger collapse, or confirm now."""
+        st.is_on = False
+        if self._collapse:
+            st.pending_off = timestamp
+        else:
+            self._confirm_off(st, timestamp)
 
     def _confirm_off(self, st: _EntityState, off_at: datetime) -> None:
         """The off edge is real: close the open interval for door roles."""
