@@ -55,7 +55,7 @@ Two pure-Python modules plus coordinator, config-flow and migration wiring:
 - `coordinator.py`: supplies area names alongside device classes, feeds
   gated events to the pipeline, consumes activity events uniformly, runs
   the one-shot role re-bootstrap, and raises the two role repair issues.
-- `config_flow.py`, `const.py`, `__init__.py`, `strings.json`,
+- `config_flow.py`, `const.py`, `__init__.py`,
   `translations/en.json`: new fields, removed fields, v13 → v14 migration.
 
 Data flow on the live path:
@@ -295,9 +295,11 @@ recorder bootstrap and the CLI use it.
 ### 3.1 Live path
 
 `_process_activity` is replaced. `_flush_gate` sets `last_seen` for every
-kept and dropped gated event, then submits kept events to the pipeline,
-then calls `pipeline.flush(now)`, then consumes the returned activity
-events. `_async_update_data` also calls `pipeline.flush(now)` at the top of
+kept and dropped gated event, then submits kept events to the pipeline and
+passes dropped events to `pipeline.note_state(...)` so the pipeline's edge
+state stays in sync with Home Assistant even for events it never scored as
+activity, then calls `pipeline.flush(now)`, then consumes the returned
+activity events. `_async_update_data` also calls `pipeline.flush(now)` at the top of
 each sixty-second cycle and consumes the result, so a pending off or an
 open excursion cannot wait longer than one poll. `async_shutdown` force-
 flushes the gate, then force-flushes the pipeline, then unsubscribes.
@@ -458,7 +460,7 @@ interpreter with no Home Assistant installed.
 - `test_replay_fixture.py`: replays `tests/fixtures/replay_week.csv` (a
   synthetic seven-day trace with a known timer, a bathroom pattern, a
   retrigger pair and four excursion pairs) and asserts per-entity
-  activation counts, class counts and excursion count.
+  activation counts, last open class per door and excursion count.
 - `test_coordinator.py` (mock HA, as today): area names resolved via
   entity then device; pipeline events consumed into routine, correlation
   and daily count; excursion records once; last seen set before the
