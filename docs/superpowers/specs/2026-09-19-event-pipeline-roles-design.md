@@ -329,8 +329,9 @@ entries that skipped v11.
 ### 3.3 Repair issues
 
 Both use the existing `_refresh_health` seeding and diffing so reloads do
-not orphan them. Both are `is_fixable=False`, severity warning, with a
-`learn_more_url` to the README roles section.
+not orphan them. Both are `is_fixable=False`, severity warning. No
+`learn_more_url` until the manifest carries a real repository URL; the
+descriptions explain what to do.
 
 - `roles_need_assignment`: wanted while any monitored entity resolves to
   `motion.unassigned`. Placeholder `entity_ids` is the comma-separated
@@ -372,6 +373,9 @@ Removed: `category_motion`, `category_contact`, `category_plug`,
 `entity_id: value` per line, blank lines and `#` comments ignored, entity
 id lower-cased and stripped, value validated against role values and
 kinds. It raises `ValueError` naming the offending line.
+
+`panic` is not accepted as an override value in either form; an entity id
+may appear only once, and a duplicate is an error.
 
 ### 4.2 Validation
 

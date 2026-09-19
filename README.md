@@ -89,11 +89,14 @@ This integration is designed for monitoring the wellbeing of elderly family memb
 | Track attributes | Also track attribute changes, not just state changes | No |
 | Always track attribute changes for | Entities that count attribute-only changes regardless of the global toggle | Empty |
 | Never track attribute changes for | Entities that ignore attribute-only changes regardless of the global toggle | Empty |
-| Motion sensors | Force these entities into the motion category (auto-inferred from motion/occupancy/presence device class) | Empty |
-| Contact sensors | Force these entities into the contact category (auto-inferred from door/window/opening/garage door device class) | Empty |
-| Plugs and switches | Force these entities into the plug category (auto-inferred from outlet/plug device class or the switch domain) | Empty |
-| Lights | Force these entities into the light category (auto-inferred from the light domain) | Empty |
 | Motion debounce window | Merge repeated motion triggers within this many seconds into one activity; 0 disables (0–600) | 120 seconds |
+| Exterior doors | Contact sensors that lead outside; never inferred. Events from exterior doors within the excursion window are grouped into one trip | Empty |
+| Role overrides | One `entity_id: role` per line. Full roles (`motion.kitchen`, `door.interior`, `appliance`, ...) or bare kinds (`motion`, `door`, `appliance`, `other`) | Empty |
+| Door debounce window | Merge repeated door openings within this many seconds into one activity; 0 disables (0–600) | 60 seconds |
+| Retrigger collapse window | An off followed by an on within this many seconds is treated as continuously on; 0 disables (0–30) | 5 seconds |
+| Excursion window | Exterior door events within this many seconds of the first are one excursion; 0 disables (0–600) | 60 seconds |
+| Door open: extended from | A door open at least this long is classed `extended` rather than `brief` (1–3600) | 15 seconds |
+| Door open: prolonged from | A door open at least this long is classed `prolonged`; must exceed the extended threshold (1–86400) | 120 seconds |
 | Panic buttons | Binary sensors that act as panic buttons; a press alerts instantly and bypasses every suppression | Empty |
 | Panic re-notify interval | Minutes between repeat panic notifications until acknowledged (1–60) | 5 |
 | Start-up grace period | Seconds after Home Assistant starts or the integration reloads during which state changes are ignored, because restarts write synthetic states to every entity (0–300; 0 disables) | 90 seconds |
@@ -105,7 +108,7 @@ Per-entity overrides take precedence over the global "Track attributes" toggle. 
 
 ### Upgrading
 
-Existing config entries migrate automatically through the full migration chain (v2 through v13). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
+Existing config entries migrate automatically through the full migration chain (v2 through v14). No manual intervention is needed. Each migration preserves your existing settings and adds sensible defaults for new options.
 
 Notable migrations:
 - **v2→v4**: Removed ML-related options, added detection controls
@@ -118,6 +121,7 @@ Notable migrations:
 - **v11**: Added entity category override lists and motion debounce window; motion baselines are rebuilt from recorder history once after upgrade. Dropped (debounced) motion events no longer trigger an immediate sensor refresh; the next 60-second poll picks them up.
 - **v12**: Added panic button category and re-notify interval
 - **v13**: Added start-up grace period, burst discard threshold, panic device heartbeat and panic test reminder settings
+- **v14**: Roles replace entity categories. The four category lists become lines in **Role overrides** (motion → `motion`, contact → `door`, plugs and lights → `appliance`); door and appliance baselines are rebuilt once from recorder history through the new event pipeline, so door counts drop to one per opening. A repair issue asks you to confirm which doors lead outside if you have contact sensors and no exterior doors listed.
 
 ## Holiday Mode and Visitor Snooze
 
@@ -325,31 +329,57 @@ Classification is gated on learning confidence (requires ~80% of the history win
 
 A global override is available in the config UI to force all entities to a specific tier (useful for testing or edge cases). Set to "Auto" (default) to use automatic classification.
 
-### Entity Categories
+### Roles
 
-Each monitored entity is assigned a category at startup so that noisy devices and automated devices are treated appropriately.
+Each monitored entity is assigned a role at startup. Roles carry the semantics later rules reason about; entity ids do not.
 
-**Inference order** (first match wins):
-
-1. The entity is in one of the four category override lists.
-2. Its entity-registry device class: `motion`, `occupancy`, `presence` → motion; `door`, `window`, `opening`, `garage_door` → contact; `outlet`, `plug` → plug.
-3. Its domain: `switch` → plug; `light` → light; anything else → other.
-
-Numeric entities are always "other". The inferred category is shown as the `category` attribute on each entry of the `entity_status_summary` sensor.
-
-**Motion debounce.** Motion entities only count when they turn *on*, and repeated triggers within the debounce window (default 2 minutes) are merged into a single activity. The learned routine, correlation detection and daily count all see the debounced stream; the entity's last-seen time still updates on every raw transition so inactivity detection is not delayed. Recorder history is debounced the same way on first install, and existing installs rebuild their motion baselines from recorder history when upgrading to v5.0.
-
-**Weighted welfare.** The welfare status is derived from the highest-scoring active alert, where score = severity points × category weight:
-
-| Category | Weight | Rationale |
+| Role | Kind | How it is assigned |
 |---|---|---|
-| motion | 1.0 | Direct evidence of presence |
-| other | 1.0 | Unchanged from previous versions |
-| contact | 0.8 | Strong but sparser evidence; at the current thresholds it lands in the same bands as motion, so the weight is headroom for future tuning |
-| plug | 0.5 | Often driven by automations |
-| light | 0.5 | Often driven by automations |
+| `motion.bathroom`, `motion.bedroom`, `motion.living`, `motion.kitchen`, `motion.transit` | motion | Motion device class, then the entity's Home Assistant area name (entity area, else its device's area) matched against room keywords |
+| `motion.unassigned` | motion | A motion sensor whose area matched no keyword. Still counts as motion; a repair issue lists them |
+| `door.exterior` | door | **Exterior doors** list only; never inferred |
+| `door.interior` | door | Any contact device class (`door`, `window`, `opening`, `garage_door`) not in the exterior list |
+| `appliance` | appliance | `outlet`/`plug` device class, or the `switch` and `light` domains |
+| `panic` | panic | **Panic buttons** list only |
+| `other` | other | Numeric entities and anything unrecognised |
 
-Severity points are LOW 1, MEDIUM 2, HIGH 3. A score of 2.25 or more gives `alert`, 1.25 or more gives `concern`, anything else gives `check_recommended`. In practice motion, contact and other behave as before; a plug or light alert alone tops out at `concern`. Individual alert severities and notifications are not affected.
+**Inference order** (first match wins): numeric entities are `other`; the panic list; a full-role line in **Role overrides**; the exterior-door list; the kind from a bare-kind override, the device class, or the domain; then for motion the area keyword table.
+
+**Area keywords** (case-insensitive substrings of the area name, English only; use overrides for other languages):
+
+| Role | Keywords |
+|---|---|
+| `motion.bathroom` | bathroom, toilet, ensuite, en-suite, shower, wc, loo, cloakroom |
+| `motion.bedroom` | bedroom, bed |
+| `motion.living` | living, lounge, sitting, dining, study, office, conservatory, snug |
+| `motion.kitchen` | kitchen, utility, pantry |
+| `motion.transit` | hall, landing, stairs, stairway, corridor, porch, entrance, passage |
+
+**Role overrides** take one `entity_id: value` per line. A full role fixes everything; a bare kind (`motion`, `door`, `appliance`, `other`) fixes the kind and lets the area choose the room. `panic` is not accepted here. Roles are resolved when the integration loads, so after changing an area assignment reload the integration. Each entity's role is the `role` attribute on `entity_status_summary`, and the top-level `roles` attribute counts entities per role so a missing bathroom sensor is visible at a glance.
+
+**Weighted welfare.** The welfare status is derived from the highest-scoring active alert, where score = severity points × kind weight: motion 1.0, door 0.8, appliance 0.5, other 1.0. Severity points are LOW 1, MEDIUM 2, HIGH 3; 2.25 or more gives `alert`, 1.25 or more `concern`, otherwise `check_recommended`. These weights are an interim until per-entity entropy weighting replaces them.
+
+### Event Pipeline
+
+Raw state changes are not activity. After the start-up grace period and burst discard (see System Integrity), every event passes through a pure pipeline before it can count:
+
+1. **Retrigger collapse** (motion and door roles). Sensors often emit an off/on pair milliseconds apart. An off followed by an on within the collapse window (default 5 s) is treated as continuously on.
+2. **Debounce** (per entity, by kind). Only rising edges count. Motion merges repeats within 120 s, doors within 60 s. Appliances and other entities count every state change.
+3. **Door open duration.** When a door closes, the time since it opened is classed `brief` (< 15 s), `extended` (15–120 s) or `prolonged` (≥ 120 s) and shown as `last_open_seconds` and `last_open_class` on that entity's `entity_status_summary` entry.
+4. **Excursions** (`door.exterior` only). Exterior-door openings within 60 s of the first are one excursion, recorded once under the first door at its timestamp.
+
+Last-seen time is updated on every raw event before the pipeline, so inactivity detection is never delayed by debounce. Recorder history is replayed through the same pipeline on first install and when upgrading to v5.3.
+
+### Replaying History Offline
+
+`scripts/replay.py` runs the pipeline over a CSV export without Home Assistant installed:
+
+```bash
+python scripts/replay.py --events history.csv --roles roles.txt [--json] \
+  [--motion-debounce 120 --door-debounce 60 --collapse 5 --excursion-window 60 --open-extended 15 --open-prolonged 120]
+```
+
+`history.csv` has columns `entity_id,last_changed,state` (ISO 8601 timestamps). `roles.txt` uses the Role overrides format with full roles. The output lists raw rows and activations per entity, every excursion, and activity per day, so you can check that a known timer, a debounce window or a threshold behaves as expected against real data.
 
 #### Panic Button
 
@@ -360,7 +390,7 @@ Add a binary sensor to the **Panic buttons** list to treat it as a panic button.
 - **Acknowledge.** Press `button.behaviour_monitor_acknowledge_panic` or call `behaviour_monitor.acknowledge_panic` (optionally with an `entity_id`). Acknowledging stops the repeats; the welfare status stays at `alert` until the button is released.
 - **Release.** When the sensor returns to `off` the panic clears, including its acknowledgement, so the next press alerts again.
 
-Panic entities never contribute to routine learning, tier classification, correlation or motion debounce. The `entity_status_summary` sensor shows `category: panic` and `panic_active` per entity, and a top-level `panic` attribute lists active and unacknowledged buttons. Events `behaviour_monitor_panic_pressed`, `behaviour_monitor_panic_released` and `behaviour_monitor_panic_acknowledged` fire on the bus for automations.
+Panic entities never contribute to routine learning, tier classification, correlation or motion debounce. The `entity_status_summary` sensor shows `role: panic` and `panic_active` per entity, and a top-level `panic` attribute lists active and unacknowledged buttons. Events `behaviour_monitor_panic_pressed`, `behaviour_monitor_panic_released` and `behaviour_monitor_panic_acknowledged` fire on the bus for automations.
 
 ### Acute Detection
 
@@ -502,7 +532,7 @@ Home Assistant restarts and integration reloads write synthetic states to every 
 
 ### Motion Sensor Generates Too Many or Too Few Activities
 
-- Check the `category` attribute on `entity_status_summary` shows `motion`. If not, add the entity to the "Motion sensors" list.
+- Check the `role` attribute on `entity_status_summary` starts with motion. If not, add a line such as `binary_sensor.pir: motion` to Role overrides.
 - Increase the "Motion debounce window" if a single walk through a room still produces several activities; decrease it (or set 0) if genuinely separate visits are being merged.
 - After changing the window, the learned routine adapts as the history window rolls over.
 

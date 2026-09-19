@@ -52,7 +52,7 @@ make clean-all    # Remove venv and all generated files
 ### Testing Strategy
 - Unit tests for each component (analyzer, ml_analyzer, coordinator, config_flow, sensor, init)
 - Mock Home Assistant components to avoid heavy dependencies in tests
-- Total: 6 test files, ~2,449 lines of test code
+- Total: 19 test files, ~12,844 lines of test code
 - Home Assistant must be installed separately for tests to run
 
 ### Persistence
@@ -81,6 +81,9 @@ custom_components/behaviour_monitor/
 ├── coordinator.py        # BehaviourMonitorCoordinator (data updates, notifications)
 ├── analyzer.py           # PatternAnalyzer (statistical)
 ├── ml_analyzer.py        # MLPatternAnalyzer (optional ML)
+├── entity_role.py        # EntityRole inference (areas, device classes, overrides), kind-weighted welfare
+├── pipeline.py           # ActivityPipeline: retrigger collapse, debounce, open duration, excursions, replay()
 ├── config_flow.py        # Configuration UI
 └── const.py              # Constants and defaults
 ```
+scripts/replay.py  # offline replay CLI over pipeline.replay()

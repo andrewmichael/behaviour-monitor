@@ -49,12 +49,12 @@ Ordered as the document asks: integrity first, then the pipeline that feeds ever
 - Start-up grace: ignore events for a configurable 60–120 s after `homeassistant_start`; discard same-second bursts of ≥3 entities (this is integrity, not detection: it stops restarts corrupting the baseline).
 
 ### B. v5.3 — Event pipeline and roles
-- Roles replace/extend categories: `motion.{bathroom,bedroom,living,kitchen,transit}`, `door.{exterior,interior}`, `appliance`, `panic`, `other`. Config flow lists per role; migration maps `contact` → `door.interior` and `plug`/`light` → `appliance` with a repair issue prompting the user to assign exterior doors and rooms.
-- Door debounce 60 s per entity; retrigger collapse < 5 s for all binary entities.
-- Excursion grouping for exterior doors (pairs within 60 s → one excursion with duration).
-- Door open-duration classes (brief/extended/prolonged) recorded per event.
-- Optional adjacency graph in options (YAML-ish text or per-door room selector), with a derivation-from-history proposal deferred.
-- Replay harness: a pure `pipeline.py` taking `(entity_id, role, timestamp, state)` events and a CLI/test helper that replays recorder exports through it.
+- Roles replace/extend categories: `motion.{bathroom,bedroom,living,kitchen,transit}`, `door.{exterior,interior}`, `appliance`, `panic`, `other`. Config flow lists per role; migration maps `contact` → `door.interior` and `plug`/`light` → `appliance` with a repair issue prompting the user to assign exterior doors and rooms. **(done, v5.3)**
+- Door debounce 60 s per entity; retrigger collapse < 5 s for all binary entities. **(done, v5.3)**
+- Excursion grouping for exterior doors (pairs within 60 s → one excursion with duration). **(done, v5.3)**
+- Door open-duration classes (brief/extended/prolonged) recorded per event. **(done, v5.3)**
+- Deferred to v6.0 (see D).
+- Replay harness: a pure `pipeline.py` taking `(entity_id, role, timestamp, state)` events and a CLI/test helper that replays recorder exports through it. **(done, v5.3)**
 
 ### C. v5.4 — Entropy weighting
 - Per-entity normalised entropy over 60-min buckets, 14-day rolling window, 7-day minimum, floor 0.05, recomputed daily; computed over debounced activations.
@@ -63,6 +63,7 @@ Ordered as the document asks: integrity first, then the pipeline that feeds ever
 - Per-entity silence threshold derived from the same distribution.
 
 ### D. v6.0 — Derived state, rules and escalation
+- Optional adjacency graph in options (YAML-ish text or per-door room selector), with a derivation-from-history proposal deferred.
 - Derived sleep window and active window.
 - Away state machine (enter/exit/inconsistency) suspending absence rules.
 - Rules 1–6 as pure marker functions with the document's defaults in options.
