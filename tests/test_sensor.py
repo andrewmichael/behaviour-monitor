@@ -262,6 +262,29 @@ class TestSensorDescriptions:
 
         assert result["entity_status"] == entity_status
 
+    def test_entity_status_summary_extra_attrs_exposes_roles_and_panic(self) -> None:
+        """roles (spec 3.4) and panic (README) must reach Home Assistant too."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "entity_status_summary")
+        coord = MagicMock()
+        roles = {"motion.kitchen": 2, "door.interior": 1}
+        panic = {"active": ["binary_sensor.sos"], "unacknowledged": []}
+        data = {"entity_status": [], "roles": roles, "panic": panic}
+
+        result = sensor.extra_attrs_fn(coord, data)
+
+        assert result["roles"] == roles
+        assert result["panic"] == panic
+
+    def test_entity_status_summary_extra_attrs_default_roles_and_panic(self) -> None:
+        """Missing keys default to an empty roles map and an empty panic payload."""
+        sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "entity_status_summary")
+        coord = MagicMock()
+
+        result = sensor.extra_attrs_fn(coord, {})
+
+        assert result["roles"] == {}
+        assert result["panic"] == {"active": [], "unacknowledged": []}
+
     def test_statistical_training_remaining_sensor(self) -> None:
         """Test statistical_training_remaining sensor."""
         sensor = next(s for s in SENSOR_DESCRIPTIONS if s.key == "statistical_training_remaining")

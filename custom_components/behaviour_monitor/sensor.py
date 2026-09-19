@@ -168,6 +168,8 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         value_fn=lambda data: _summary_text(data.get("welfare", {}).get("entity_count_by_status", {})),
         extra_attrs_fn=lambda coord, data: {
             ATTR_ENTITY_STATUS: data.get("entity_status", []),
+            "roles": data.get("roles", {}),
+            "panic": data.get("panic", {"active": [], "unacknowledged": []}),
         },
     ),
     # Training Time Remaining Sensors
