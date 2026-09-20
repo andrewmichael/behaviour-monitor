@@ -1,4 +1,4 @@
-.PHONY: help venv install install-dev install-test test test-cov test-watch lint format clean clean-all
+.PHONY: help venv install install-dev install-test test test-cov test-watch test-core lint format clean clean-all
 
 # Default Python version
 PYTHON := python3
@@ -71,6 +71,10 @@ test-init: ## Run only init tests
 	@echo "$(GREEN)Running init tests...$(NC)"
 	$(PYTHON_VENV) -m pytest tests/test_init.py -v
 
+test-core: ## Run only pure-core tests (no Home Assistant)
+	@echo "$(GREEN)Running core tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/core -v
+
 test-analyzer: ## Run only analyzer tests
 	@echo "$(GREEN)Running analyzer tests...$(NC)"
 	$(PYTHON_VENV) -m pytest tests/test_analyzer.py -v
@@ -89,15 +93,15 @@ test-config: ## Run only config flow tests
 
 lint: ## Run linters (ruff, mypy)
 	@echo "$(GREEN)Running ruff...$(NC)"
-	-$(PYTHON_VENV) -m ruff check custom_components/ tests/
+	-$(PYTHON_VENV) -m ruff check custom_components/ tests/ scripts/replay.py
 	@echo "$(GREEN)Running mypy...$(NC)"
-	-$(PYTHON_VENV) -m mypy custom_components/behaviour_monitor/
+	-$(PYTHON_VENV) -m mypy custom_components/behaviour_monitor/ scripts/replay.py
 
 format: ## Format code with black and ruff
 	@echo "$(GREEN)Formatting code with black...$(NC)"
-	$(PYTHON_VENV) -m black custom_components/ tests/
+	$(PYTHON_VENV) -m black custom_components/ tests/ scripts/replay.py
 	@echo "$(GREEN)Running ruff --fix...$(NC)"
-	$(PYTHON_VENV) -m ruff check --fix custom_components/ tests/
+	$(PYTHON_VENV) -m ruff check --fix custom_components/ tests/ scripts/replay.py
 
 check: lint test ## Run linters and tests
 

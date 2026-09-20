@@ -23,3 +23,12 @@
 | #4506 | 9:42 AM | 🟣 | Phase 14 Tier-Aware Detection Executed and Completed | ~971 |
 | #4501 | 9:25 AM | 🔵 | Phase 14 Tier-Aware Detection Implementation Found Complete | ~904 |
 </claude-mem-context>
+
+## core/ package
+
+Pure Python, stdlib only, no Home Assistant imports. `engine.Engine` wires
+`normaliser`, `house_model`, `entity_routine`, `chain_model`,
+`drift_detector`, `health_tracker` and `alert_router`. Every module takes
+timestamps as arguments and never reads the clock. Replay any fixture with
+`python scripts/replay.py tests/fixtures/<name>.jsonl`. Tests live in
+`tests/core/` and run with `make test-core`.
