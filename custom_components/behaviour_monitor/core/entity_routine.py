@@ -165,6 +165,16 @@ class EntityRoutineModel:
         r = self._entities.get(entity_id)
         return r.last_event if r else None
 
+    def restart_clock(self, now: datetime) -> None:
+        """Set every entity's last_event to now without recording a gap or a slot.
+
+        Used when a paused period (e.g. holiday) ends: the silence during the
+        pause must not be learned as this entity's longest gap, and it must
+        not look silent relative to a house clock that has just jumped ahead.
+        """
+        for r in self._entities.values():
+            r.last_event = now
+
     def daily_counts(self, day: date) -> dict[str, int]:
         return {eid: r.daily_count(day) for eid, r in self._entities.items()}
 

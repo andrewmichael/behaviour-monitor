@@ -123,6 +123,16 @@ class HealthTracker:
                 out[eid] = silent
         return out
 
+    def restart_clock(self, now: datetime) -> None:
+        """Set every entity's last_event to now.
+
+        Used when a paused period (e.g. holiday) ends: without this, a house
+        clock that has just jumped ahead makes every entity's frozen last_event
+        look silent by comparison, even though nothing is actually wrong.
+        """
+        for e in self._ent.values():
+            e.last_event = now
+
     def down_entities(self, now: datetime) -> set[str]:
         return self._unavailable(now) | {
             eid for eid, e in self._ent.items() if e.silent

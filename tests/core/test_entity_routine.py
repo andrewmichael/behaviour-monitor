@@ -102,6 +102,21 @@ def test_duration_medians_per_day():
     assert m.daily_duration_medians(date(2026, 9, 21)) == {"binary_sensor.front": 20.0}
 
 
+def test_restart_clock_sets_last_event_without_learning():
+    m = _model()
+    _train(m, days=3)
+    before_slots = [dict(s) for s in m.get(KETTLE).slot_days]
+    before_days_seen = set(m.get(KETTLE).days_seen)
+    before_gap = m.longest_gap(KETTLE)
+    t = MON + timedelta(days=10)
+    m.restart_clock(t)
+    assert m.last_event(KETTLE) == t
+    assert m.last_event("binary_sensor.front") == t  # never fired, still gets set
+    assert [dict(s) for s in m.get(KETTLE).slot_days] == before_slots
+    assert set(m.get(KETTLE).days_seen) == before_days_seen
+    assert m.longest_gap(KETTLE) == before_gap
+
+
 def test_prune_remove_and_round_trip():
     m = _model()
     _train(m, days=28)

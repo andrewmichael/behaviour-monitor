@@ -110,6 +110,22 @@ def test_panic_is_never_silent_candidate_and_states_exposed():
     assert states == {e: "ok" for e, _, _ in ENTS}
 
 
+def test_restart_clock_sets_last_event_without_touching_down_state():
+    t = _tracker()
+    t.record_activity(
+        ActivityEvent(
+            "binary_sensor.k", Category.MOTION, EventKind.PRESENCE, "Kitchen", T0
+        )
+    )
+    _down(t, "sensor.kettle", T0 + timedelta(minutes=1))
+    now = T0 + timedelta(days=5)
+    t.restart_clock(now)
+    entities = t.to_dict()["entities"]
+    assert all(e["last_event"] == now.isoformat() for e in entities.values())
+    # down/unavailable bookkeeping is untouched by restart_clock
+    assert t.down_entities(now + timedelta(minutes=20)) == {"sensor.kettle"}
+
+
 def test_remove_and_round_trip():
     t = _tracker()
     _down(t, "binary_sensor.k", T0)

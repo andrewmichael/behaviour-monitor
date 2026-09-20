@@ -11,7 +11,7 @@ from .alerts import Alert, AlertClass, Severity
 from .chain_model import ChainConfig, ChainModel
 from .drift_detector import DriftConfig, DriftDetector
 from .entity_routine import EntityRoutineModel, RoutineConfig
-from .events import ActivityEvent, Category, EventKind, HealthEvent
+from .events import ActivityEvent, Category, HealthEvent
 from .health_tracker import HealthConfig, HealthTracker
 from .house_model import HouseAssessment, HouseConfig, HouseModel
 from .normaliser import Normaliser, NormaliserConfig
@@ -229,24 +229,27 @@ class Engine:
         elif self._holiday_just_ended:
             # First poll back: the pause must not look like a stale multi-day
             # gap to rollover either, so skip it here too and pick back up
-            # cleanly from today.
+            # cleanly from today. Every clock that tracks "since when have I
+            # been quiet" needs to restart, or the pause itself looks like an
+            # anomaly to every downstream detector.
             self._house.restart_clock(now)
             self._chains.clear_runs()
-            # Entities' last-seen bookkeeping is frozen from before the pause;
-            # without this, the jump in house.last_activity makes every
-            # entity look silent the instant the clock restarts, tanking
-            # live_fraction and permanently degrading the ladder.
-            for s in self._specs.values():
-                self._health.record_activity(
-                    ActivityEvent(
-                        s.entity_id, s.category, EventKind.GENERIC, s.room, now
-                    )
-                )
+            self._routines.restart_clock(now)
+            self._health.restart_clock(now)
             self._last_poll_day = now.date()
             self._holiday_just_ended = False
         else:
             if self._last_poll_day is not None and now.date() != self._last_poll_day:
-                self._rollover(self._last_poll_day, now)
+                day = self._last_poll_day
+                while day < now.date():
+                    self._finalise_day(day, now)
+                    day += timedelta(days=1)
+                self._chains.recompute()
+                cutoff = now.date() - timedelta(days=self._cfg.window_days)
+                self._house.prune(cutoff)
+                self._routines.prune(cutoff)
+                self._chains.prune(cutoff)
+                self._drift.prune(cutoff)
             self._last_poll_day = now.date()
 
         alerts: list[Alert] = []
@@ -292,30 +295,30 @@ class Engine:
             alerts, now, snoozed=self.is_snoozed(now), holiday=self._holiday
         )
 
-    def _rollover(self, finished: date, now: datetime) -> None:
-        for eid, count in self._routines.daily_counts(finished).items():
-            self._drift.record(
-                f"count:{eid}", finished, float(count), split_day_type=True
-            )
-        for eid, med in self._routines.daily_duration_medians(finished).items():
+    def _finalise_day(self, day: date, now: datetime) -> None:
+        """Record one finished day's stats into drift and check for anomalies.
+
+        Skips days with no activity anywhere (e.g. an offline gap, or a day a
+        multi-day poll gap walks past with genuinely nothing recorded), so an
+        empty day never gets written into drift as a false zero.
+        """
+        if not self._house.rooms_visited(day):
+            return
+        for eid, count in self._routines.daily_counts(day).items():
+            self._drift.record(f"count:{eid}", day, float(count), split_day_type=True)
+        for eid, med in self._routines.daily_duration_medians(day).items():
             spec = self._specs.get(eid)
             key = "open" if spec and spec.category is Category.CONTACT else "dwell"
-            self._drift.record(f"{key}:{eid}", finished, med)
-        for name, secs in self._chains.completions_for_day(finished).items():
-            self._drift.record(f"chain:{name}", finished, secs, split_day_type=True)
+            self._drift.record(f"{key}:{eid}", day, med)
+        for name, secs in self._chains.completions_for_day(day).items():
+            self._drift.record(f"chain:{name}", day, secs, split_day_type=True)
         self._drift.record(
             "rooms",
-            finished,
-            float(len(self._house.rooms_visited(finished))),
+            day,
+            float(len(self._house.rooms_visited(day))),
             split_day_type=True,
         )
-        self._last_stat = self._drift.check(finished, now)
-        self._chains.recompute()
-        cutoff = now.date() - timedelta(days=self._cfg.window_days)
-        self._house.prune(cutoff)
-        self._routines.prune(cutoff)
-        self._chains.prune(cutoff)
-        self._drift.prune(cutoff)
+        self._last_stat = self._drift.check(day, now)
 
     # ------------------------------------------------------------ snapshot
 
@@ -488,5 +491,17 @@ class Engine:
             e._today_count = int(m.get("today_count", 0))
         except (KeyError, TypeError, ValueError):
             pass
+        # set_entities below only sees removals against what _specs already
+        # holds, which cls(config, entities) already set to the new entity
+        # list, so a no-longer-configured entity restored into the freshly
+        # loaded models would never be dropped without this.
+        orphans = set(e._routines.entity_ids) - {s.entity_id for s in entities}
+        for eid in orphans:
+            e._routines.remove(eid)
+            e._health.remove(eid)
+            e._normaliser.forget(eid)
+            e._drift.remove_prefix(f"count:{eid}")
+            e._drift.remove_prefix(f"open:{eid}")
+            e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
         return e

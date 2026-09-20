@@ -149,20 +149,62 @@ def test_holiday_pauses_the_ladder_and_ends_cleanly():
 
     day18_noon = MON + timedelta(days=18, hours=12)
     e.holiday = False
+    post_holiday_acts = []
     acts = e.poll(day18_noon + timedelta(minutes=1))
+    post_holiday_acts += acts
     assert [a for a in acts if a.action == "push"] == []
     acts = e.poll(day18_noon + timedelta(minutes=5))
+    post_holiday_acts += acts
     assert [a for a in acts if a.action == "push"] == []
 
     pushes = []
     t = day18_noon + timedelta(minutes=5)
     end = day18_noon + timedelta(minutes=5) + timedelta(hours=4)
     while t <= end:
-        pushes += [a for a in e.poll(t) if a.action == "push"]
+        acts = e.poll(t)
+        post_holiday_acts += acts
+        pushes += [a for a in acts if a.action == "push"]
         t += timedelta(minutes=10)
     assert pushes
     assert pushes[0].alert.kind == "inactivity"
     assert pushes[0].alert.raised_at > day18_noon
+    # the health clock also restarted, so no entity looks silent on return
+    assert not any(
+        a.action == "repair_create" and a.alert.kind == "silent"
+        for a in post_holiday_acts
+    )
+
+
+def test_rollover_walks_every_skipped_day():
+    e = _engine(learning_days=14)
+    _train(e, days=15)  # last_poll_day lands on MON + 15
+
+    skipped = [MON + timedelta(days=15 + i) for i in range(3)]
+    for day in skipped:
+        _pulse(e, "binary_sensor.kit", day + timedelta(hours=9))
+    e.poll(MON + timedelta(days=18, minutes=1))  # walks days 15, 16, 17
+
+    series = e._drift.to_dict()["series"]["count:binary_sensor.kit"]["values"]
+    for day in skipped:
+        assert day.date().isoformat() in series
+
+    empty_days = [MON + timedelta(days=18 + i) for i in range(2)]
+    e.poll(MON + timedelta(days=20, minutes=1))  # walks days 18, 19; no activity fed
+
+    series = e._drift.to_dict()["series"]["count:binary_sensor.kit"]["values"]
+    for day in empty_days:
+        assert day.date().isoformat() not in series
+
+
+def test_from_dict_drops_entities_no_longer_configured():
+    e = _engine()
+    _train(e, days=3)
+    data = e.to_dict()
+    assert "count:sensor.kettle" in data["drift"]["series"]  # sanity: it was learned
+    e2 = Engine.from_dict(data, EngineConfig.from_options({}), ENTS[:3])
+    assert "sensor.kettle" not in e2.snapshot(MON)["entities"]
+    assert "sensor.kettle" not in e2._routines.entity_ids
+    assert "count:sensor.kettle" not in e2._drift.to_dict()["series"]
 
 
 def test_round_trip():

@@ -153,6 +153,26 @@ def test_expected_gap_pools_across_days_when_slot_is_sparse():
     assert m.expected_gap(dense) == 300.0  # weekday pool reaches 8
 
 
+def test_expected_gap_falls_back_to_all_days_pool():
+    """When the same-day-type pool is also sparse, pool across all seven weekdays."""
+    m = HouseModel(HouseConfig())
+    m.record(_ev(datetime(2026, 9, 23, 15, 10, tzinfo=timezone.utc)))  # one Wednesday
+    weekends = (
+        date(2026, 9, 26),  # Sat
+        date(2026, 9, 27),  # Sun
+        date(2026, 10, 3),  # Sat
+        date(2026, 10, 4),  # Sun
+    )
+    for d in weekends:
+        base = datetime(d.year, d.month, d.day, 15, 0, tzinfo=timezone.utc)
+        for mins in range(0, 61, 5):
+            m.record(_ev(base + timedelta(minutes=mins)))
+    query = datetime(2026, 9, 30, 15, 30, tzinfo=timezone.utc)  # following Wednesday
+    assert query.weekday() == 2  # a weekday, so the weekend pool can't serve it
+    assert m.expected_gap(query) == 300.0  # served by the all-days pool
+    assert m.expected_gap(datetime(2026, 9, 30, 3, 30, tzinfo=timezone.utc)) is None
+
+
 def test_round_trip():
     m = HouseModel(HouseConfig())
     _train(m)
