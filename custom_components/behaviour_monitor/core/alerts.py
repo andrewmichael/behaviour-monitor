@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from functools import total_ordering
 from typing import Any
 
 
@@ -15,7 +14,6 @@ class AlertClass(str, Enum):
     STATISTICAL = "statistical"
 
 
-@total_ordering
 class Severity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -29,6 +27,21 @@ class Severity(str, Enum):
         if not isinstance(other, Severity):
             return NotImplemented
         return self._rank() < other._rank()
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, Severity):
+            return NotImplemented
+        return self._rank() <= other._rank()
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, Severity):
+            return NotImplemented
+        return self._rank() > other._rank()
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, Severity):
+            return NotImplemented
+        return self._rank() >= other._rank()
 
     def bump(self) -> "Severity":
         """One level higher, capped at CRITICAL."""

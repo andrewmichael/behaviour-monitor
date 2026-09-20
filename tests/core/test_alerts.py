@@ -11,6 +11,15 @@ def test_severity_ordering_and_bump():
     assert Severity.CRITICAL.bump() is Severity.CRITICAL
     assert Severity.HIGH.at_least(Severity.MEDIUM) is True
     assert Severity.LOW.at_least(Severity.MEDIUM) is False
+    assert Severity.HIGH > Severity.MEDIUM
+    assert Severity.HIGH >= Severity.MEDIUM
+    assert Severity.MEDIUM <= Severity.HIGH
+    assert Severity.CRITICAL > Severity.LOW
+    assert max([Severity.LOW, Severity.HIGH, Severity.MEDIUM]) is Severity.HIGH
+    assert sorted([Severity.CRITICAL, Severity.LOW]) == [
+        Severity.LOW,
+        Severity.CRITICAL,
+    ]
 
 
 def test_alert_key_and_to_dict():
