@@ -92,20 +92,19 @@ def test_stall_raises_note_naming_missing_room():
     day = MON + timedelta(days=14)
     m.record(_ev(day, "Bedroom"))
     m.record(_ev(day + timedelta(minutes=4), "Bathroom"))
+    # 240 s median, 0 mad -> tolerance is max(240, 720, 2 * 900) = 1800 s
     assert m.evaluate(day + timedelta(minutes=6)) == []
-    notes = m.evaluate(
-        day + timedelta(minutes=20)
-    )  # 240s median, 0 mad -> tolerance falls back to window
-    assert notes == [] or notes[0].kind == "chain_stall"
-    notes = m.evaluate(day + timedelta(minutes=25))
+    assert m.evaluate(day + timedelta(minutes=20)) == []
+    assert m.evaluate(day + timedelta(minutes=25)) == []
+    notes = m.evaluate(day + timedelta(minutes=40))
     assert len(notes) == 1
     n = notes[0]
     assert n.cls is AlertClass.STATISTICAL and n.kind == "chain_stall"
     assert n.source == "Bedroom → Bathroom → Kitchen"
     assert n.details == {"missing": "Kitchen", "step": 2}
     # stall persists for its ttl then clears
-    assert len(m.evaluate(day + timedelta(minutes=30))) == 1
-    assert m.evaluate(day + timedelta(minutes=25 + 61)) == []
+    assert len(m.evaluate(day + timedelta(minutes=45))) == 1
+    assert m.evaluate(day + timedelta(minutes=40 + 61)) == []
 
 
 def test_clear_runs_drops_open_runs_and_stalls():

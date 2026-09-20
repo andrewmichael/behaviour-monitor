@@ -241,10 +241,13 @@ class ChainModel:
             if run is None:
                 continue
             med, mad = chain.hop_stats[run.step]
-            tolerance = (
-                med + self._cfg.hop_tolerance_mads * mad
-                if mad > 0
-                else max(med * 2, self._cfg.window_s)
+            # Three times slower than usual is a routine drifting, not one
+            # abandoned, and the detector needs those slow days to keep
+            # arriving. Only past that is the step really missing.
+            tolerance = max(
+                med + self._cfg.hop_tolerance_mads * mad,
+                3 * med,
+                2 * self._cfg.window_s,
             )
             if (now - run.last_step_at).total_seconds() > tolerance:
                 missing = chain.rooms[run.step + 1]
