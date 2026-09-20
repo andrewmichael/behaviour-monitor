@@ -97,30 +97,3 @@ ISSUE_HEALTH_PREFIX: Final = "health_"
 
 # Events
 EVENT_LOGBOOK: Final = "logbook_entry"
-
-# Temporary stubs for v4 constants (to allow __init__.py to import)
-# These will be removed when __init__.py is rewritten in Task 5
-CONF_ACTIVITY_TIER_OVERRIDE: Final = "activity_tier_override"
-CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
-CONF_CORRELATION_WINDOW: Final = "correlation_window"
-CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
-CONF_INACTIVITY_MULTIPLIER: Final = "inactivity_multiplier"
-CONF_LEARNING_PERIOD: Final = "learning_period"
-CONF_MAX_INACTIVITY_MULTIPLIER: Final = "max_inactivity_multiplier"
-CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
-CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
-CONF_TRACK_ATTRIBUTES_EXCLUDE: Final = "track_attributes_exclude"
-CONF_TRACK_ATTRIBUTES_INCLUDE: Final = "track_attributes_include"
-DEFAULT_ACTIVITY_TIER_OVERRIDE: Final = "auto"
-DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240
-DEFAULT_CORRELATION_WINDOW: Final = 120
-DEFAULT_HISTORY_WINDOW_DAYS: Final = 28
-DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
-DEFAULT_LEARNING_PERIOD_DAYS: Final = 7
-DEFAULT_MAX_INACTIVITY_MULTIPLIER: Final = 10.0
-DEFAULT_MIN_INACTIVITY_MULTIPLIER: Final = 1.5
-DEFAULT_TRACK_ATTRIBUTES: Final = False
-DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []
-DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []
-SENSITIVITY_MEDIUM: Final = "medium"
-SERVICE_ROUTINE_RESET: Final = "routine_reset"

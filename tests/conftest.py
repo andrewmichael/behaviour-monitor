@@ -298,11 +298,14 @@ def _setup_ha_mocks():
     class MockDataUpdateCoordinator:
         """Mock DataUpdateCoordinator."""
 
-        def __init__(self, hass, logger, name, update_interval):
+        def __init__(
+            self, hass, logger, name, update_interval, config_entry=None, **kwargs
+        ):
             self.hass = hass
             self.logger = logger
             self.name = name
             self.update_interval = update_interval
+            self.config_entry = config_entry
             self.data = None
             self._listeners = []
 
@@ -535,6 +538,7 @@ def mock_config_entry() -> MagicMock:
         def __init__(self):
             self.entry_id = "test_entry_id"
             self.version = 11
+            self.title = "Test House"
             self.data = {
                 "site_name": "Test House",
                 "notify_service": "notify.mobile_app_phone",
