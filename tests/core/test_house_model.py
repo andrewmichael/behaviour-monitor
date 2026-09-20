@@ -17,10 +17,12 @@ def _ev(
     return ActivityEvent("binary_sensor.x", Category.MOTION, kind, room, ts)
 
 
-def _train(model: HouseModel, days: int = 14, gap_min: int = 5) -> None:
+def _train(
+    model: HouseModel, days: int = 14, gap_min: int = 5, start: datetime = MON
+) -> None:
     """Every day, events every gap_min minutes from 09:00 to 11:00."""
     for d in range(days):
-        base = MON + timedelta(days=d)
+        base = start + timedelta(days=d)
         for m in range(0, 121, gap_min):
             model.record(_ev(base + timedelta(minutes=m)))
 
@@ -117,6 +119,19 @@ def test_rooms_visited_and_prune():
     assert m.rooms_visited(date(2026, 9, 21)) == {"Kitchen", "Bath"}
     m.prune(date(2026, 9, 22))
     assert m.rooms_visited(date(2026, 9, 21)) == set()
+
+
+def test_expected_gap_pools_across_days_when_slot_is_sparse():
+    """The 11:00 boundary event only fires once a day, so the exact weekday+hour
+    slot stays sparse for weeks; expected_gap should pool by hour of day instead
+    of returning None until a full month of weekday recurrences pile up."""
+    m = HouseModel(HouseConfig())
+    _train(m, days=7)  # one of each weekday, events every 5 min from 09:00-11:00
+    sparse = MON + timedelta(days=7, hours=2, minutes=30)  # next Monday, 11:30
+    assert m.expected_gap(sparse) is None  # slot=1, weekday pool=5, all-days pool=7
+    _train(m, days=3, start=MON + timedelta(days=7))  # 3 more days -> 10 trained
+    dense = MON + timedelta(days=14, hours=2, minutes=30)  # a later Monday, 11:30
+    assert m.expected_gap(dense) == 300.0  # weekday pool reaches 8
 
 
 def test_round_trip():

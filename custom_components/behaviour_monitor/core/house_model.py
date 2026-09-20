@@ -1,19 +1,31 @@
-"""Whole-house activity gap model. The only sole source of welfare alerts."""
+"""Whole-house activity gap model. The only sole source of welfare alerts.
+
+168 slots (weekday x hour) hold full weekly structure once the house is learned, but
+early on a slot only fills from occurrences of its own weekday: 14 learning days give
+each slot roughly two samples, far short of MIN_GAPS_PER_SLOT. ``expected_gap`` copes
+by pooling: first the exact slot, then the same hour across every day of the same type
+(weekday/weekend), then that hour across all seven weekdays, so the model still has an
+opinion about "normal" before a full week's worth of weekday recurrences exist.
+"""
 
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
 from .alerts import Severity
 from .events import ActivityEvent
-from .slots import SLOTS, confidence, iso_day, slot_index
+from .slots import SLOTS, confidence, is_weekend, iso_day, slot_index
 
 MIN_GAPS_PER_SLOT = 8
 EXPECTED_GAP_QUANTILE = 0.9
 _GAPS_PER_SLOT = 400
+_WEEKDAY_INDICES = range(0, 5)
+_WEEKEND_INDICES = range(5, 7)
+_ALL_INDICES = range(0, 7)
 
 
 @dataclass(frozen=True)
@@ -88,10 +100,32 @@ class HouseModel:
         far too tight. The 90th percentile is "the longest gap that is still
         normal for this hour", which is what a welfare ratio must compare
         against.
+
+        Falls back to pooling by hour of day when the exact weekday+hour slot
+        is still sparse: same day type (weekday/weekend) first, then all seven
+        weekdays, before giving up.
         """
-        gaps = self._gaps[slot_index(now)]
-        if len(gaps) < MIN_GAPS_PER_SLOT:
-            return None
+        direct = self._gaps[slot_index(now)]
+        if len(direct) >= MIN_GAPS_PER_SLOT:
+            return self._quantile(direct)
+        hour = now.hour
+        same_type = _WEEKEND_INDICES if is_weekend(now.date()) else _WEEKDAY_INDICES
+        pooled = self._pool(hour, same_type)
+        if len(pooled) >= MIN_GAPS_PER_SLOT:
+            return self._quantile(pooled)
+        all_days = self._pool(hour, _ALL_INDICES)
+        if len(all_days) >= MIN_GAPS_PER_SLOT:
+            return self._quantile(all_days)
+        return None
+
+    def _pool(self, hour: int, weekdays: Iterable[int]) -> list[tuple[str, float]]:
+        out: list[tuple[str, float]] = []
+        for wd in weekdays:
+            out.extend(self._gaps[wd * 24 + hour])
+        return out
+
+    @staticmethod
+    def _quantile(gaps: Iterable[tuple[str, float]]) -> float:
         vals = sorted(g for _, g in gaps)
         return float(vals[min(len(vals) - 1, int(len(vals) * EXPECTED_GAP_QUANTILE))])
 
