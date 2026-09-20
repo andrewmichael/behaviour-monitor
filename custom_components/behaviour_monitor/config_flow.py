@@ -1,16 +1,14 @@
-"""Config flow for Behaviour Monitor integration."""
+# custom_components/behaviour_monitor/config_flow.py
+"""Config flow: site name, notify service, six category lists; options for tuning."""
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.core import callback
 from homeassistant.helpers.selector import (
-    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -25,460 +23,208 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
-    CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL,
-    CONF_CORRELATION_WINDOW,
+    CATEGORY_CONF_KEYS,
+    CONF_CHAIN_WINDOW_S,
     CONF_DRIFT_SENSITIVITY,
-    CONF_ENABLE_NOTIFICATIONS,
-    CONF_HISTORY_WINDOW_DAYS,
-    CONF_INACTIVITY_MULTIPLIER,
-    CONF_LEARNING_PERIOD,
-    CONF_MAX_INACTIVITY_MULTIPLIER,
-    CONF_MIN_INACTIVITY_MULTIPLIER,
-    CONF_MIN_NOTIFICATION_SEVERITY,
-    CONF_MONITORED_ENTITIES,
-    CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES,
-    CONF_TRACK_ATTRIBUTES,
-    CONF_TRACK_ATTRIBUTES_EXCLUDE,
-    CONF_TRACK_ATTRIBUTES_INCLUDE,
-    DEFAULT_ACTIVITY_TIER_OVERRIDE,
-    DEFAULT_ALERT_REPEAT_INTERVAL,
-    DEFAULT_CORRELATION_WINDOW,
-    DEFAULT_ENABLE_NOTIFICATIONS,
-    DEFAULT_HISTORY_WINDOW_DAYS,
-    DEFAULT_INACTIVITY_MULTIPLIER,
-    DEFAULT_LEARNING_PERIOD_DAYS,
-    DEFAULT_MAX_INACTIVITY_MULTIPLIER,
-    DEFAULT_MIN_INACTIVITY_MULTIPLIER,
-    DEFAULT_MIN_NOTIFICATION_SEVERITY,
-    DEFAULT_NOTIFICATION_COOLDOWN,
-    DEFAULT_NOTIFY_SERVICES,
-    DEFAULT_TRACK_ATTRIBUTES,
-    DEFAULT_TRACK_ATTRIBUTES_EXCLUDE,
-    DEFAULT_TRACK_ATTRIBUTES_INCLUDE,
+    CONF_HEALTH_GRACE_S,
+    CONF_HOUSE_LOW_RATIO,
+    CONF_LEARNING_DAYS,
+    CONF_MOTION_DEBOUNCE_S,
+    CONF_NOTIFY_SERVICE,
+    CONF_PLUG_MARGIN_W,
+    CONF_PUSH_MIN_SEVERITY,
+    CONF_PUSH_REPEAT_S,
+    CONF_SITE_NAME,
+    CONF_TIMING_PROMOTE_DAYS,
+    CONF_WINDOW_DAYS,
+    CONFIG_VERSION,
     DOMAIN,
-    SENSITIVITY_HIGH,
-    SENSITIVITY_LOW,
-    SENSITIVITY_MEDIUM,
-    SEVERITY_CRITICAL,
-    SEVERITY_MINOR,
-    SEVERITY_MODERATE,
-    SEVERITY_SIGNIFICANT,
+    OPTION_DEFAULTS,
+    SENSITIVITY_OPTIONS,
+    SEVERITY_OPTIONS,
 )
 
-_LOGGER = logging.getLogger(__name__)
+_CATEGORY_DOMAINS: dict[str, list[str] | None] = {
+    "motion": ["binary_sensor"],
+    "contact": ["binary_sensor"],
+    "plug": ["sensor", "switch"],
+    "panic": ["binary_sensor"],
+    "light": ["light", "switch"],
+    "other": None,
+}
 
 
-def _get_available_entities(hass: HomeAssistant) -> list[str]:
-    """Get list of available entities that can be monitored."""
-    registry = er.async_get(hass)
-    entities = []
-
-    for entity in registry.entities.values():
-        if entity.disabled:
-            continue
-        entities.append(entity.entity_id)
-
-    for state in hass.states.async_all():
-        if state.entity_id not in entities:
-            entities.append(state.entity_id)
-
-    return sorted(entities)
+def entity_specs_from_data(data: dict[str, Any]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for category, key in CATEGORY_CONF_KEYS.items():
+        for eid in data.get(key) or []:
+            out.append((eid, category))
+    return out
 
 
-def _validate_track_attribute_overrides(user_input: dict[str, Any]) -> str | None:
-    """Return an error key if the per-entity override lists conflict, else None."""
-    include = set(user_input.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
-    exclude = set(user_input.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
-    if include & exclude:
-        return "track_attributes_overlap"
+def validate_categories(data: dict[str, Any]) -> str | None:
+    specs = entity_specs_from_data(data)
+    if not specs:
+        return "no_entities"
+    ids = [e for e, _ in specs]
+    if len(ids) != len(set(ids)):
+        return "duplicate_entity"
     return None
 
 
-def _build_data_schema(
-    *,
-    entities_default: list[str] | None = None,
-    history_window_default: int = DEFAULT_HISTORY_WINDOW_DAYS,
-    inactivity_multiplier_default: float = DEFAULT_INACTIVITY_MULTIPLIER,
-    min_inactivity_multiplier_default: float = DEFAULT_MIN_INACTIVITY_MULTIPLIER,
-    max_inactivity_multiplier_default: float = DEFAULT_MAX_INACTIVITY_MULTIPLIER,
-    drift_sensitivity_default: str = SENSITIVITY_MEDIUM,
-    activity_tier_override_default: str = DEFAULT_ACTIVITY_TIER_OVERRIDE,
-    correlation_window_default: int = DEFAULT_CORRELATION_WINDOW,
-    enable_notifications_default: bool = DEFAULT_ENABLE_NOTIFICATIONS,
-    notification_cooldown_default: int = DEFAULT_NOTIFICATION_COOLDOWN,
-    alert_repeat_interval_default: int = DEFAULT_ALERT_REPEAT_INTERVAL,
-    min_severity_default: str = DEFAULT_MIN_NOTIFICATION_SEVERITY,
-    learning_period_default: int = DEFAULT_LEARNING_PERIOD_DAYS,
-    track_attributes_default: bool = DEFAULT_TRACK_ATTRIBUTES,
-    track_attributes_include_default: list[str] | None = None,
-    track_attributes_exclude_default: list[str] | None = None,
-) -> vol.Schema:
-    """Build the shared config/options schema."""
-    schema_dict: dict[vol.Marker, Any] = {
-        vol.Required(CONF_MONITORED_ENTITIES): EntitySelector(
-            EntitySelectorConfig(multiple=True)
-        ),
+def _number(
+    key: str, minimum: float, maximum: float, step: float, unit: str | None = None
+) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=minimum,
+            max=maximum,
+            step=step,
+            mode=NumberSelectorMode.BOX,
+            unit_of_measurement=unit,
+        )
+    )
+
+
+def _setup_schema(defaults: dict[str, Any]) -> vol.Schema:
+    fields: dict[Any, Any] = {
         vol.Required(
-            CONF_HISTORY_WINDOW_DAYS, default=history_window_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=7,
-                max=90,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="days",
-            )
-        ),
+            CONF_SITE_NAME, default=defaults.get(CONF_SITE_NAME, "")
+        ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
         vol.Required(
-            CONF_LEARNING_PERIOD, default=learning_period_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=1,
-                max=30,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="days",
-            )
-        ),
-        vol.Required(
-            CONF_TRACK_ATTRIBUTES, default=track_attributes_default
-        ): BooleanSelector(),
-        vol.Optional(
-            CONF_TRACK_ATTRIBUTES_INCLUDE,
-            default=list(track_attributes_include_default or DEFAULT_TRACK_ATTRIBUTES_INCLUDE),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
-        vol.Optional(
-            CONF_TRACK_ATTRIBUTES_EXCLUDE,
-            default=list(track_attributes_exclude_default or DEFAULT_TRACK_ATTRIBUTES_EXCLUDE),
-        ): EntitySelector(EntitySelectorConfig(multiple=True)),
-        vol.Required(
-            CONF_INACTIVITY_MULTIPLIER, default=inactivity_multiplier_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=1.5,
-                max=10.0,
-                step=0.5,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Required(
-            CONF_MIN_INACTIVITY_MULTIPLIER,
-            default=min_inactivity_multiplier_default,
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.5,
-                max=5.0,
-                step=0.5,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Required(
-            CONF_MAX_INACTIVITY_MULTIPLIER,
-            default=max_inactivity_multiplier_default,
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=2.0,
-                max=20.0,
-                step=0.5,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Required(
-            CONF_DRIFT_SENSITIVITY, default=drift_sensitivity_default
-        ): SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    {
-                        "value": SENSITIVITY_HIGH,
-                        "label": "High (sensitive to small shifts)",
-                    },
-                    {
-                        "value": SENSITIVITY_MEDIUM,
-                        "label": "Medium (balanced) - recommended",
-                    },
-                    {
-                        "value": SENSITIVITY_LOW,
-                        "label": "Low (major shifts only)",
-                    },
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-            )
-        ),
-        vol.Required(
-            CONF_ACTIVITY_TIER_OVERRIDE, default=activity_tier_override_default
-        ): SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    {"value": "auto", "label": "Auto (recommended)"},
-                    {"value": "high", "label": "High frequency"},
-                    {"value": "medium", "label": "Medium frequency"},
-                    {"value": "low", "label": "Low frequency"},
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-            )
-        ),
-        vol.Required(
-            CONF_CORRELATION_WINDOW, default=correlation_window_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=30,
-                max=600,
-                step=10,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="seconds",
-            )
-        ),
-        vol.Required(
-            CONF_ENABLE_NOTIFICATIONS, default=enable_notifications_default
-        ): BooleanSelector(),
-        vol.Optional(
-            CONF_NOTIFY_SERVICES, default=DEFAULT_NOTIFY_SERVICES
-        ): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
-        ),
-        vol.Required(
-            CONF_NOTIFICATION_COOLDOWN, default=notification_cooldown_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=5,
-                max=240,
-                step=5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="minutes",
-            )
-        ),
-        vol.Required(
-            CONF_ALERT_REPEAT_INTERVAL, default=alert_repeat_interval_default
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=30,
-                max=1440,
-                step=30,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="minutes",
-            )
-        ),
-        vol.Required(
-            CONF_MIN_NOTIFICATION_SEVERITY,
-            default=min_severity_default,
-        ): SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    {"value": SEVERITY_MINOR, "label": "Minor"},
-                    {"value": SEVERITY_MODERATE, "label": "Moderate"},
-                    {
-                        "value": SEVERITY_SIGNIFICANT,
-                        "label": "Significant - recommended",
-                    },
-                    {
-                        "value": SEVERITY_CRITICAL,
-                        "label": "Critical - very quiet",
-                    },
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-            )
-        ),
+            CONF_NOTIFY_SERVICE, default=defaults.get(CONF_NOTIFY_SERVICE, "")
+        ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+    }
+    for category, key in CATEGORY_CONF_KEYS.items():
+        domains = _CATEGORY_DOMAINS[category]
+        cfg = (
+            EntitySelectorConfig(multiple=True, domain=domains)
+            if domains
+            else EntitySelectorConfig(multiple=True)
+        )
+        fields[vol.Optional(key, default=list(defaults.get(key) or []))] = (
+            EntitySelector(cfg)
+        )
+    return vol.Schema(fields)
+
+
+def _options_schema(current: dict[str, Any]) -> vol.Schema:
+    def d(key: str) -> Any:
+        return current.get(key, OPTION_DEFAULTS[key])
+
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_MOTION_DEBOUNCE_S, default=d(CONF_MOTION_DEBOUNCE_S)
+            ): _number(CONF_MOTION_DEBOUNCE_S, 10, 600, 5, "s"),
+            vol.Required(CONF_PLUG_MARGIN_W, default=d(CONF_PLUG_MARGIN_W)): _number(
+                CONF_PLUG_MARGIN_W, 1, 100, 1, "W"
+            ),
+            vol.Required(CONF_LEARNING_DAYS, default=d(CONF_LEARNING_DAYS)): _number(
+                CONF_LEARNING_DAYS, 3, 60, 1, "d"
+            ),
+            vol.Required(CONF_WINDOW_DAYS, default=d(CONF_WINDOW_DAYS)): _number(
+                CONF_WINDOW_DAYS, 7, 90, 1, "d"
+            ),
+            vol.Required(CONF_HEALTH_GRACE_S, default=d(CONF_HEALTH_GRACE_S)): _number(
+                CONF_HEALTH_GRACE_S, 60, 7200, 30, "s"
+            ),
+            vol.Required(CONF_PUSH_REPEAT_S, default=d(CONF_PUSH_REPEAT_S)): _number(
+                CONF_PUSH_REPEAT_S, 300, 14400, 60, "s"
+            ),
+            vol.Required(
+                CONF_PUSH_MIN_SEVERITY, default=d(CONF_PUSH_MIN_SEVERITY)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=SEVERITY_OPTIONS, mode=SelectSelectorMode.DROPDOWN
+                )
+            ),
+            vol.Required(
+                CONF_HOUSE_LOW_RATIO, default=d(CONF_HOUSE_LOW_RATIO)
+            ): _number(CONF_HOUSE_LOW_RATIO, 1.5, 10, 0.5),
+            vol.Required(CONF_CHAIN_WINDOW_S, default=d(CONF_CHAIN_WINDOW_S)): _number(
+                CONF_CHAIN_WINDOW_S, 120, 3600, 30, "s"
+            ),
+            vol.Required(
+                CONF_TIMING_PROMOTE_DAYS, default=d(CONF_TIMING_PROMOTE_DAYS)
+            ): _number(CONF_TIMING_PROMOTE_DAYS, 3, 30, 1, "d"),
+            vol.Required(
+                CONF_DRIFT_SENSITIVITY, default=d(CONF_DRIFT_SENSITIVITY)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=SENSITIVITY_OPTIONS, mode=SelectSelectorMode.DROPDOWN
+                )
+            ),
+        }
+    )
+
+
+def _merged_schema(current: dict[str, Any]) -> Any:
+    setup, options = _setup_schema(current), _options_schema(current)
+    if hasattr(setup, "schema") and hasattr(options, "schema"):
+        return vol.Schema({**setup.schema, **options.schema})
+    return {
+        **(setup if isinstance(setup, dict) else {}),
+        **(options if isinstance(options, dict) else {}),
     }
 
-    if entities_default is not None:
-        # Replace the required marker with a default for options flow
-        schema_dict = {
-            (
-                vol.Required(CONF_MONITORED_ENTITIES, default=entities_default)
-                if k == vol.Required(CONF_MONITORED_ENTITIES)
-                else k
-            ): v
-            for k, v in schema_dict.items()
-        }
 
-    return vol.Schema(schema_dict)
+def _split_input(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (entry data, entry options) from a merged form submission."""
+    data = {k: v for k, v in user_input.items() if k not in OPTION_DEFAULTS}
+    for key in CATEGORY_CONF_KEYS.values():
+        data[key] = list(user_input.get(key) or [])
+    options = {k: user_input.get(k, dflt) for k, dflt in OPTION_DEFAULTS.items()}
+    return data, options
 
 
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Behaviour Monitor."""
-
-    VERSION = 10
+    VERSION = CONFIG_VERSION
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            min_val = float(
-                user_input.get(
-                    CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
-                )
-            )
-            max_val = float(
-                user_input.get(
-                    CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
-                )
-            )
-            if min_val > max_val:
-                errors["base"] = "inactivity_min_exceeds_max"
-            elif not user_input.get(CONF_MONITORED_ENTITIES):
-                errors["base"] = "no_entities_selected"
-            elif (override_error := _validate_track_attribute_overrides(user_input)):
-                errors["base"] = override_error
+            err = validate_categories(user_input)
+            if err:
+                errors["base"] = err
             else:
-                unique_id = "_".join(sorted(user_input[CONF_MONITORED_ENTITIES]))
-                await self.async_set_unique_id(unique_id)
-                self._abort_if_unique_id_configured()
-
-                return self.async_create_entry(
-                    title="Behaviour Monitor",
-                    data=user_input,
+                data, options = _split_input(user_input)
+                await self.async_set_unique_id(
+                    f"{DOMAIN}_{data[CONF_SITE_NAME].strip().lower()}"
                 )
-
-        data_schema = _build_data_schema()
-
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=data[CONF_SITE_NAME], data=data, options=options
+                )
         return self.async_show_form(
-            step_id="user",
-            data_schema=data_schema,
-            errors=errors,
+            step_id="user", data_schema=_setup_schema(user_input or {}), errors=errors
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
-        """Get the options flow for this handler."""
+    def async_get_options_flow(config_entry: Any) -> "BehaviourMonitorOptionsFlow":
         return BehaviourMonitorOptionsFlow(config_entry)
 
 
 class BehaviourMonitorOptionsFlow(OptionsFlow):
-    """Handle options flow for Behaviour Monitor."""
-
-    def __init__(self, config_entry) -> None:
-        """Initialize options flow."""
-        self._config_entry = config_entry
+    def __init__(self, config_entry: Any) -> None:
+        self._entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
         errors: dict[str, str] = {}
-
+        current = {**self._entry.data, **self._entry.options}
         if user_input is not None:
-            min_val = float(
-                user_input.get(
-                    CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
-                )
-            )
-            max_val = float(
-                user_input.get(
-                    CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
-                )
-            )
-            if min_val > max_val:
-                errors["base"] = "inactivity_min_exceeds_max"
-            elif not user_input.get(CONF_MONITORED_ENTITIES):
-                errors["base"] = "no_entities_selected"
-            elif (override_error := _validate_track_attribute_overrides(user_input)):
-                errors["base"] = override_error
+            merged = {**current, **user_input}
+            err = validate_categories(merged)
+            if err:
+                errors["base"] = err
             else:
-                # Merge user input with existing data to preserve all fields
-                updated_data = dict(self._config_entry.data)
-                updated_data.update(user_input)
-
-                # Explicitly handle optional fields that might be missing or empty
-                # When notify_services field is cleared, it may be missing from
-                # user_input entirely - set it to empty list
-                if CONF_NOTIFY_SERVICES not in user_input:
-                    updated_data[CONF_NOTIFY_SERVICES] = []
-                elif not user_input.get(CONF_NOTIFY_SERVICES):
-                    updated_data[CONF_NOTIFY_SERVICES] = []
-
-                # Same treatment for the per-entity override lists: a cleared
-                # entity selector may be absent from user_input entirely
-                for key in (CONF_TRACK_ATTRIBUTES_INCLUDE, CONF_TRACK_ATTRIBUTES_EXCLUDE):
-                    if not user_input.get(key):
-                        updated_data[key] = []
-
-                # Update the config entry data (not just options)
-                self.hass.config_entries.async_update_entry(
-                    self._config_entry,
-                    data=updated_data,
-                )
-                return self.async_create_entry(title="", data={})
-
-        current_entities = self._config_entry.data.get(CONF_MONITORED_ENTITIES, [])
-        current_history_window = self._config_entry.data.get(
-            CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS
-        )
-        current_inactivity_multiplier = self._config_entry.data.get(
-            CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER
-        )
-        current_drift_sensitivity = self._config_entry.data.get(
-            CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM
-        )
-        current_notifications = self._config_entry.data.get(
-            CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS
-        )
-        current_notify_services = self._config_entry.data.get(
-            CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES
-        )
-        current_cooldown = self._config_entry.data.get(
-            CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN
-        )
-        current_alert_repeat_interval = self._config_entry.data.get(
-            CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL
-        )
-        current_min_severity = self._config_entry.data.get(
-            CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY
-        )
-        current_learning_period = self._config_entry.data.get(
-            CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS
-        )
-        current_track_attributes = self._config_entry.data.get(
-            CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES
-        )
-        current_track_attributes_include = self._config_entry.data.get(
-            CONF_TRACK_ATTRIBUTES_INCLUDE, DEFAULT_TRACK_ATTRIBUTES_INCLUDE
-        )
-        current_track_attributes_exclude = self._config_entry.data.get(
-            CONF_TRACK_ATTRIBUTES_EXCLUDE, DEFAULT_TRACK_ATTRIBUTES_EXCLUDE
-        )
-        current_min_inactivity_multiplier = self._config_entry.data.get(
-            CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER
-        )
-        current_max_inactivity_multiplier = self._config_entry.data.get(
-            CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER
-        )
-        current_activity_tier_override = self._config_entry.data.get(
-            CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE
-        )
-        current_correlation_window = self._config_entry.data.get(
-            CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW
-        )
-
-        data_schema = _build_data_schema(
-            entities_default=current_entities,
-            history_window_default=current_history_window,
-            inactivity_multiplier_default=current_inactivity_multiplier,
-            min_inactivity_multiplier_default=current_min_inactivity_multiplier,
-            max_inactivity_multiplier_default=current_max_inactivity_multiplier,
-            drift_sensitivity_default=current_drift_sensitivity,
-            activity_tier_override_default=current_activity_tier_override,
-            correlation_window_default=current_correlation_window,
-            enable_notifications_default=current_notifications,
-            notification_cooldown_default=current_cooldown,
-            alert_repeat_interval_default=current_alert_repeat_interval,
-            min_severity_default=current_min_severity,
-            learning_period_default=current_learning_period,
-            track_attributes_default=current_track_attributes,
-            track_attributes_include_default=current_track_attributes_include,
-            track_attributes_exclude_default=current_track_attributes_exclude,
-        )
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                data_schema,
-                {CONF_NOTIFY_SERVICES: current_notify_services},
-            ),
-            errors=errors,
-        )
+                data, options = _split_input(merged)
+                self.hass.config_entries.async_update_entry(self._entry, data=data)
+                return self.async_create_entry(title="", data=options)
+        schema = _merged_schema(current)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

@@ -67,7 +67,7 @@ def _setup_ha_mocks():
                 "suggested_values": suggested_values,
             }
 
-        def async_create_entry(self, title, data, description=None, description_placeholders=None):
+        def async_create_entry(self, title, data, description=None, description_placeholders=None, **kwargs):
             """Mock create entry method."""
             return {
                 "type": "create_entry",
@@ -75,6 +75,7 @@ def _setup_ha_mocks():
                 "data": data,
                 "description": description,
                 "description_placeholders": description_placeholders,
+                "options": kwargs.get("options", {}),
             }
 
         async def async_set_unique_id(self, unique_id):
@@ -107,7 +108,7 @@ def _setup_ha_mocks():
                 "suggested_values": suggested_values,
             }
 
-        def async_create_entry(self, title="", data=None):
+        def async_create_entry(self, title="", data=None, **kwargs):
             """Mock create entry method."""
             return {
                 "type": "create_entry",
