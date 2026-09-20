@@ -156,7 +156,19 @@ next nightly recompute and keeps its counts.
 
 Rooms are used for exactly three things: chain nodes (6.3),
 rooms-visited-per-day (6.4), and explanation text (7). The models never
-attach meaning to a room's name or type.
+attach meaning to a room's name or type. A kitchen and a bedroom are
+indistinguishable to every model; what looks like knowledge of sleep or
+meals is learned from the timing of events and merely labelled with the
+room name.
+
+Display names: the coordinator derives a display name for each room by
+stripping the configured site name when it is a leading prefix of the
+area name, compared case-insensitively and followed by whitespace. So
+with site name "Biddulph Road", the area "Biddulph Road Kitchen" is
+displayed as "Kitchen". Areas that do not start with the site name are
+displayed unchanged. The stored room key is always the full area name,
+so display rules never affect learning. Display names are used in
+explanation text and sensor attributes only.
 
 ## 6. Learning models
 
@@ -418,3 +430,5 @@ do, nothing is monitored and the welfare sensor reports `unconfigured`.
 - Delivery is decided by class alone so the rule fits in one table.
 - Rooms come from Home Assistant areas, never from entity names. Chain
   nodes are rooms so same-room sensors collapse into one step.
+- Room display names strip the site name prefix; no extra config key.
+  Stored keys stay the full area name.
