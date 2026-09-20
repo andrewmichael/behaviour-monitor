@@ -398,6 +398,10 @@ class ChainModel:
                     if k in chain.completions:
                         chain.completions[k].extend((str(d), float(x)) for d, x in v)
                 m._chains.append(chain)
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # Any section written in an older shape (pairs without a bucket,
+            # steps_into as a flat mapping, total_steps as a single int) means
+            # the whole store predates bucketed chains: start clean instead of
+            # half-loading it.
             return cls(config)
         return m

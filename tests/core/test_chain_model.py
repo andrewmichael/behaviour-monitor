@@ -140,10 +140,33 @@ def test_round_trip_and_prune():
     m = _trained()
     m2 = ChainModel.from_dict(m.to_dict(), CFG)
     assert [c.name for c in m2.chains] == [c.name for c in m.chains]
+    # buckets decide whether a step opens a run, so they must survive the trip
+    assert [c.buckets for c in m2.chains] == [c.buckets for c in m.chains]
+    assert m2.to_dict()["steps_into"] == m.to_dict()["steps_into"]
+    assert m2.to_dict()["total_steps"] == m.to_dict()["total_steps"]
+    # and the restored model still tracks a live run through to completion
+    day = MON + timedelta(days=14)
+    _morning(m2, day)
+    assert m2.completions_for_day(date(2026, 10, 5))[
+        "Bedroom → Bathroom → Kitchen"
+    ] == (480.0)
     m2.prune(date(2026, 12, 1))
     m2.recompute()
     assert m2.chains == []
     assert ChainModel.from_dict({"nope": 1}, CFG).chains == []
+
+
+def test_from_dict_tolerates_pre_bucket_store():
+    """A store written before chains were bucketed loads as a fresh model."""
+    old = {
+        "pairs": [{"a": "X", "b": "Y", "count": 3, "hops": []}],
+        "steps_into": {"X": 3},
+        "total_steps": 3,
+        "chains": [],
+    }
+    m = ChainModel.from_dict(old, CFG)
+    assert m.chains == []
+    assert m.to_dict()["pairs"] == [] and m.to_dict()["total_steps"] == {}
 
 
 def test_prune_keeps_counts_exact_when_hops_overflow():

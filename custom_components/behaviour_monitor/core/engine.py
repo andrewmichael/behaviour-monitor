@@ -17,7 +17,9 @@ from .house_model import HouseAssessment, HouseConfig, HouseModel
 from .normaliser import Normaliser, NormaliserConfig
 from .slots import confidence, iso_day
 
-SCHEMA_VERSION = 1
+# 2: chain pairs, steps and chains are keyed by three-hour time bucket,
+# so a store written by schema 1 carries no usable chain learning.
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
