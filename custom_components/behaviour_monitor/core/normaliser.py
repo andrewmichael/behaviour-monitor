@@ -73,13 +73,17 @@ class Normaliser:
         if new_unavail:
             if self._available.get(entity_id, True):
                 self._available[entity_id] = False
-                return [HealthEvent(entity_id, category, room, timestamp, available=False)]
+                return [
+                    HealthEvent(entity_id, category, room, timestamp, available=False)
+                ]
             return []
 
         out: list[ActivityEvent | HealthEvent] = []
         if not self._available.get(entity_id, True) or old_state is None:
             self._available[entity_id] = True
-            out.append(HealthEvent(entity_id, category, room, timestamp, available=True))
+            out.append(
+                HealthEvent(entity_id, category, room, timestamp, available=True)
+            )
         if old_unavail:
             # restore of a real state is not the person acting
             return out
@@ -122,13 +126,17 @@ class Normaliser:
         burst = self._bursts.get(eid)
         if new == _ON:
             if burst is not None:
-                if (ts - burst.last_rise).total_seconds() <= self._cfg.motion_debounce_s:
+                if (
+                    ts - burst.last_rise
+                ).total_seconds() <= self._cfg.motion_debounce_s:
                     burst.last_rise = ts
                     burst.last_fall = None
                     return []
                 out.append(self._close_burst(burst))
             self._bursts[eid] = _Burst(eid, room, ts, ts)
-            out.append(ActivityEvent(eid, Category.MOTION, EventKind.PRESENCE, room, ts))
+            out.append(
+                ActivityEvent(eid, Category.MOTION, EventKind.PRESENCE, room, ts)
+            )
         elif new == _OFF and burst is not None:
             burst.last_fall = ts
         return out
@@ -153,16 +161,26 @@ class Normaliser:
         if new == _OFF:
             opened = self._open_since.pop(eid, None)
             dur = (ts - opened).total_seconds() if opened else None
-            return [ActivityEvent(eid, Category.CONTACT, EventKind.CLOSE, room, ts, duration_s=dur)]
+            return [
+                ActivityEvent(
+                    eid, Category.CONTACT, EventKind.CLOSE, room, ts, duration_s=dur
+                )
+            ]
         return []
 
     def _panic(
         self, eid: str, room: str, old: str, new: str, ts: datetime
     ) -> list[ActivityEvent]:
         if new == _ON:
-            return [ActivityEvent(eid, Category.PANIC, EventKind.PANIC, room, ts, bypass=True)]
+            return [
+                ActivityEvent(
+                    eid, Category.PANIC, EventKind.PANIC, room, ts, bypass=True
+                )
+            ]
         if new == _OFF:
-            return [ActivityEvent(eid, Category.PANIC, EventKind.PANIC_RELEASE, room, ts)]
+            return [
+                ActivityEvent(eid, Category.PANIC, EventKind.PANIC_RELEASE, room, ts)
+            ]
         return []
 
     def _light(
@@ -201,18 +219,40 @@ class Normaliser:
         if state.on_since is not None and value <= threshold:
             dur = (ts - state.on_since).total_seconds()
             state.on_since = None
-            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_OFF, room, ts, duration_s=dur)]
+            return [
+                ActivityEvent(
+                    eid,
+                    Category.PLUG,
+                    EventKind.APPLIANCE_OFF,
+                    room,
+                    ts,
+                    duration_s=dur,
+                )
+            ]
         return []
 
-    def _plug_switch(self, eid: str, room: str, new: str, ts: datetime) -> list[ActivityEvent]:
-        state = self._plugs.setdefault(eid, _PlugState(deque(maxlen=self._cfg.plug_reservoir)))
+    def _plug_switch(
+        self, eid: str, room: str, new: str, ts: datetime
+    ) -> list[ActivityEvent]:
+        state = self._plugs.setdefault(
+            eid, _PlugState(deque(maxlen=self._cfg.plug_reservoir))
+        )
         if new == _ON and state.on_since is None:
             state.on_since = ts
             return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_ON, room, ts)]
         if new == _OFF and state.on_since is not None:
             dur = (ts - state.on_since).total_seconds()
             state.on_since = None
-            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_OFF, room, ts, duration_s=dur)]
+            return [
+                ActivityEvent(
+                    eid,
+                    Category.PLUG,
+                    EventKind.APPLIANCE_OFF,
+                    room,
+                    ts,
+                    duration_s=dur,
+                )
+            ]
         return []
 
     def _idle(self, state: _PlugState) -> float:
@@ -257,7 +297,13 @@ class Normaliser:
             for eid, b in data.get("bursts", {}).items():
                 start, rise = _parse_dt(b.get("start")), _parse_dt(b.get("last_rise"))
                 if start and rise:
-                    n._bursts[eid] = _Burst(eid, str(b.get("room", "")), start, rise, _parse_dt(b.get("last_fall")))
+                    n._bursts[eid] = _Burst(
+                        eid,
+                        str(b.get("room", "")),
+                        start,
+                        rise,
+                        _parse_dt(b.get("last_fall")),
+                    )
             for eid, ts in data.get("open_since", {}).items():
                 if (dt := _parse_dt(ts)) is not None:
                     n._open_since[eid] = dt
