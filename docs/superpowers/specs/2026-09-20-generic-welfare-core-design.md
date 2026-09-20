@@ -416,7 +416,8 @@ existing mocked-HA approach, updated for the new data shape.
 Store schema major bump discards v4 learned state. Config entry version
 bump: existing `monitored_entities` are kept unassigned and a repair
 issue asks the user to place them in categories in options. Until they
-do, nothing is monitored and the welfare sensor reports `unconfigured`.
+do, nothing is monitored and no entities are created; the repair issue is
+the only signal.
 
 ## 13. Decisions
 
