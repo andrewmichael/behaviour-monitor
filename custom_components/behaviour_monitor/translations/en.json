@@ -2,114 +2,84 @@
   "config": {
     "step": {
       "user": {
-        "title": "Behaviour Monitor Setup",
-        "description": "Configure Behaviour Monitor to learn entity state patterns and detect anomalies using statistical analysis and machine learning.",
+        "title": "Behaviour Monitor site",
+        "description": "Name the site, choose where welfare pushes go, and place each sensor in a category. Rooms come from the Home Assistant area of each entity or its device.",
         "data": {
-          "monitored_entities": "Entities to monitor",
-          "sensitivity": "Anomaly detection sensitivity",
-          "learning_period": "Statistical learning period",
-          "enable_notifications": "Enable anomaly notifications",
-          "enable_ml": "Enable machine learning",
-          "ml_learning_period": "ML learning period",
-          "retrain_period": "ML retrain period",
-          "cross_sensor_window": "Cross-sensor correlation window",
-          "track_attributes": "Track attribute changes",
-          "notify_services": "Mobile notification services",
-          "inactivity_multiplier": "Inactivity sensitivity scaling",
-          "min_inactivity_multiplier": "Min inactivity multiplier",
-          "max_inactivity_multiplier": "Max inactivity multiplier",
-          "track_attributes_include": "Always track attribute changes for",
-          "track_attributes_exclude": "Never track attribute changes for"
-        },
-        "data_description": {
-          "monitored_entities": "Select the entities whose state changes should be monitored for pattern learning.",
-          "sensitivity": "Higher sensitivity detects smaller deviations. Low = 3σ (extreme only), Medium = 2σ, High = 1σ (any deviation).",
-          "learning_period": "Number of days to collect data before statistical anomaly detection activates.",
-          "enable_notifications": "Send persistent notifications when anomalies are detected.",
-          "enable_ml": "Enable Half-Space Trees ML for advanced pattern detection and cross-sensor correlation analysis.",
-          "ml_learning_period": "Minimum days before ML anomaly notifications are sent.",
-          "retrain_period": "How often to retrain the ML model with new data.",
-          "cross_sensor_window": "Time window (seconds) for detecting correlated activity between different sensors.",
-          "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
-          "notify_services": "Services to send mobile notifications (e.g., notify.mobile_app_iphone). Add multiple services to notify multiple devices. Leave empty to only use persistent notifications in the HA UI.",
-          "inactivity_multiplier": "Scales the auto-learned per-entity threshold. 1.0 = use learned threshold as-is; higher = more tolerant.",
-          "min_inactivity_multiplier": "Lower bound on the adaptive threshold multiplier (default 1.5). Prevents thresholds from becoming too tight on highly regular entities.",
-          "max_inactivity_multiplier": "Upper bound on the adaptive threshold multiplier (default 10.0). Prevents thresholds from becoming too loose on erratic entities.",
-          "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
-          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
+          "site_name": "Site name",
+          "notify_service": "Notify service (for example notify.mobile_app_phone)",
+          "motion_entities": "Motion sensors",
+          "contact_entities": "Door and window contacts",
+          "plug_entities": "Power plugs (power sensors or switches)",
+          "panic_entities": "Panic buttons",
+          "light_entities": "Lights",
+          "other_entities": "Other activity entities"
         }
       }
     },
     "error": {
-      "no_entities_selected": "Please select at least one entity to monitor.",
-      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
+      "no_entities": "Add at least one entity to a category.",
+      "duplicate_entity": "An entity appears in more than one category."
     },
     "abort": {
-      "already_configured": "This combination of entities is already being monitored."
+      "already_configured": "A site with this name is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Behaviour Monitor Options",
-        "description": "Update Behaviour Monitor configuration.",
+        "title": "Behaviour Monitor options",
         "data": {
-          "monitored_entities": "Entities to monitor",
-          "sensitivity": "Anomaly detection sensitivity",
-          "learning_period": "Statistical learning period",
-          "enable_notifications": "Enable anomaly notifications",
-          "enable_ml": "Enable machine learning",
-          "ml_learning_period": "ML learning period",
-          "retrain_period": "ML retrain period",
-          "cross_sensor_window": "Cross-sensor correlation window",
-          "track_attributes": "Track attribute changes",
-          "inactivity_multiplier": "Inactivity sensitivity scaling",
-          "min_inactivity_multiplier": "Min inactivity multiplier",
-          "max_inactivity_multiplier": "Max inactivity multiplier",
-          "track_attributes_include": "Always track attribute changes for",
-          "track_attributes_exclude": "Never track attribute changes for"
-        },
-        "data_description": {
-          "track_attributes": "Also count attribute-only changes (not just state changes). Enable this if your entities update attributes without changing state.",
-          "track_attributes_include": "Entities that count attribute-only changes even when the global toggle is off. Per-entity overrides take precedence.",
-          "track_attributes_exclude": "Entities that ignore attribute-only changes even when the global toggle is on. Per-entity overrides take precedence."
+          "site_name": "Site name",
+          "notify_service": "Notify service",
+          "motion_entities": "Motion sensors",
+          "contact_entities": "Door and window contacts",
+          "plug_entities": "Power plugs",
+          "panic_entities": "Panic buttons",
+          "light_entities": "Lights",
+          "other_entities": "Other activity entities",
+          "motion_debounce_s": "Motion debounce (seconds)",
+          "plug_margin_w": "Plug on-threshold above idle (watts)",
+          "learning_days": "Days before alerts start",
+          "window_days": "Days of history kept",
+          "health_grace_s": "Unavailable grace period (seconds)",
+          "push_repeat_s": "Welfare push repeat interval (seconds)",
+          "push_min_severity": "Minimum severity to push",
+          "house_low_ratio": "House silence ratio for a low welfare alert",
+          "chain_window_s": "Chain step window (seconds)",
+          "timing_promote_days": "Days of slower routine before a welfare alert",
+          "drift_sensitivity": "Drift sensitivity"
         }
       }
     },
     "error": {
-      "no_entities_selected": "Please select at least one entity to monitor.",
-      "track_attributes_overlap": "An entity cannot be in both the always-track and never-track lists."
+      "no_entities": "Add at least one entity to a category.",
+      "duplicate_entity": "An entity appears in more than one category."
+    }
+  },
+  "issues": {
+    "assign_categories": {
+      "title": "Assign categories for {site}",
+      "description": "Behaviour Monitor v5 needs each monitored entity placed in a category. Open the integration options and assign: {entities}"
+    },
+    "device_health": {
+      "title": "{site}: sensor problem",
+      "description": "{message}"
     }
   },
   "entity": {
     "sensor": {
-      "last_activity": {
-        "name": "Last Activity"
-      },
-      "activity_score": {
-        "name": "Activity Score"
-      },
-      "anomaly_detected": {
-        "name": "Anomaly Detected"
-      },
-      "baseline_confidence": {
-        "name": "Baseline Confidence"
-      },
-      "daily_activity_count": {
-        "name": "Daily Activity Count"
-      },
-      "cross_sensor_patterns": {
-        "name": "Cross-Sensor Patterns"
-      },
-      "statistical_training_remaining": {
-        "name": "Statistical Training Remaining"
-      },
-      "ml_training_remaining": {
-        "name": "ML Training Remaining"
-      },
-      "last_notification": {
-        "name": "Last Notification"
-      }
-    }
+      "welfare_status": {"name": "Welfare Status"},
+      "house_activity": {"name": "House Activity"},
+      "anomaly": {"name": "Anomaly"},
+      "device_health": {"name": "Device Health"},
+      "learning": {"name": "Learning"},
+      "entity_status": {"name": "Entity Status"},
+      "last_activity": {"name": "Last Activity"},
+      "daily_activity_count": {"name": "Daily Activity Count"},
+      "last_notification": {"name": "Last Notification"}
+    },
+    "switch": {"holiday_mode": {"name": "Holiday Mode"}},
+    "select": {"snooze": {"name": "Snooze Notifications"}},
+    "button": {"acknowledge": {"name": "Acknowledge"}}
   }
 }
