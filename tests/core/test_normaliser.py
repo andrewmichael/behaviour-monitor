@@ -117,11 +117,13 @@ def test_unavailable_transitions_are_health_not_activity():
             "binary_sensor.k", Category.MOTION, "Kitchen", _t(10), available=True
         )
     ]
-    # first ever state (old None) is also not activity
+    # first ever state (old None) is a first sighting: health event plus the
+    # rising edge, which is the first thing the person did
     ev = n.handle("binary_sensor.b", Category.MOTION, "Bath", None, "on", _t(20))
-    assert ev == [
-        HealthEvent("binary_sensor.b", Category.MOTION, "Bath", _t(20), available=True)
-    ]
+    assert ev[0] == HealthEvent(
+        "binary_sensor.b", Category.MOTION, "Bath", _t(20), available=True
+    )
+    assert [e.kind for e in ev[1:]] == [EventKind.PRESENCE]
     # repeated unavailable emits nothing
     n.handle("binary_sensor.b", Category.MOTION, "Bath", "on", "unavailable", _t(30))
     assert (
@@ -130,6 +132,28 @@ def test_unavailable_transitions_are_health_not_activity():
         )
         == []
     )
+
+
+def test_first_sighting_on_state_counts():
+    n = _n()
+    ev = n.handle("binary_sensor.p", Category.PANIC, "Hall", None, "on", _t(0))
+    assert ev[0] == HealthEvent(
+        "binary_sensor.p", Category.PANIC, "Hall", _t(0), available=True
+    )
+    assert [e.kind for e in ev[1:]] == [EventKind.PANIC]
+    assert ev[1].bypass is True
+    ev = n.handle("binary_sensor.d", Category.CONTACT, "Hall", None, "on", _t(1))
+    assert [e.kind for e in ev[1:]] == [EventKind.OPEN]
+    # a falling first state says nothing about the person
+    ev = n.handle("binary_sensor.d2", Category.CONTACT, "Hall", None, "off", _t(2))
+    assert ev == [
+        HealthEvent("binary_sensor.d2", Category.CONTACT, "Hall", _t(2), available=True)
+    ]
+    # nor does any single reading of an "other" entity
+    ev = n.handle("sensor.o", Category.OTHER, "Loft", None, "12", _t(3))
+    assert ev == [
+        HealthEvent("sensor.o", Category.OTHER, "Loft", _t(3), available=True)
+    ]
 
 
 def test_restore_on_fresh_normaliser_emits_health_event():

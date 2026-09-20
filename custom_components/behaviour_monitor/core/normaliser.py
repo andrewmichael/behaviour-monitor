@@ -68,7 +68,8 @@ class Normaliser:
         timestamp: datetime,
     ) -> list[ActivityEvent | HealthEvent]:
         new_unavail = new_state in UNAVAILABLE_STATES
-        old_unavail = old_state is None or old_state in UNAVAILABLE_STATES
+        first_sighting = old_state is None
+        old_unavail = old_state is not None and old_state in UNAVAILABLE_STATES
 
         if new_unavail:
             if self._available.get(entity_id, True):
@@ -79,12 +80,19 @@ class Normaliser:
             return []
 
         out: list[ActivityEvent | HealthEvent] = []
-        was_available = self._available.get(entity_id, not old_unavail)
+        was_available = self._available.get(
+            entity_id, not (old_unavail or first_sighting)
+        )
         if not was_available:
             self._available[entity_id] = True
             out.append(
                 HealthEvent(entity_id, category, room, timestamp, available=True)
             )
+        if first_sighting:
+            out.extend(
+                self._first_sighting(entity_id, category, room, new_state, timestamp)
+            )
+            return out
         if old_unavail:
             # restore of a real state is not the person acting
             return out
@@ -101,6 +109,32 @@ class Normaliser:
         }[category]
         out.extend(handler(entity_id, room, old_state, new_state, timestamp))
         return out
+
+    def _first_sighting(
+        self, eid: str, category: Category, room: str, new: str, ts: datetime
+    ) -> list[ActivityEvent]:
+        """An entity seen for the first time: only a rising state is activity.
+
+        There is no previous real state to compare against, so a falling or
+        steady state says nothing about the person, while a rising one is the
+        first thing they did. A numeric plug still takes the reading: it seeds
+        the reservoir, so idle becomes that value and nothing fires.
+        """
+        if category is Category.OTHER:
+            # other is only ever a change between two real states
+            return []
+        if category is Category.PLUG and new not in (_ON, _OFF):
+            return self._plug(eid, room, "", new, ts)
+        if new != _ON:
+            return []
+        handler = {
+            Category.MOTION: self._motion,
+            Category.CONTACT: self._contact,
+            Category.PLUG: self._plug,
+            Category.PANIC: self._panic,
+            Category.LIGHT: self._light,
+        }[category]
+        return handler(eid, room, "", new, ts)
 
     def flush(self, now: datetime) -> list[ActivityEvent]:
         """Close motion bursts whose last fall is older than the debounce window."""
