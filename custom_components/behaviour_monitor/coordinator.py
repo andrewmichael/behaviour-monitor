@@ -35,7 +35,7 @@ from .const import (
     UPDATE_INTERVAL,
 )
 from .core.alert_router import DeliveryAction
-from .core.engine import Engine, EngineConfig, EntitySpec
+from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
 from .core.events import UNAVAILABLE_STATES, ActivityEvent, Category, EventKind
 
 try:
@@ -226,6 +226,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             stored = None
         all_ids = [s.entity_id for s in self._specs]
         if stored and isinstance(stored, dict) and "engine" in stored:
+            # from_dict silently hands back a blank engine on a schema it does
+            # not know. Left to itself that reads as "restored fine", every
+            # entity counts as known, and bootstrap is skipped, so the site
+            # starts from nothing with no history behind it.
+            saved_schema = stored["engine"].get("schema")
+            if saved_schema != SCHEMA_VERSION:
+                _LOGGER.info(
+                    "Stored engine schema %s is not %s; relearning from history",
+                    saved_schema,
+                    SCHEMA_VERSION,
+                )
+                stored = None
+        if stored and isinstance(stored, dict) and "engine" in stored:
             try:
                 self._engine = Engine.from_dict(
                     stored["engine"], self._config, self._specs
@@ -264,6 +277,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsubs.append(
             self.hass.bus.async_listen(
                 ar.EVENT_AREA_REGISTRY_UPDATED, self._async_registry_updated
+            )
+        )
+        # Assigning an area to a device re-rooms every entity on it without
+        # touching the entity registry, so this is the only event that fires.
+        self._unsubs.append(
+            self.hass.bus.async_listen(
+                dr.EVENT_DEVICE_REGISTRY_UPDATED, self._async_registry_updated
             )
         )
 

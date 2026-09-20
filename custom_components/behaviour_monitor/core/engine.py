@@ -170,7 +170,13 @@ class Engine:
     def reset(self, entity_id: str | None = None) -> None:
         if entity_id is None:
             specs = list(self._specs.values())
+            # Re-initialising throws away every field, including the two the
+            # user set deliberately. Resetting what was learned must not
+            # silently take the site off holiday or cancel a snooze.
+            holiday, snooze_until = self._holiday, self._snooze_until
             self.__init__(self._cfg, specs)  # type: ignore[misc]
+            self._holiday = holiday
+            self._snooze_until = snooze_until
             return
         s = self._specs.get(entity_id)
         if s is None:

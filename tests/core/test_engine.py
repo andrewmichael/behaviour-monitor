@@ -259,3 +259,24 @@ def test_round_trip():
         )["learning"]["confidence"]
         == 0.0
     )
+
+
+def test_reset_preserves_holiday_and_snooze():
+    """Relearning must not quietly take the site off holiday or unsnooze it."""
+    e = _engine()
+    _train(e, days=5)
+    until = MON + timedelta(days=5, hours=2)
+    e.holiday = True
+    e.snooze_until = until
+
+    e.reset()
+
+    assert e.holiday is True
+    assert e.snooze_until == until
+    assert e.is_snoozed(MON + timedelta(days=5, hours=1))
+    # The learning itself is gone, which is the point of the reset.
+    assert e.snapshot(MON + timedelta(days=5))["learning"]["days_seen"] == 0
+
+    # A single-entity reset never touched either field; confirm it still does not.
+    e.reset("binary_sensor.bed")
+    assert e.holiday is True and e.snooze_until == until

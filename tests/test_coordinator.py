@@ -74,6 +74,21 @@ async def test_setup_bootstraps_from_recorder_and_subscribes(coordinator, mock_h
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
+    subscribed = {c.args[0] for c in mock_hass.bus.async_listen.call_args_list}
+    assert {
+        "state_changed",
+        "entity_registry_updated",
+        "area_registry_updated",
+        "device_registry_updated",
+    } <= subscribed
+    for event in (
+        "entity_registry_updated",
+        "area_registry_updated",
+        "device_registry_updated",
+    ):
+        mock_hass.bus.async_listen.assert_any_call(
+            event, coordinator._async_registry_updated
+        )
     mock_hass.bus.async_listen.assert_any_call(
         "state_changed", coordinator._handle_state_changed
     )
@@ -374,3 +389,22 @@ async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
     ), patch.object(coordinator._engine, "poll", return_value=[action]):
         await coordinator.async_setup()
     assert [a for a, _ in coordinator._pending] == [action]
+
+
+@pytest.mark.asyncio
+async def test_stale_engine_schema_triggers_full_bootstrap(coordinator):
+    """A store from an older schema must replay history, not start blank."""
+    coordinator._store._data = {
+        "site": "Test House",
+        "entity_ids": [s.entity_id for s in coordinator.entity_specs],
+        "engine": {"schema": 1, "house": {}},
+        "last_notification": {"timestamp": None, "kind": None},
+    }
+    coordinator._store._stored_version = coordinator._store.version
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()) as boot:
+        await coordinator.async_setup()
+    # Every entity is replayed, even though the store listed them all as known.
+    boot.assert_awaited_once()
+    assert set(boot.await_args.args[0]) == {
+        s.entity_id for s in coordinator.entity_specs
+    }

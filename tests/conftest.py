@@ -214,6 +214,9 @@ def _setup_ha_mocks():
         "entity_registry_updated"
     )
     mock_ha_helpers.area_registry.EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
+    mock_ha_helpers.device_registry.EVENT_DEVICE_REGISTRY_UPDATED = (
+        "device_registry_updated"
+    )
 
     # Issue registry
     mock_issue = MagicMock()
