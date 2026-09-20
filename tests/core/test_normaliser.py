@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.events import (
-    ActivityEvent,
     Category,
     EventKind,
     HealthEvent,
@@ -131,6 +130,36 @@ def test_unavailable_transitions_are_health_not_activity():
         )
         == []
     )
+
+
+def test_restore_on_fresh_normaliser_emits_health_event():
+    n = _n()
+    ev = n.handle(
+        "binary_sensor.k", Category.MOTION, "Kitchen", "unavailable", "on", _t(0)
+    )
+    assert ev == [
+        HealthEvent(
+            "binary_sensor.k", Category.MOTION, "Kitchen", _t(0), available=True
+        )
+    ]
+    # a second identical call is now in sync with internal bookkeeping: nothing to report
+    assert (
+        n.handle(
+            "binary_sensor.k", Category.MOTION, "Kitchen", "unavailable", "on", _t(0)
+        )
+        == []
+    )
+    # forget() drops the bookkeeping, so the restore fires again
+    n.handle("binary_sensor.k", Category.MOTION, "Kitchen", "on", "unavailable", _t(1))
+    n.forget("binary_sensor.k")
+    ev = n.handle(
+        "binary_sensor.k", Category.MOTION, "Kitchen", "unavailable", "on", _t(2)
+    )
+    assert ev == [
+        HealthEvent(
+            "binary_sensor.k", Category.MOTION, "Kitchen", _t(2), available=True
+        )
+    ]
 
 
 def test_round_trip_serialisation_keeps_burst_state():

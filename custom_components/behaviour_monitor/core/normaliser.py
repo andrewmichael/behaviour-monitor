@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from statistics import median
 from typing import Any
@@ -79,7 +79,8 @@ class Normaliser:
             return []
 
         out: list[ActivityEvent | HealthEvent] = []
-        if not self._available.get(entity_id, True) or old_state is None:
+        was_available = self._available.get(entity_id, not old_unavail)
+        if not was_available:
             self._available[entity_id] = True
             out.append(
                 HealthEvent(entity_id, category, room, timestamp, available=True)
