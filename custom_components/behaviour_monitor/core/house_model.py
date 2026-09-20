@@ -106,9 +106,7 @@ class HouseModel:
         gap = (
             (now - self._last_activity).total_seconds() if self._last_activity else None
         )
-        expected = (
-            self.expected_gap(self._last_activity) if self._last_activity else None
-        )
+        expected = self.expected_gap(now)
         ratio = None
         raw: Severity | None = None
         if gap is not None and expected is not None and not degraded:

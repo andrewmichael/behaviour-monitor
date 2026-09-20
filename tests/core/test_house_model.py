@@ -18,10 +18,10 @@ def _ev(
 
 
 def _train(model: HouseModel, days: int = 14, gap_min: int = 5) -> None:
-    """Every day, events every gap_min minutes from 09:00 to 10:00."""
+    """Every day, events every gap_min minutes from 09:00 to 11:00."""
     for d in range(days):
         base = MON + timedelta(days=d)
-        for m in range(0, 61, gap_min):
+        for m in range(0, 121, gap_min):
             model.record(_ev(base + timedelta(minutes=m)))
 
 
