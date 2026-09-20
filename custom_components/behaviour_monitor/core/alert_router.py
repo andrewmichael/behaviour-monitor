@@ -87,7 +87,7 @@ class AlertRouter:
             if key in seen or (o.panic and not o.acknowledged):
                 continue
             del self._open[key]
-            actions.extend(self._on_clear(o, snoozed))
+            actions.extend(self._on_clear(o, snoozed or holiday))
         for o in self._open.values():
             if (
                 o.alert.cls is AlertClass.WELFARE
@@ -199,17 +199,17 @@ class AlertRouter:
             return [DeliveryAction("repair_create", alert)]
         return [] if snoozed else [DeliveryAction("log", alert)]
 
-    def _on_clear(self, o: _Open, snoozed: bool) -> list[DeliveryAction]:
+    def _on_clear(self, o: _Open, suppress: bool) -> list[DeliveryAction]:
         alert = o.alert
         if alert.cls is AlertClass.WELFARE:
             return (
                 []
-                if snoozed or o.last_push is None
+                if suppress or o.last_push is None
                 else [DeliveryAction("push_clear", alert)]
             )
         if alert.cls is AlertClass.HEALTH:
             return [DeliveryAction("repair_delete", alert)]
-        return [DeliveryAction("log_clear", alert)]
+        return [] if suppress else [DeliveryAction("log_clear", alert)]
 
     def _push(self, o: _Open, now: datetime, snoozed: bool) -> list[DeliveryAction]:
         if not o.alert.severity.at_least(self._cfg.push_min_severity):

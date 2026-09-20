@@ -156,6 +156,20 @@ def test_snooze_suppresses_delivery_but_keeps_state_and_holiday_drops_alerts():
     assert [a.key for a in r3.open_alerts] == ["health:binary_sensor.k:unavailable"]
 
 
+def test_holiday_clears_silently():
+    r = AlertRouter(RouterConfig())
+    r.submit([_house(Severity.HIGH)], T0)
+    acts = r.submit([], T0 + timedelta(minutes=1), holiday=True)
+    assert _acts(acts, "push_clear") == []
+    assert "welfare:house:inactivity" not in [a.key for a in r.open_alerts]
+
+    r2 = AlertRouter(RouterConfig())
+    r2.submit([_health(), _note()], T0)
+    acts = r2.submit([], T0 + timedelta(minutes=1), holiday=True)
+    assert _acts(acts, "repair_delete") == ["health:binary_sensor.k:unavailable"]
+    assert _acts(acts, "log_clear") == []
+
+
 def test_round_trip():
     r = AlertRouter(RouterConfig())
     r.submit([_house(Severity.MEDIUM), _health()], T0)
