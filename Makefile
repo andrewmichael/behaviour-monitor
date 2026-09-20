@@ -1,4 +1,4 @@
-.PHONY: help venv install install-dev install-test test test-cov test-watch test-core lint format clean clean-all
+.PHONY: help venv install install-dev install-test test test-cov test-watch test-core test-sensor test-init test-coordinator test-config lint format clean clean-all
 
 # Default Python version
 PYTHON := python3
@@ -74,14 +74,6 @@ test-init: ## Run only init tests
 test-core: ## Run only pure-core tests (no Home Assistant)
 	@echo "$(GREEN)Running core tests...$(NC)"
 	$(PYTHON_VENV) -m pytest tests/core -v
-
-test-analyzer: ## Run only analyzer tests
-	@echo "$(GREEN)Running analyzer tests...$(NC)"
-	$(PYTHON_VENV) -m pytest tests/test_analyzer.py -v
-
-test-ml: ## Run only ML analyzer tests
-	@echo "$(GREEN)Running ML analyzer tests...$(NC)"
-	$(PYTHON_VENV) -m pytest tests/test_ml_analyzer.py -v
 
 test-coordinator: ## Run only coordinator tests
 	@echo "$(GREEN)Running coordinator tests...$(NC)"
