@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -167,6 +167,83 @@ def _setup_ha_mocks():
 
     mock_ha_helpers.storage = MagicMock()
     mock_ha_helpers.storage.Store = MockStore
+
+    mock_components = MagicMock()
+
+    # Registries: entity, device, area
+    class _Reg:
+        def __init__(self):
+            self.entities = {}
+            self.devices = {}
+            self.areas = {}
+
+        def async_get(self, key):
+            return (
+                self.entities.get(key) or self.devices.get(key) or self.areas.get(key)
+            )
+
+        def async_get_area(self, area_id):
+            return self.areas.get(area_id)
+
+    _registry = _Reg()
+    for mod_name in ("entity_registry", "device_registry", "area_registry"):
+        mod = MagicMock()
+        mod.async_get = lambda hass, _r=_registry: _r
+        setattr(mock_ha_helpers, mod_name, mod)
+        sys.modules[f"homeassistant.helpers.{mod_name}"] = mod
+    mock_ha_helpers.entity_registry.EVENT_ENTITY_REGISTRY_UPDATED = (
+        "entity_registry_updated"
+    )
+    mock_ha_helpers.area_registry.EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
+
+    # Issue registry
+    mock_issue = MagicMock()
+    mock_issue.async_create_issue = MagicMock()
+    mock_issue.async_delete_issue = MagicMock()
+    mock_issue.IssueSeverity = MagicMock(WARNING="warning", ERROR="error")
+    mock_ha_helpers.issue_registry = mock_issue
+    sys.modules["homeassistant.helpers.issue_registry"] = mock_issue
+
+    # Button platform
+    mock_button = MagicMock()
+
+    class MockButtonEntity:
+        def __init__(self):
+            self._attr_unique_id = None
+            self._attr_name = None
+            self._attr_device_info = None
+
+        async def async_press(self):
+            pass
+
+    mock_button.ButtonEntity = MockButtonEntity
+    mock_components.button = mock_button
+    sys.modules["homeassistant.components.button"] = mock_button
+    MockPlatform.BUTTON = "button"
+
+    # Recorder (bootstrap is patched in tests; module must import)
+    mock_recorder = MagicMock()
+    mock_recorder.get_instance = lambda hass: None
+    mock_recorder_history = MagicMock()
+    mock_components.recorder = mock_recorder
+    sys.modules["homeassistant.components.recorder"] = mock_recorder
+    sys.modules["homeassistant.components.recorder.history"] = mock_recorder_history
+
+    # Debouncer
+    class MockDebouncer:
+        def __init__(self, hass, logger, cooldown, immediate, function):
+            self._function = function
+
+        async def async_call(self):
+            await self._function()
+
+        def async_shutdown(self):
+            pass
+
+    mock_debounce = MagicMock()
+    mock_debounce.Debouncer = MockDebouncer
+    mock_ha_helpers.debounce = mock_debounce
+    sys.modules["homeassistant.helpers.debounce"] = mock_debounce
 
     # Mock CoordinatorEntity and DataUpdateCoordinator
     class MockCoordinatorEntity:
@@ -357,15 +434,15 @@ def _setup_ha_mocks():
     mock_switch.SwitchEntity = MockSwitchEntity
 
     # Mock components
-    mock_components = MagicMock()
     mock_components.sensor = mock_sensor
     mock_components.select = mock_select
     mock_components.switch = mock_switch
 
     # Mock dt utilities
     mock_dt_util = MagicMock()
-    mock_dt_util.now = datetime.now
+    mock_dt_util.now = lambda: datetime.now(timezone.utc)
     mock_dt_util.parse_datetime = lambda x: datetime.fromisoformat(x) if x else None
+    mock_dt_util.as_local = lambda dt: dt
     mock_ha_util.dt = mock_dt_util
 
     # Mock voluptuous (used by HA for schema validation)
@@ -438,15 +515,19 @@ def mock_config_entry() -> MagicMock:
 
         def __init__(self):
             self.entry_id = "test_entry_id"
-            self.version = 4
+            self.version = 11
             self.data = {
-                "monitored_entities": ["sensor.test1", "sensor.test2"],
-                "history_window_days": 28,
-                "inactivity_multiplier": 3.0,
-                "drift_sensitivity": "medium",
-                "enable_notifications": True,
-                "notification_cooldown": 30,
-                "min_notification_severity": "significant",
+                "site_name": "Test House",
+                "notify_service": "notify.mobile_app_phone",
+                "motion_entities": [
+                    "binary_sensor.kitchen_motion",
+                    "binary_sensor.bed_motion",
+                ],
+                "contact_entities": ["binary_sensor.front_door"],
+                "plug_entities": ["sensor.kettle_power"],
+                "panic_entities": ["binary_sensor.panic"],
+                "light_entities": [],
+                "other_entities": [],
             }
             self.options = {}
             self.add_update_listener = MagicMock(return_value=MagicMock())
