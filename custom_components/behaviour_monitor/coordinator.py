@@ -36,7 +36,7 @@ from .const import (
 )
 from .core.alert_router import DeliveryAction
 from .core.engine import Engine, EngineConfig, EntitySpec
-from .core.events import ActivityEvent, Category, EventKind
+from .core.events import UNAVAILABLE_STATES, ActivityEvent, Category, EventKind
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -91,7 +91,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._notify_service: str = str(entry.data.get(CONF_NOTIFY_SERVICE, ""))
         options = {**OPTION_DEFAULTS, **entry.options}
         self._config = EngineConfig.from_options(options)
-        self._specs: list[EntitySpec] = self._resolve_specs()
+        self._specs, self._area_ids = self._resolve_specs()
         self._engine = Engine(self._config, self._specs)
         self._store = _EngineStore(
             hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
@@ -157,24 +157,23 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ---------------------------------------------------------------- rooms
 
-    def _resolve_specs(self) -> list[EntitySpec]:
+    def _resolve_specs(self) -> tuple[list[EntitySpec], dict[str, str | None]]:
+        """Build the entity specs and remember which area each room came from."""
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
         specs: list[EntitySpec] = []
+        area_ids: dict[str, str | None] = {}
         for entity_id, category in entity_specs_from_data(self._entry.data):
-            specs.append(
-                EntitySpec(
-                    entity_id,
-                    Category(category),
-                    self._room_for(entity_id, ent_reg, dev_reg, area_reg),
-                )
-            )
-        return specs
+            room, area_id = self._room_for(entity_id, ent_reg, dev_reg, area_reg)
+            specs.append(EntitySpec(entity_id, Category(category), room))
+            area_ids[entity_id] = area_id
+        return specs, area_ids
 
     def _room_for(
         self, entity_id: str, ent_reg: Any, dev_reg: Any, area_reg: Any
-    ) -> str:
+    ) -> tuple[str, str | None]:
+        """Resolve a room name, and the area id it came from if it had one."""
         entry = ent_reg.async_get(entity_id)
         area_id = getattr(entry, "area_id", None)
         if not area_id and getattr(entry, "device_id", None):
@@ -183,19 +182,35 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if area_id:
             area = area_reg.async_get_area(area_id)
             if area is not None and getattr(area, "name", None):
-                return str(area.name)
+                return str(area.name), str(area_id)
         state = self.hass.states.get(entity_id)
         if state is not None and state.attributes.get("friendly_name"):
-            return str(state.attributes["friendly_name"])
-        return entity_id
+            return str(state.attributes["friendly_name"]), None
+        return entity_id, None
 
     async def _async_registry_updated(self, event: Any) -> None:
-        new_specs = self._resolve_specs()
-        old = {s.entity_id: s.room for s in self._specs}
+        """Re-resolve rooms, telling a renamed area apart from a moved entity.
+
+        Ruling P6: rename_room rewrites every chain and routine keyed on the
+        old room, which is right when an area was renamed and catastrophic
+        when one sensor was moved to another area, because it would merge two
+        rooms' learning. The area id is what distinguishes them: same id and a
+        new name is a rename, a new id is a move.
+        """
+        new_specs, new_area_ids = self._resolve_specs()
+        old_rooms = {s.entity_id: s.room for s in self._specs}
         for spec in new_specs:
-            if spec.entity_id in old and old[spec.entity_id] != spec.room:
-                self._engine.rename_room(old[spec.entity_id], spec.room)
+            entity_id = spec.entity_id
+            if old_rooms.get(entity_id, spec.room) == spec.room:
+                continue
+            old_area = self._area_ids.get(entity_id)
+            if old_area is not None and old_area == new_area_ids.get(entity_id):
+                self._engine.rename_room(old_rooms[entity_id], spec.room)
+            # A move, or a room that never came from an area, changes only this
+            # entity; set_entities below updates its room in place and the
+            # room-keyed chains are left alone.
         self._specs = new_specs
+        self._area_ids = new_area_ids
         self._engine.set_entities(self._specs)
         await self._saver.async_call()
 
@@ -209,17 +224,33 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # loading; starting from nothing is always recoverable.
             _LOGGER.exception("Could not read stored state; starting fresh")
             stored = None
+        all_ids = [s.entity_id for s in self._specs]
         if stored and isinstance(stored, dict) and "engine" in stored:
-            self._engine = Engine.from_dict(stored["engine"], self._config, self._specs)
-            self._last_notification = stored.get(
-                "last_notification", self._last_notification
-            )
-            known = set(stored.get("entity_ids", []))
-            new_ids = [s.entity_id for s in self._specs if s.entity_id not in known]
+            try:
+                self._engine = Engine.from_dict(
+                    stored["engine"], self._config, self._specs
+                )
+                self._last_notification = stored.get(
+                    "last_notification", self._last_notification
+                )
+                known = set(stored.get("entity_ids", []))
+                new_ids = [eid for eid in all_ids if eid not in known]
+            except Exception:  # noqa: BLE001
+                # A store written by a half-finished version, or hand-edited,
+                # must cost us the learning and nothing more.
+                _LOGGER.exception("Stored engine state unusable; starting fresh")
+                self._engine = Engine(self._config, self._specs)
+                new_ids = all_ids
         else:
-            new_ids = [s.entity_id for s in self._specs]
+            new_ids = all_ids
         if new_ids:
-            await self._bootstrap_entities(new_ids)
+            try:
+                await self._bootstrap_entities(new_ids)
+            except Exception:  # noqa: BLE001
+                # recorder_get_instance raises KeyError when the recorder is
+                # not loaded at all. Running without history is a slower
+                # start, not a failed setup.
+                _LOGGER.exception("Could not replay history; learning from now on")
             await self._save()
         self._schedule_flush()
         self._unsubs.append(
@@ -240,6 +271,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        # Stop both timers before the last save, so nothing can fire against a
+        # coordinator that has already been unloaded.
+        self._saver.async_shutdown()
+        await super().async_shutdown()
         await self._save()
 
     async def _save(self) -> None:
@@ -281,6 +316,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             prev: str | None = None
             for state in rows.get(entity_id, []):
+                if state.state in UNAVAILABLE_STATES:
+                    # learn_only does not suppress record_health, so replaying
+                    # these would report outages that ended weeks ago. Drop
+                    # prev too: the next real row is a first sighting, not a
+                    # transition back from a dropout.
+                    prev = None
+                    continue
                 ts = dt_util.as_local(state.last_changed)
                 self._engine.handle_state(
                     entity_id, prev, state.state, ts, learn_only=True

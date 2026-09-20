@@ -98,10 +98,15 @@ async def test_state_change_feeds_engine_and_panic_pushes(coordinator, mock_hass
     calls = [c.args[:2] for c in mock_hass.services.async_call.await_args_list]
     assert ("notify", "mobile_app_phone") in calls
     assert ("persistent_notification", "create") in calls
-    assert coordinator.data is None or coordinator.data["welfare"]["status"] in (
-        "learning",
-        "critical",
-    )
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        data = await coordinator._async_update_data()
+    # The panic is open on the router, so it shows up as a welfare reason even
+    # while the models are still learning.
+    assert data["welfare"]["status"] == "learning"
+    assert any("panic" in reason for reason in data["welfare"]["reasons"])
+    assert [a["kind"] for a in data["welfare"]["open_alerts"]] == ["panic"]
 
 
 @pytest.mark.asyncio
@@ -223,13 +228,71 @@ async def test_test_panic_pushes_without_learning(coordinator, mock_hass):
 
 @pytest.mark.asyncio
 async def test_registry_update_reresolves_rooms(coordinator, mock_hass):
+    """Renaming an area renames the room; moving one sensor must not."""
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
     from homeassistant.helpers import entity_registry as er
 
-    er.async_get(mock_hass).areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
-    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    reg = er.async_get(mock_hass)
+
+    # Same area id, new name: a genuine rename, so the learning follows it.
+    reg.areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    with patch.object(coordinator._engine, "rename_room") as rename:
+        await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    rename.assert_called_once_with("Bedroom", "Back Bedroom")
     assert {s.room for s in coordinator.entity_specs} >= {"Back Bedroom"}
+
+    # Different area id: the sensor moved. Renaming here would merge the two
+    # rooms' learning, so only this entity's room may change.
+    reg.devices["dev_bed"] = SimpleNamespace(area_id="a_kitchen")
+    with patch.object(coordinator._engine, "rename_room") as rename:
+        await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    rename.assert_not_called()
+    rooms = {s.entity_id: s.room for s in coordinator.entity_specs}
+    assert rooms["binary_sensor.bed_motion"] == "Test House Kitchen"
+    assert "Back Bedroom" not in set(rooms.values())
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_both_timers(coordinator):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    await coordinator.async_shutdown()
+    coordinator._saver.async_shutdown.assert_called_once()
+    assert coordinator.shutdown_called is True
+    assert coordinator._store._data is not None
+
+
+@pytest.mark.asyncio
+async def test_setup_survives_recorder_not_loaded(coordinator, mock_hass):
+    """recorder_get_instance raises KeyError when the recorder is absent."""
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        side_effect=KeyError("recorder"),
+    ):
+        await coordinator.async_setup()
+    mock_hass.bus.async_listen.assert_any_call(
+        "state_changed", coordinator._handle_state_changed
+    )
+    assert coordinator._store._data["engine"]["schema"] == 2
+
+
+@pytest.mark.asyncio
+async def test_setup_survives_corrupt_engine_section(coordinator):
+    coordinator._store._data = {"engine": {"schema": 2, "house": "not a dict"}}
+    coordinator._store._stored_version = coordinator._store.version
+    with patch.object(
+        coordinator, "_bootstrap_entities", new=AsyncMock()
+    ) as boot, patch(
+        "custom_components.behaviour_monitor.coordinator.Engine.from_dict",
+        side_effect=ValueError("bad store"),
+    ):
+        await coordinator.async_setup()
+    # Fresh engine, and every entity treated as new so history is replayed.
+    assert set(boot.await_args.args[0]) == {
+        s.entity_id for s in coordinator.entity_specs
+    }
+    assert coordinator._engine.to_dict()["schema"] == 2
 
 
 @pytest.mark.asyncio
@@ -268,6 +331,7 @@ async def test_bootstrap_replays_recorder_rows(coordinator):
         eid: [
             _row("on", NOW - timedelta(hours=4)),
             _row("off", NOW - timedelta(hours=3, minutes=58)),
+            _row("unavailable", NOW - timedelta(hours=3)),
             _row("on", NOW - timedelta(hours=2)),
             _row("off", NOW - timedelta(hours=1, minutes=58)),
         ]
@@ -278,11 +342,23 @@ async def test_bootstrap_replays_recorder_rows(coordinator):
         return_value=instance,
     ), patch(
         "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
-    ):
+    ), patch.object(
+        coordinator._engine,
+        "handle_state",
+        wraps=coordinator._engine.handle_state,
+    ) as handled:
         await coordinator._bootstrap_entities([eid])
     call = instance.async_add_executor_job.await_args
     assert call.args[4] == eid and isinstance(call.args[4], str)
     assert coordinator._engine.snapshot(NOW)["entities"][eid]["last_seen"] is not None
+    # The historic dropout never reaches the engine, and the row after it is
+    # replayed as a first sighting rather than a restore from unavailable.
+    assert [(c.args[1], c.args[2]) for c in handled.call_args_list] == [
+        (None, "on"),
+        ("on", "off"),
+        (None, "on"),
+        ("on", "off"),
+    ]
 
 
 @pytest.mark.asyncio

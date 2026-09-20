@@ -252,12 +252,10 @@ def _setup_ha_mocks():
     class MockDebouncer:
         def __init__(self, hass, logger, cooldown, immediate, function):
             self._function = function
+            self.async_shutdown = MagicMock()
 
         async def async_call(self):
             await self._function()
-
-        def async_shutdown(self):
-            pass
 
     mock_debounce = MagicMock()
     mock_debounce.Debouncer = MockDebouncer
@@ -320,6 +318,10 @@ def _setup_ha_mocks():
         async def async_refresh(self):
             """Mock refresh."""
             pass
+
+        async def async_shutdown(self):
+            """Mock shutdown; the real one cancels the refresh timer."""
+            self.shutdown_called = True
 
         def async_add_listener(self, listener):
             """Mock add listener."""
