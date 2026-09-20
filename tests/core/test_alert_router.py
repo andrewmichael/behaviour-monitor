@@ -18,9 +18,17 @@ def _house(sev: Severity, ts: datetime = T0) -> Alert:
     return Alert(AlertClass.WELFARE, "house", "inactivity", sev, "No activity", ts)
 
 
-def _note(src: str = "sensor.kettle", ts: datetime = T0) -> Alert:
+def _note(
+    src: str = "sensor.kettle", ts: datetime = T0, fired_today: bool = True
+) -> Alert:
     return Alert(
-        AlertClass.STATISTICAL, src, "routine_missed", Severity.LOW, "missed", ts
+        AlertClass.STATISTICAL,
+        src,
+        "routine_missed",
+        Severity.LOW,
+        "missed",
+        ts,
+        {"fired_today": fired_today},
     )
 
 
@@ -73,9 +81,34 @@ def test_health_becomes_repair_and_statistical_becomes_log():
 
 
 def test_note_escalates_open_house_alert_by_one_level():
+    # one note is one chance miss, not agreement
     r = AlertRouter(RouterConfig())
     r.submit([_house(Severity.LOW), _note()], T0)
+    assert r.welfare_severity is Severity.LOW
+    # two distinct sources that both fired today do escalate
+    r = AlertRouter(RouterConfig())
+    r.submit([_house(Severity.LOW), _note("a"), _note("b")], T0)
     assert r.welfare_severity is Severity.MEDIUM
+    # so does a single stall
+    r = AlertRouter(RouterConfig())
+    r.submit([_house(Severity.LOW), _stall()], T0)
+    assert r.welfare_severity is Severity.MEDIUM
+
+
+def test_notes_from_entities_silent_today_do_not_escalate():
+    r = AlertRouter(RouterConfig())
+    silent = [_note("a", fired_today=False), _note("b", fired_today=False)]
+    acts = r.submit([_house(Severity.LOW), *silent], T0)
+    assert r.welfare_severity is Severity.LOW
+    # the notes themselves are still logged
+    assert sorted(_acts(acts, "log")) == [
+        "statistical:a:routine_missed",
+        "statistical:b:routine_missed",
+    ]
+    # and they cannot agree with each other into a welfare alert
+    r2 = AlertRouter(RouterConfig())
+    r2.submit(silent, T0)
+    assert "welfare:house:routine_agreement" not in [a.key for a in r2.open_alerts]
 
 
 def test_two_notes_open_low_welfare_without_house_alert():

@@ -218,7 +218,11 @@ class EntityRoutineModel:
                         Severity.LOW,
                         f"{r.room}: {eid} usually fires around {hour:02d}:00 on this weekday but has not today",
                         now,
-                        {"hour": hour, "room": r.room},
+                        {
+                            "hour": hour,
+                            "room": r.room,
+                            "fired_today": r.daily_count(today) > 0,
+                        },
                     )
                 )
         return out

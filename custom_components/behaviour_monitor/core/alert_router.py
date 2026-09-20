@@ -9,8 +9,6 @@ from typing import Any
 from .alerts import Alert, AlertClass, Severity
 from .events import ActivityEvent
 
-_NOTE_KINDS = {"routine_missed", "chain_stall"}
-
 
 @dataclass(frozen=True)
 class RouterConfig:
@@ -125,12 +123,28 @@ class AlertRouter:
     def _combine(self, alerts: list[Alert], now: datetime) -> list[Alert]:
         # Notes and stalls persist on their own (a note until the entity fires,
         # a stall for ChainConfig.stall_ttl_s), so counting the ones raised
-        # right now is the agreement window.
-        notes = sorted(
-            a.key
-            for a in alerts
-            if a.cls is AlertClass.STATISTICAL and a.kind in _NOTE_KINDS
+        # right now is the agreement window. A note from an entity that has not
+        # fired at all today says something about the sensor, not about the
+        # person, so it never escalates welfare; and several missed windows on
+        # one entity are one sign, which is why notes count by source.
+        stalls = sorted(
+            {
+                a.key
+                for a in alerts
+                if a.cls is AlertClass.STATISTICAL and a.kind == "chain_stall"
+            }
         )
+        notes = sorted(
+            {
+                a.key
+                for a in alerts
+                if a.cls is AlertClass.STATISTICAL
+                and a.kind == "routine_missed"
+                and a.details.get("fired_today")
+            }
+        )
+        signs = stalls + notes
+        escalates = bool(stalls) or len(notes) >= 2
         out = list(alerts)
         house = next(
             (
@@ -142,7 +156,7 @@ class AlertRouter:
             ),
             None,
         )
-        if house is not None and notes:
+        if house is not None and escalates:
             out.remove(house)
             out.append(
                 Alert(
@@ -150,21 +164,21 @@ class AlertRouter:
                     house.source,
                     house.kind,
                     house.severity.bump(),
-                    house.explanation + f" and {len(notes)} routine sign(s) missed",
+                    house.explanation + f" and {len(signs)} routine sign(s) missed",
                     house.raised_at,
-                    {**house.details, "escalated_by": notes},
+                    {**house.details, "escalated_by": signs},
                 )
             )
-        elif house is None and len(notes) >= 2:
+        elif house is None and len(signs) >= 2:
             out.append(
                 Alert(
                     AlertClass.WELFARE,
                     "house",
                     "routine_agreement",
                     Severity.LOW,
-                    f"{len(notes)} routine signs missed at the same time",
+                    f"{len(signs)} routine signs missed at the same time",
                     now,
-                    {"notes": notes},
+                    {"notes": signs},
                 )
             )
         for a in alerts:
