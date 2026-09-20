@@ -149,21 +149,40 @@ def _setup_ha_mocks():
 
     # Mock Storage with proper async methods
     class MockStore:
-        """Mock Home Assistant storage."""
+        """Mock Home Assistant storage, including the version migration hook."""
 
         def __init__(self, hass, version, key):
             self.hass = hass
             self.version = version
             self.key = key
             self._data = None
+            self._stored_version = version
+
+        async def _async_migrate_func(
+            self, old_major_version, old_minor_version, old_data
+        ):
+            """Match the real Store, which refuses to migrate by default."""
+            raise NotImplementedError
 
         async def async_load(self):
-            """Mock async load."""
+            """Mock async load, migrating when the stored version is older."""
+            if self._data is None:
+                return None
+            if self._stored_version != self.version:
+                return await self._async_migrate_func(
+                    self._stored_version, 0, self._data
+                )
             return self._data
 
         async def async_save(self, data):
             """Mock async save."""
             self._data = data
+            self._stored_version = self.version
+
+        @classmethod
+        def __class_getitem__(cls, item):
+            """Support generic subscripting like Store[dict[str, Any]]."""
+            return cls
 
     mock_ha_helpers.storage = MagicMock()
     mock_ha_helpers.storage.Store = MockStore

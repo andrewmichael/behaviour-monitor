@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -49,6 +50,31 @@ except ImportError:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 
+class _EngineStore(Store[dict[str, Any]]):
+    """Store that throws away anything written by an older schema.
+
+    The v4 integration wrote its learned patterns under the same key at store
+    version 10. None of it maps onto the engine's models, so the only honest
+    migration is to discard it and learn again from recorder history.
+    Without this override Home Assistant calls Store._async_migrate_func,
+    which raises NotImplementedError and fails setup on every upgrade.
+    """
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        _LOGGER.info(
+            "Discarding Behaviour Monitor store version %s.%s; learned state from "
+            "before v5 cannot be migrated and will be rebuilt from history",
+            old_major_version,
+            old_minor_version,
+        )
+        return {}
+
+
 class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Translate Home Assistant into Engine calls and Engine actions into HA."""
 
@@ -57,6 +83,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=DOMAIN,
+            config_entry=entry,
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
         self._entry = entry
@@ -66,7 +93,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._config = EngineConfig.from_options(options)
         self._specs: list[EntitySpec] = self._resolve_specs()
         self._engine = Engine(self._config, self._specs)
-        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
+        self._store = _EngineStore(
+            hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
+        )
         self._pending: list[tuple[DeliveryAction, datetime]] = []
         self._unsubs: list[Any] = []
         self._last_notification: dict[str, Any] = {"timestamp": None, "kind": None}
@@ -173,7 +202,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------- lifecycle
 
     async def async_setup(self) -> None:
-        stored = await self._store.async_load()
+        try:
+            stored = await self._store.async_load()
+        except Exception:  # noqa: BLE001
+            # A corrupt or unreadable store must not stop the integration
+            # loading; starting from nothing is always recoverable.
+            _LOGGER.exception("Could not read stored state; starting fresh")
+            stored = None
         if stored and isinstance(stored, dict) and "engine" in stored:
             self._engine = Engine.from_dict(stored["engine"], self._config, self._specs)
             self._last_notification = stored.get(
@@ -186,6 +221,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if new_ids:
             await self._bootstrap_entities(new_ids)
             await self._save()
+        self._schedule_flush()
         self._unsubs.append(
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
         )
@@ -228,15 +264,17 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         end = dt_util.now()
         start = end - timedelta(days=self._config.window_days)
+        # state_changes_during_period takes one entity_id string, not a list,
+        # and attributes are never read here.
+        fetch = partial(recorder_state_changes_during_period, no_attributes=True)
         for entity_id in entity_ids:
             try:
                 rows = await instance.async_add_executor_job(
-                    recorder_state_changes_during_period,
+                    fetch,
                     self.hass,
                     start,
                     end,
-                    [entity_id],
-                    False,
+                    entity_id,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Could not load recorder history for %s", entity_id)
@@ -248,7 +286,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     entity_id, prev, state.state, ts, learn_only=True
                 )
                 prev = state.state
-        self._engine.poll(end)
+        # The router has already recorded these as opened and pushed, so
+        # dropping them here would lose the alert for good.
+        self._pending.extend((action, end) for action in self._engine.poll(end))
 
     # ----------------------------------------------------------------- events
 
@@ -269,6 +309,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._pending.extend((a, now) for a in actions)
             self.hass.async_create_task(self._flush_actions())
         self.hass.async_create_task(self._saver.async_call())
+
+    def _schedule_flush(self) -> None:
+        """Deliver anything queued outside the state-change path."""
+        if self._pending:
+            self.hass.async_create_task(self._flush_actions())
 
     async def _flush_actions(self) -> None:
         pending, self._pending = self._pending, []
@@ -393,6 +438,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._engine.reset(entity_id)
         ids = [entity_id] if entity_id else [s.entity_id for s in self._specs]
         await self._bootstrap_entities(ids)
+        self._schedule_flush()
         await self._after_control()
 
     async def async_test_panic(self) -> None:

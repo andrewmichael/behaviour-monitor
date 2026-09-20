@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -230,3 +230,71 @@ async def test_registry_update_reresolves_rooms(coordinator, mock_hass):
     er.async_get(mock_hass).areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
     await coordinator._async_registry_updated(SimpleNamespace(data={}))
     assert {s.room for s in coordinator.entity_specs} >= {"Back Bedroom"}
+
+
+@pytest.mark.asyncio
+async def test_setup_discards_old_store_version(coordinator):
+    """A v10 store must be migrated away, not blow up setup."""
+    coordinator._store._data = {
+        "engine": {"schema": 1, "house": {"days": 99}},
+        "site": "Old House",
+        "entity_ids": ["binary_sensor.kitchen_motion"],
+    }
+    coordinator._store._stored_version = 10
+    # The override is what keeps HA from raising NotImplementedError here.
+    assert await coordinator._store._async_migrate_func(10, 0, {"a": 1}) == {}
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()) as boot:
+        await coordinator.async_setup()
+    # Everything is new again, because the old store was discarded wholesale.
+    assert set(boot.await_args.args[0]) == {
+        s.entity_id for s in coordinator.entity_specs
+    }
+    assert coordinator._engine.to_dict()["schema"] == 2
+    assert coordinator._store._data["site"] == "Test House"
+
+
+def _row(state: str, when: datetime):
+    return SimpleNamespace(state=state, last_changed=when)
+
+
+def _recorder_instance(rows):
+    return SimpleNamespace(async_add_executor_job=AsyncMock(return_value=rows))
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_replays_recorder_rows(coordinator):
+    eid = "binary_sensor.kitchen_motion"
+    rows = {
+        eid: [
+            _row("on", NOW - timedelta(hours=4)),
+            _row("off", NOW - timedelta(hours=3, minutes=58)),
+            _row("on", NOW - timedelta(hours=2)),
+            _row("off", NOW - timedelta(hours=1, minutes=58)),
+        ]
+    }
+    instance = _recorder_instance(rows)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        return_value=instance,
+    ), patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        await coordinator._bootstrap_entities([eid])
+    call = instance.async_add_executor_job.await_args
+    assert call.args[4] == eid and isinstance(call.args[4], str)
+    assert coordinator._engine.snapshot(NOW)["entities"][eid]["last_seen"] is not None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
+    alert = Alert(
+        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
+    )
+    action = DeliveryAction("push", alert)
+    instance = _recorder_instance({})
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        return_value=instance,
+    ), patch.object(coordinator._engine, "poll", return_value=[action]):
+        await coordinator.async_setup()
+    assert [a for a, _ in coordinator._pending] == [action]
