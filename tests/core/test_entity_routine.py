@@ -48,6 +48,16 @@ def test_window_needs_fraction_of_days():
     m = _model()
     # Mondays only on 2 of 4 weeks -> 50% < 70%
     _train(m, days=28, skip={7, 21})
+    # The skipped Mondays still need to be observed days (just not at hour 8),
+    # otherwise the min_window_days gate returns [] before the fraction is checked.
+    for d in (7, 21):
+        m.record(_kettle(MON + timedelta(days=d, hours=15, minutes=5)))
+    assert (
+        len(
+            {d for d in m.get(KETTLE).days_seen if date.fromisoformat(d).weekday() == 0}
+        )
+        == 4
+    )
     assert m.expected_windows(KETTLE, weekday=0) == []
     assert m.expected_windows(KETTLE, weekday=1) == [8]
 

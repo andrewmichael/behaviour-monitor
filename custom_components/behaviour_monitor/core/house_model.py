@@ -117,9 +117,11 @@ class HouseModel:
                 raw = Severity.MEDIUM
             elif ratio >= self._cfg.low_ratio:
                 raw = Severity.LOW
-        self._sustain(raw)
+        if not degraded:
+            self._sustain(raw)
+        severity = None if degraded else self._current
         return HouseAssessment(
-            gap, expected, ratio, self._current, degraded, self._last_room
+            gap, expected, ratio, severity, degraded, self._last_room
         )
 
     def _sustain(self, raw: Severity | None) -> None:

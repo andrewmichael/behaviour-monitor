@@ -90,6 +90,26 @@ def test_degraded_when_live_fraction_low():
     assert a.degraded is True and a.severity is None
 
 
+def test_degraded_polls_hold_the_ladder():
+    m = HouseModel(HouseConfig(sustain_polls=2, min_live_fraction=0.5))
+    _train(m)
+    now = MON + timedelta(days=14)
+    m.record(_ev(now))
+    m.evaluate(now + timedelta(minutes=10))  # ratio 2
+    m.evaluate(now + timedelta(minutes=20))  # ratio 4 -> low, first poll
+    m.evaluate(now + timedelta(minutes=21))  # second poll sustains -> LOW
+    m.evaluate(now + timedelta(minutes=35))  # ratio 7 -> medium, first poll
+    m.evaluate(now + timedelta(minutes=36))  # second poll sustains -> MEDIUM
+    m.evaluate(now + timedelta(minutes=61))  # ratio 12.2 -> high, first poll
+    a = m.evaluate(now + timedelta(minutes=62))  # second poll sustains -> HIGH
+    assert a.severity is Severity.HIGH
+    for minutes in (63, 64, 65):
+        a = m.evaluate(now + timedelta(minutes=minutes), live_fraction=0.4)
+        assert a.degraded is True and a.severity is None
+    a = m.evaluate(now + timedelta(minutes=66), live_fraction=1.0)  # ratio 13.2
+    assert a.degraded is False and a.severity is Severity.HIGH
+
+
 def test_rooms_visited_and_prune():
     m = HouseModel(HouseConfig(window_days=28))
     m.record(_ev(MON, room="Kitchen"))
