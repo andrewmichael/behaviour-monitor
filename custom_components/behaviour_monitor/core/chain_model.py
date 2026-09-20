@@ -30,7 +30,7 @@ def bucket_of(ts: datetime) -> int:
 
 @dataclass(frozen=True)
 class ChainConfig:
-    window_s: float = 900.0
+    window_s: float = 1800.0
     min_count: int = 10
     lift: float = 2.0
     learning_days: int = 14

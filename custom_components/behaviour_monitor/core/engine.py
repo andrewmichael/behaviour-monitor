@@ -58,7 +58,7 @@ class EngineConfig:
             ),
             routine=RoutineConfig(learning_days=ld, window_days=wd),
             chain=ChainConfig(
-                window_s=float(o.get("chain_window_s", 900)),
+                window_s=float(o.get("chain_window_s", 1800)),
                 learning_days=ld,
                 window_days=wd,
             ),
