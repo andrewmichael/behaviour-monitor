@@ -53,6 +53,27 @@ def test_learns_bedroom_bathroom_kitchen_chain():
     assert len(chain.hop_stats) == 2
 
 
+def test_chains_are_learned_per_time_bucket():
+    """A nightly Bedroom -> Bathroom -> Bedroom trip must not swallow the
+    morning Bedroom -> Bathroom -> Kitchen routine, and must not open a run
+    for it either."""
+    m = ChainModel(CFG)
+    for d in range(14):
+        day = MON + timedelta(days=d)
+        night = day.replace(hour=0, minute=30)
+        m.record(_ev(night, "Bedroom"))
+        m.record(_ev(night + timedelta(minutes=4), "Bathroom"))
+        m.record(_ev(night + timedelta(minutes=8), "Bedroom"))
+        _morning(m, day)
+    m.recompute()
+    chain = next(c for c in m.chains if c.name == "Bedroom → Bathroom → Kitchen")
+    assert chain.buckets == {2}  # 06:00-09:00 only
+    # a night step into the first room is in bucket 0: no run, so no stall
+    night = (MON + timedelta(days=14)).replace(hour=0, minute=30)
+    m.record(_ev(night, "Bedroom"))
+    assert m.evaluate(night + timedelta(hours=1)) == []
+
+
 def test_same_room_events_do_not_create_pairs():
     m = _trained()
     assert all("Kitchen → Kitchen" not in c.name for c in m.chains)
@@ -125,10 +146,12 @@ def test_prune_keeps_counts_exact_when_hops_overflow():
     m.recompute()
 
     def _pair_count() -> int:
-        for p in m.to_dict()["pairs"]:
-            if p["a"] == "Bedroom" and p["b"] == "Bathroom":
-                return sum(p["days"].values())
-        return 0
+        """Bedroom -> Bathroom across every time bucket it was seen in."""
+        return sum(
+            sum(p["days"].values())
+            for p in m.to_dict()["pairs"]
+            if p["a"] == "Bedroom" and p["b"] == "Bathroom"
+        )
 
     assert _pair_count() == 250
     m.prune(day_starts[2].date())

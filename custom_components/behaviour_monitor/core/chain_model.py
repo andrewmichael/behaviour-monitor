@@ -14,6 +14,18 @@ from .slots import confidence, day_type, iso_day, median_mad
 _HOPS_KEPT = 200
 _COMPLETIONS_KEPT = 200
 ARROW = " → "
+BUCKET_HOURS = 3
+
+
+def bucket_of(ts: datetime) -> int:
+    """Three-hour time-of-day bucket a step falls in.
+
+    The same two rooms mean different things at different times of day: a
+    bedroom-to-bathroom step at 03:00 is a night trip, at 07:00 it starts the
+    morning routine. Pair statistics and chain assembly are therefore kept per
+    bucket, so a frequent night pattern cannot drown out a morning one.
+    """
+    return ts.hour // BUCKET_HOURS
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,7 @@ class _Pair:
 class Chain:
     rooms: list[str]
     hop_stats: list[tuple[float, float]]
+    buckets: set[int] = field(default_factory=set)
     completions: dict[str, deque[tuple[str, float]]] = field(
         default_factory=lambda: {
             "weekday": deque(maxlen=_COMPLETIONS_KEPT),
@@ -75,9 +88,9 @@ class _Stall:
 class ChainModel:
     def __init__(self, config: ChainConfig) -> None:
         self._cfg = config
-        self._pairs: dict[tuple[str, str], _Pair] = {}
-        self._steps_into: dict[str, int] = {}
-        self._total_steps = 0
+        self._pairs: dict[tuple[int, str, str], _Pair] = {}
+        self._steps_into: dict[tuple[int, str], int] = {}
+        self._total_steps: dict[int, int] = {}
         self._recent: dict[str, datetime] = {}
         self._current_room: str | None = None
         self._days_seen: set[str] = set()
@@ -95,31 +108,47 @@ class ChainModel:
         if not event.is_activity:
             return
         ts, room = event.timestamp, event.room
-        if room == self._current_room:
+        self._expire(ts)
+        if room == self._current_room and room in self._recent:
+            # Same room, still inside the window: not a new step, but it is
+            # the latest sighting there, so a hop out of this room measures
+            # from here and not from whenever the room was entered. Once the
+            # window has passed the room is no longer current and the event
+            # below starts a fresh occupancy.
+            self._recent[room] = ts
             return
         day = iso_day(ts.date())
         self._days_seen.add(day)
-        for prev_room, prev_ts in list(self._recent.items()):
-            age = (ts - prev_ts).total_seconds()
-            if age > self._cfg.window_s:
-                del self._recent[prev_room]
-                continue
+        for prev_room, prev_ts in self._recent.items():
             if prev_room == room:
                 continue
-            pair = self._pairs.setdefault((prev_room, room), _Pair())
+            key = (bucket_of(prev_ts), prev_room, room)
+            pair = self._pairs.setdefault(key, _Pair())
             pair.days[day] = pair.days.get(day, 0) + 1
-            pair.hops.append((day, age))
-        self._steps_into[room] = self._steps_into.get(room, 0) + 1
-        self._total_steps += 1
+            pair.hops.append((day, (ts - prev_ts).total_seconds()))
+        bucket = bucket_of(ts)
+        self._steps_into[(bucket, room)] = self._steps_into.get((bucket, room), 0) + 1
+        self._total_steps[bucket] = self._total_steps.get(bucket, 0) + 1
         self._recent[room] = ts
         self._current_room = room
         self._advance_runs(room, ts)
 
+    def _expire(self, now: datetime) -> None:
+        """Forget rooms last seen longer ago than the pair window."""
+        for room in [
+            r
+            for r, t in self._recent.items()
+            if (now - t).total_seconds() > self._cfg.window_s
+        ]:
+            del self._recent[room]
+
     def _advance_runs(self, room: str, ts: datetime) -> None:
+        bucket = bucket_of(ts)
         for chain in self._chains:
             run = self._runs.get(chain.name)
+            starts_here = room == chain.rooms[0] and bucket in chain.buckets
             if run is None:
-                if room == chain.rooms[0]:
+                if starts_here:
                     self._runs[chain.name] = _Run(ts, 0, ts)
                 continue
             nxt = run.step + 1
@@ -132,44 +161,31 @@ class ChainModel:
                     )
                     del self._runs[chain.name]
                     self._stalls.pop(chain.name, None)
-            elif room == chain.rooms[0]:
+            elif starts_here:
                 self._runs[chain.name] = _Run(ts, 0, ts)
 
     # ----------------------------------------------------------- learning
 
     def recompute(self) -> None:
-        sig: dict[str, list[tuple[str, int]]] = {}
-        preds: set[str] = set()
-        total = max(1, self._total_steps)
-        for (a, b), pair in self._pairs.items():
-            if pair.count < self._cfg.min_count:
-                continue
-            steps_a = self._steps_into.get(a, 0)
-            if steps_a == 0:
-                continue
-            p_b_given_a = pair.count / steps_a
-            p_b = self._steps_into.get(b, 0) / total
-            if p_b_given_a > self._cfg.lift * p_b:
-                sig.setdefault(a, []).append((b, pair.count))
-                preds.add(b)
+        """Assemble chains within each time bucket, then merge equal paths."""
         old = {c.name: c for c in self._chains}
+        order: list[tuple[str, ...]] = []
+        buckets_by_path: dict[tuple[str, ...], set[int]] = {}
+        for bucket in sorted({b for b, _, _ in self._pairs}):
+            for rooms in self._assemble(bucket):
+                path = tuple(rooms)
+                if path not in buckets_by_path:
+                    buckets_by_path[path] = set()
+                    order.append(path)
+                buckets_by_path[path].add(bucket)
         chains: list[Chain] = []
-        for start in sorted(sig):
-            if start in preds:
-                continue
-            rooms = [start]
-            while rooms[-1] in sig and len(rooms) < self._cfg.max_chain_len:
-                nxt = max(sig[rooms[-1]], key=lambda x: x[1])[0]
-                if nxt in rooms:
-                    break
-                rooms.append(nxt)
-            if len(rooms) < 2:
-                continue
+        for path in order:
+            buckets = buckets_by_path[path]
             stats = [
-                median_mad(h for _, h in self._pairs[(rooms[i], rooms[i + 1])].hops)
-                for i in range(len(rooms) - 1)
+                median_mad(self._pooled_hops(buckets, path[i], path[i + 1]))
+                for i in range(len(path) - 1)
             ]
-            chain = Chain(rooms, stats)
+            chain = Chain(list(path), stats, buckets)
             prev = old.get(chain.name)
             if prev is not None:
                 chain.completions = prev.completions
@@ -178,6 +194,44 @@ class ChainModel:
         self._runs = {
             k: v for k, v in self._runs.items() if k in {c.name for c in chains}
         }
+
+    def _assemble(self, bucket: int) -> list[list[str]]:
+        """Significant pairs and the chains they form inside one bucket."""
+        sig: dict[str, list[tuple[str, int]]] = {}
+        preds: set[str] = set()
+        total = max(1, self._total_steps.get(bucket, 0))
+        for (b, a, nxt), pair in self._pairs.items():
+            if b != bucket or pair.count < self._cfg.min_count:
+                continue
+            steps_a = self._steps_into.get((bucket, a), 0)
+            if steps_a == 0:
+                continue
+            p_b_given_a = pair.count / steps_a
+            p_b = self._steps_into.get((bucket, nxt), 0) / total
+            if p_b_given_a > self._cfg.lift * p_b:
+                sig.setdefault(a, []).append((nxt, pair.count))
+                preds.add(nxt)
+        out: list[list[str]] = []
+        for start in sorted(sig):
+            if start in preds:
+                continue
+            rooms = [start]
+            while rooms[-1] in sig and len(rooms) < self._cfg.max_chain_len:
+                nxt_room = max(sig[rooms[-1]], key=lambda x: x[1])[0]
+                if nxt_room in rooms:
+                    break
+                rooms.append(nxt_room)
+            if len(rooms) >= 2:
+                out.append(rooms)
+        return out
+
+    def _pooled_hops(self, buckets: set[int], a: str, b: str) -> list[float]:
+        out: list[float] = []
+        for bucket in sorted(buckets):
+            pair = self._pairs.get((bucket, a, b))
+            if pair is not None:
+                out.extend(h for _, h in pair.hops)
+        return out
 
     # ------------------------------------------------------------ queries
 
@@ -236,11 +290,13 @@ class ChainModel:
 
     def rename_room(self, old: str, new: str) -> None:
         self._pairs = {
-            (new if a == old else a, new if b == old else b): p
-            for (a, b), p in self._pairs.items()
+            (bucket, new if a == old else a, new if b == old else b): p
+            for (bucket, a, b), p in self._pairs.items()
         }
-        if old in self._steps_into:
-            self._steps_into[new] = self._steps_into.pop(old)
+        self._steps_into = {
+            (bucket, new if room == old else room): c
+            for (bucket, room), c in self._steps_into.items()
+        }
         if old in self._recent:
             self._recent[new] = self._recent.pop(old)
         if self._current_room == old:
@@ -249,8 +305,8 @@ class ChainModel:
             c.rooms = [new if r == old else r for r in c.rooms]
 
     def remove_room(self, room: str) -> None:
-        self._pairs = {k: p for k, p in self._pairs.items() if room not in k}
-        self._steps_into.pop(room, None)
+        self._pairs = {k: p for k, p in self._pairs.items() if room not in (k[1], k[2])}
+        self._steps_into = {k: c for k, c in self._steps_into.items() if k[1] != room}
         self._recent.pop(room, None)
         self._chains = [c for c in self._chains if room not in c.rooms]
         self._runs = {
@@ -279,17 +335,27 @@ class ChainModel:
     def to_dict(self) -> dict[str, Any]:
         return {
             "pairs": [
-                {"a": a, "b": b, "days": dict(p.days), "hops": list(p.hops)}
-                for (a, b), p in self._pairs.items()
+                {
+                    "bucket": bucket,
+                    "a": a,
+                    "b": b,
+                    "days": dict(p.days),
+                    "hops": list(p.hops),
+                }
+                for (bucket, a, b), p in self._pairs.items()
             ],
-            "steps_into": dict(self._steps_into),
-            "total_steps": self._total_steps,
+            "steps_into": [
+                {"bucket": bucket, "room": room, "count": c}
+                for (bucket, room), c in self._steps_into.items()
+            ],
+            "total_steps": {str(b): c for b, c in self._total_steps.items()},
             "current_room": self._current_room,
             "days_seen": sorted(self._days_seen),
             "chains": [
                 {
                     "rooms": c.rooms,
                     "hop_stats": c.hop_stats,
+                    "buckets": sorted(c.buckets),
                     "completions": {k: list(v) for k, v in c.completions.items()},
                 }
                 for c in self._chains
@@ -305,17 +371,21 @@ class ChainModel:
                 for d, c in p.get("days", {}).items():
                     pair.days[str(d)] = int(c)
                 pair.hops.extend((str(d), float(h)) for d, h in p.get("hops", []))
-                m._pairs[(str(p["a"]), str(p["b"]))] = pair
+                m._pairs[(int(p["bucket"]), str(p["a"]), str(p["b"]))] = pair
             m._steps_into = {
-                str(k): int(v) for k, v in data.get("steps_into", {}).items()
+                (int(s["bucket"]), str(s["room"])): int(s["count"])
+                for s in data.get("steps_into", [])
             }
-            m._total_steps = int(data.get("total_steps", 0))
+            m._total_steps = {
+                int(k): int(v) for k, v in data.get("total_steps", {}).items()
+            }
             m._current_room = data.get("current_room")
             m._days_seen = set(data.get("days_seen", []))
             for c in data.get("chains", []):
                 chain = Chain(
                     [str(r) for r in c["rooms"]],
                     [(float(a), float(b)) for a, b in c.get("hop_stats", [])],
+                    {int(b) for b in c.get("buckets", [])},
                 )
                 for k, v in c.get("completions", {}).items():
                     if k in chain.completions:
