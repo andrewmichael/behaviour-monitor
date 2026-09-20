@@ -1,12 +1,24 @@
 from datetime import date, datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.alerts import AlertClass, Severity
-from custom_components.behaviour_monitor.core.events import ActivityEvent, Category, EventKind, HealthEvent
-from custom_components.behaviour_monitor.core.health_tracker import HealthConfig, HealthTracker
+from custom_components.behaviour_monitor.core.events import (
+    ActivityEvent,
+    Category,
+    EventKind,
+    HealthEvent,
+)
+from custom_components.behaviour_monitor.core.health_tracker import (
+    HealthConfig,
+    HealthTracker,
+)
 
 T0 = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
-ENTS = [("binary_sensor.k", Category.MOTION, "Kitchen"), ("binary_sensor.b", Category.MOTION, "Bath"),
-        ("binary_sensor.p", Category.PANIC, "Hall"), ("sensor.kettle", Category.PLUG, "Kitchen")]
+ENTS = [
+    ("binary_sensor.k", Category.MOTION, "Kitchen"),
+    ("binary_sensor.b", Category.MOTION, "Bath"),
+    ("binary_sensor.p", Category.PANIC, "Hall"),
+    ("sensor.kettle", Category.PLUG, "Kitchen"),
+]
 
 
 def _tracker() -> HealthTracker:
@@ -35,10 +47,16 @@ def test_unavailable_beyond_grace_alerts_and_panic_is_high():
     _down(t, "binary_sensor.p", T0)
     alerts = t.evaluate(T0 + timedelta(minutes=16), lambda e: None, None)
     by = {a.source: a for a in alerts}
-    assert by["binary_sensor.k"].kind == "unavailable" and by["binary_sensor.k"].severity is Severity.MEDIUM
+    assert (
+        by["binary_sensor.k"].kind == "unavailable"
+        and by["binary_sensor.k"].severity is Severity.MEDIUM
+    )
     assert by["binary_sensor.p"].severity is Severity.HIGH
     assert all(a.cls is AlertClass.HEALTH for a in alerts)
-    assert t.down_entities(T0 + timedelta(minutes=16)) == {"binary_sensor.k", "binary_sensor.p"}
+    assert t.down_entities(T0 + timedelta(minutes=16)) == {
+        "binary_sensor.k",
+        "binary_sensor.p",
+    }
     assert t.live_fraction(T0 + timedelta(minutes=16)) == 0.5
 
 
@@ -57,21 +75,37 @@ def test_sitewide_dropout_is_one_alert_and_counted():
 
 def test_silent_sensor_needs_house_activity_elsewhere():
     t = _tracker()
-    t.record_activity(ActivityEvent("binary_sensor.k", Category.MOTION, EventKind.PRESENCE, "Kitchen", T0))
-    longest = lambda e: 3600.0 if e == "binary_sensor.k" else None
+    t.record_activity(
+        ActivityEvent(
+            "binary_sensor.k", Category.MOTION, EventKind.PRESENCE, "Kitchen", T0
+        )
+    )
+
+    def longest(e):
+        return 3600.0 if e == "binary_sensor.k" else None
+
     # house quiet too: not the sensor's fault
     assert t.evaluate(T0 + timedelta(hours=4), longest, T0) == []
     # house active after the sensor went quiet
     alerts = t.evaluate(T0 + timedelta(hours=4), longest, T0 + timedelta(hours=3))
-    assert [a.kind for a in alerts] == ["silent"] and alerts[0].source == "binary_sensor.k"
+    assert [a.kind for a in alerts] == ["silent"] and alerts[
+        0
+    ].source == "binary_sensor.k"
     assert alerts[0].details["silent_s"] == 4 * 3600.0
     assert "binary_sensor.k" in t.down_entities(T0 + timedelta(hours=4))
 
 
 def test_panic_is_never_silent_candidate_and_states_exposed():
     t = _tracker()
-    t.record_activity(ActivityEvent("binary_sensor.p", Category.PANIC, EventKind.PANIC_RELEASE, "Hall", T0))
-    assert t.evaluate(T0 + timedelta(days=30), lambda e: 60.0, T0 + timedelta(days=29)) == []
+    t.record_activity(
+        ActivityEvent(
+            "binary_sensor.p", Category.PANIC, EventKind.PANIC_RELEASE, "Hall", T0
+        )
+    )
+    assert (
+        t.evaluate(T0 + timedelta(days=30), lambda e: 60.0, T0 + timedelta(days=29))
+        == []
+    )
     states = t.entity_states(T0)
     assert states == {e: "ok" for e, _, _ in ENTS}
 

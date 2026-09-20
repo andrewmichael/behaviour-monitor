@@ -74,12 +74,15 @@ class HealthTracker:
 
     def _maybe_open_sitewide(self, now: datetime) -> None:
         self._recent_downs = [
-            (e, t) for e, t in self._recent_downs if (now - t).total_seconds() <= self._cfg.sitewide_window_s
+            (e, t)
+            for e, t in self._recent_downs
+            if (now - t).total_seconds() <= self._cfg.sitewide_window_s
         ]
         if not self._ent:
             return
         if (
-            len({e for e, _ in self._recent_downs}) > self._cfg.sitewide_fraction * len(self._ent)
+            len({e for e, _ in self._recent_downs})
+            > self._cfg.sitewide_fraction * len(self._ent)
             and self._sitewide_open is None
         ):
             self._sitewide_open = now
@@ -92,17 +95,25 @@ class HealthTracker:
         return {
             eid
             for eid, e in self._ent.items()
-            if e.down_since is not None and (now - e.down_since).total_seconds() > self._cfg.grace_s
+            if e.down_since is not None
+            and (now - e.down_since).total_seconds() > self._cfg.grace_s
         }
 
     def _silent(
-        self, now: datetime, longest_gap: Callable[[str], float | None], house_last: datetime | None
+        self,
+        now: datetime,
+        longest_gap: Callable[[str], float | None],
+        house_last: datetime | None,
     ) -> dict[str, float]:
         out: dict[str, float] = {}
         if house_last is None:
             return out
         for eid, e in self._ent.items():
-            if e.category is Category.PANIC or e.last_event is None or e.down_since is not None:
+            if (
+                e.category is Category.PANIC
+                or e.last_event is None
+                or e.down_since is not None
+            ):
                 continue
             gap = longest_gap(eid)
             if gap is None or gap <= 0:
@@ -113,7 +124,9 @@ class HealthTracker:
         return out
 
     def down_entities(self, now: datetime) -> set[str]:
-        return self._unavailable(now) | {eid for eid, e in self._ent.items() if e.silent}
+        return self._unavailable(now) | {
+            eid for eid, e in self._ent.items() if e.silent
+        }
 
     def live_fraction(self, now: datetime) -> float:
         if not self._ent:
@@ -164,7 +177,10 @@ class HealthTracker:
                     sev,
                     f"{e.room}: {eid} has been unavailable since {e.down_since:%H:%M}",
                     now,
-                    {"since": e.down_since.isoformat() if e.down_since else None, "room": e.room},
+                    {
+                        "since": e.down_since.isoformat() if e.down_since else None,
+                        "room": e.room,
+                    },
                 )
             )
         silent = self._silent(now, longest_gap, house_last_activity)
@@ -198,7 +214,9 @@ class HealthTracker:
                 }
                 for eid, e in self._ent.items()
             },
-            "sitewide_open": self._sitewide_open.isoformat() if self._sitewide_open else None,
+            "sitewide_open": (
+                self._sitewide_open.isoformat() if self._sitewide_open else None
+            ),
             "sitewide_by_day": dict(self._sitewide_by_day),
         }
 
@@ -214,7 +232,9 @@ class HealthTracker:
                     _dt(e.get("last_event")),
                 )
             t._sitewide_open = _dt(data.get("sitewide_open"))
-            t._sitewide_by_day = {str(k): int(v) for k, v in data.get("sitewide_by_day", {}).items()}
+            t._sitewide_by_day = {
+                str(k): int(v) for k, v in data.get("sitewide_by_day", {}).items()
+            }
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
         return t
