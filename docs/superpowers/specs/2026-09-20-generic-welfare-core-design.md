@@ -21,6 +21,8 @@ kinds of alert that need different handling:
 Goals:
 
 - Six user-assigned entity categories with category-specific event rules.
+- Room context taken from Home Assistant areas, used for chain steps,
+  explanations and a rooms-visited signal, never for inferring meaning.
 - Learning at three levels: whole house, per entity, and ordered chains
   between entities.
 - Detection of routines slowing down over time.
@@ -37,7 +39,8 @@ Non-goals:
 - Multi-occupant modelling. One site is assumed to have one occupant whose
   welfare is monitored. Visitors appear as extra activity and are tolerated.
 - Machine learning beyond running statistics and CUSUM.
-- Room adjacency or floor plans.
+- Room adjacency, floor plans, or any meaning attached to a room's name
+  or type.
 
 ## 3. Evidence from the reference site
 
@@ -55,6 +58,7 @@ lights. Observed over the ten day recorder window:
 | Existing pair-correlation detector stuck on six false positives with over 1000 consecutive misses | Pair correlation replaced by ordered chains |
 | Panic buttons never pressed | Panic liveness is a device health concern, tested synthetically |
 | Raw recorder retention is 10 days; long-term statistics are hourly aggregates only | Bootstrap from recorder, then learn live; fixture exported before it rolls off |
+| No Tuya entity or device has an area; room appears only in some friendly names, and not at all for the kettle or teas maid | Rooms resolved from areas with friendly-name fallback; areas to be assigned on site |
 
 ## 4. Architecture
 
@@ -85,7 +89,7 @@ Home Assistant and does no analysis of its own.
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `core/events.py` | `ActivityEvent`, `HealthEvent`, `Category`, `EventKind` dataclasses and enums | nothing |
+| `core/events.py` | `ActivityEvent` (with `room`), `HealthEvent`, `Category`, `EventKind` dataclasses and enums | nothing |
 | `core/normaliser.py` | Raw state to typed events, per-category rules, debounce, plug idle learning | events |
 | `core/house_model.py` | Whole-house gap distribution per weekday-hour slot; welfare signal | events |
 | `core/entity_routine.py` | Per-entity slot statistics, expected windows, longest gap; lifted from `routine_model.py` | events |
@@ -94,7 +98,7 @@ Home Assistant and does no analysis of its own.
 | `core/health_tracker.py` | Unavailable, site-wide dropout, silent sensor, panic liveness, blind spots | events, entity_routine |
 | `core/alerts.py` | `Alert`, `AlertClass`, `Severity` | nothing |
 | `core/alert_router.py` | Open alert set, de-duplication, escalation, promotion, delivery actions | alerts |
-| `coordinator.py` | Subscribe, bootstrap, feed, poll, persist, perform delivery actions | all of the above, HA |
+| `coordinator.py` | Subscribe, bootstrap, resolve rooms from the area registry, feed, poll, persist, perform delivery actions | all of the above, HA |
 
 `acute_detector.py` and `correlation_detector.py` are deleted. Their
 useful behaviour lives in `house_model.py` and `chain_model.py`.
@@ -135,6 +139,24 @@ Plug idle learning: the normaliser keeps, per numeric plug, a bounded
 reservoir of recent readings. Idle is the median of the lowest quintile.
 On is `reading > idle + plug_margin_w`. Until the reservoir holds
 `plug_min_samples` readings, idle is taken as the minimum seen so far.
+
+### 5.1 Rooms
+
+Every `ActivityEvent` carries a `room` string. The coordinator resolves
+it from the entity's area, falling back to the area of the entity's
+device, and finally to the entity's friendly name so an entity with no
+area is a room of one. Resolution happens outside the core; the
+normaliser receives `room` as an argument alongside the state, so the
+core stays free of Home Assistant imports.
+
+Rooms are re-resolved when the entity or area registry changes. A room
+rename or reassignment does not reset learning: chain nodes are keyed by
+room name, so the chain model maps the old name to the new one on the
+next nightly recompute and keeps its counts.
+
+Rooms are used for exactly three things: chain nodes (6.3),
+rooms-visited-per-day (6.4), and explanation text (7). The models never
+attach meaning to a room's name or type.
 
 ## 6. Learning models
 
@@ -186,19 +208,26 @@ Exposes `longest_gap(entity_id)` for the health tracker and
 
 ### 6.3 Chain model
 
-Learns ordered pairs. For each activity event B, every entity A whose
-last event was within `chain_window_s` (default 900) before B gets the
-pair (A, B) incremented, with the hop duration stored. A pair is
+Nodes are rooms, not entities. An event in room B is a step only if the
+previous activity event was in a different room; consecutive events in
+the same room extend the current step rather than starting one. So the
+kitchen PIR followed by the kettle is one step, and back bedroom,
+bathroom, kitchen is a three-step chain satisfied by any sensor in each
+room.
+
+Learns ordered pairs of rooms. For each step into room B, every room A
+whose last step was within `chain_window_s` (default 900) before B gets
+the pair (A, B) incremented, with the hop duration stored. A pair is
 significant when its count is at least `chain_min_count` (default 10)
 and `P(B follows A) > P(B in any window) * chain_lift` (default 2.0).
 
-Chains are assembled by starting at any entity with no significant
+Chains are assembled by starting at any room with no significant
 predecessor and following the strongest significant successor until none
 remains or a cycle would form. Chains are recomputed nightly and stored.
-Each chain has a name built from its member entities' friendly names in
-order.
+Each chain is named from its member rooms in order.
 
-Live tracking: when a chain's first entity fires, a run opens. Each
+Live tracking: when a step into a chain's first room occurs, a run
+opens. Each
 subsequent step must arrive within the learned hop median plus three
 deviations. A run whose next step does not arrive in time is a stall,
 which produces a routine note naming the chain and the missing step. A
@@ -210,7 +239,8 @@ The existing CUSUM implementation, moved into `core/`, with two inputs
 per day:
 
 - daily activity count per entity, as today;
-- completion time per chain, split weekday and weekend.
+- completion time per chain, split weekday and weekend;
+- distinct rooms with at least one activity event per day.
 
 Each series has its own CUSUM state. A shift that persists for
 `drift_min_days` (default 3) is reported as a statistical alert with the
@@ -242,7 +272,7 @@ class Alert:
     severity: Severity  # LOW | MEDIUM | HIGH | CRITICAL
     source: str         # entity_id, chain name or "house"
     kind: str           # inactivity, panic, stall, drift, unavailable ...
-    explanation: str
+    explanation: str    # uses room names, e.g. "No activity in the kitchen since 08:10"
     raised_at: datetime
     details: dict
 ```
@@ -334,7 +364,8 @@ Entities per config entry:
 - `sensor.<site>_learning`: percent; attributes per-model confidence,
   days remaining, first observation.
 - `sensor.<site>_entity_status`: summary; attribute per entity with
-  category, last seen, expected windows, health.
+  category, room, last seen, expected windows, health.
+- `sensor.<site>_house_activity` also lists rooms visited today.
 - `sensor.<site>_last_activity`, `sensor.<site>_daily_activity_count`,
   `sensor.<site>_last_notification`.
 - `switch.<site>_holiday_mode`, `select.<site>_snooze`,
@@ -352,7 +383,7 @@ Core tests import nothing from Home Assistant.
 Fixtures under `tests/fixtures/`:
 
 - `site_real_10d.jsonl`: the Biddulph recorder export, entity ids
-  replaced with generic names, categories in a sidecar file. Exported
+  replaced with generic names, categories and rooms in a sidecar file. Exported
   before the recorder purges it.
 - Synthetic: panic press; front door first open; silent kitchen PIR
   with activity elsewhere; site-wide dropout; morning chain that stalls
@@ -385,3 +416,5 @@ do, nothing is monitored and the welfare sensor reports `unconfigured`.
 - CUSUM is reused for timing drift rather than adding a new detector.
 - Panic bypasses every model and every suppression.
 - Delivery is decided by class alone so the rule fits in one table.
+- Rooms come from Home Assistant areas, never from entity names. Chain
+  nodes are rooms so same-room sensors collapse into one step.
