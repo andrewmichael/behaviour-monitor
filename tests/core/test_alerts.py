@@ -14,7 +14,15 @@ def test_severity_ordering_and_bump():
 
 
 def test_alert_key_and_to_dict():
-    a = Alert(AlertClass.WELFARE, "house", "inactivity", Severity.MEDIUM, "No activity", TS, {"ratio": 6.2})
+    a = Alert(
+        AlertClass.WELFARE,
+        "house",
+        "inactivity",
+        Severity.MEDIUM,
+        "No activity",
+        TS,
+        {"ratio": 6.2},
+    )
     assert a.key == "welfare:house:inactivity"
     d = a.to_dict()
     assert d["class"] == "welfare"

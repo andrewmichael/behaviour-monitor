@@ -25,15 +25,26 @@ def test_activity_kinds_are_the_person_signals():
 
 
 def test_activity_event_is_activity_property():
-    ev = ActivityEvent("binary_sensor.k", Category.MOTION, EventKind.PRESENCE, "Kitchen", TS)
+    ev = ActivityEvent(
+        "binary_sensor.k", Category.MOTION, EventKind.PRESENCE, "Kitchen", TS
+    )
     assert ev.is_activity is True
-    off = ActivityEvent("binary_sensor.d", Category.CONTACT, EventKind.CLOSE, "Hall", TS, duration_s=12.0)
+    off = ActivityEvent(
+        "binary_sensor.d",
+        Category.CONTACT,
+        EventKind.CLOSE,
+        "Hall",
+        TS,
+        duration_s=12.0,
+    )
     assert off.is_activity is False
     assert off.duration_s == 12.0
 
 
 def test_panic_event_defaults_bypass_false_and_health_event_shape():
-    ev = ActivityEvent("binary_sensor.p", Category.PANIC, EventKind.PANIC, "Hall", TS, bypass=True)
+    ev = ActivityEvent(
+        "binary_sensor.p", Category.PANIC, EventKind.PANIC, "Hall", TS, bypass=True
+    )
     assert ev.bypass is True
     he = HealthEvent("binary_sensor.p", Category.PANIC, "Hall", TS, available=False)
     assert he.available is False
