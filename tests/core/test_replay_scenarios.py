@@ -132,4 +132,6 @@ def test_replay_cli_runs(tmp_path, builder, capsys):
     from replay import main
 
     assert main([str(path)]) == 0
-    assert capsys.readouterr().out.count("\n") >= 0
+    out = capsys.readouterr().out
+    if builder is synth.panic_press:
+        assert "push" in out and "panic" in out
