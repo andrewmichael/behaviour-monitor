@@ -1,144 +1,85 @@
-"""Constants for the Behaviour Monitor integration."""
+"""Constants for the Behaviour Monitor integration (v5)."""
 
-from enum import Enum
+from __future__ import annotations
+
 from typing import Final
 
 DOMAIN: Final = "behaviour_monitor"
-
-# Configuration keys
-CONF_MONITORED_ENTITIES: Final = "monitored_entities"
-CONF_ENABLE_NOTIFICATIONS: Final = "enable_notifications"
-CONF_NOTIFY_SERVICES: Final = "notify_services"
-CONF_NOTIFICATION_COOLDOWN: Final = "notification_cooldown"
-CONF_MIN_NOTIFICATION_SEVERITY: Final = "min_notification_severity"
-
-# New v1.1 config keys
-CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
-CONF_INACTIVITY_MULTIPLIER: Final = "inactivity_multiplier"
-CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
-
-# New v2.9 config keys
-CONF_LEARNING_PERIOD: Final = "learning_period"
-CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
-
-# New v4.1 config keys (per-entity overrides of track_attributes)
-CONF_TRACK_ATTRIBUTES_INCLUDE: Final = "track_attributes_include"
-CONF_TRACK_ATTRIBUTES_EXCLUDE: Final = "track_attributes_exclude"
-
-# New v3.0 config keys
-CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
-CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
-CONF_MAX_INACTIVITY_MULTIPLIER: Final = "max_inactivity_multiplier"
-
-# New v3.1 config keys
-CONF_ACTIVITY_TIER_OVERRIDE: Final = "activity_tier_override"
-
-# New v3.0 defaults
-DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240  # minutes (4 hours)
-DEFAULT_MIN_INACTIVITY_MULTIPLIER: Final = 1.5
-DEFAULT_MAX_INACTIVITY_MULTIPLIER: Final = 10.0
-
-# New v3.1 defaults
-DEFAULT_ACTIVITY_TIER_OVERRIDE: Final = "auto"
-
-# Sensitivity levels
-SENSITIVITY_LOW: Final = "low"
-SENSITIVITY_MEDIUM: Final = "medium"
-SENSITIVITY_HIGH: Final = "high"
-
-# Default values
-DEFAULT_ENABLE_NOTIFICATIONS: Final = True
-DEFAULT_NOTIFY_SERVICES: Final = []  # Empty = persistent_notification only
-DEFAULT_NOTIFICATION_COOLDOWN: Final = 30  # minutes
-DEFAULT_MIN_NOTIFICATION_SEVERITY: Final = "significant"
-
-# New v1.1 defaults
-DEFAULT_HISTORY_WINDOW_DAYS: Final = 28  # days
-DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
-DEFAULT_LEARNING_PERIOD_DAYS: Final = 7  # days
-DEFAULT_TRACK_ATTRIBUTES: Final = False
-
-# New v4.1 defaults
-DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []  # Entities that always track attributes
-DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []  # Entities that never track attributes
-
-# Storage
+VERSION: Final = "5.0.0"
+CONFIG_VERSION: Final = 11
 STORAGE_KEY: Final = "behaviour_monitor"
-STORAGE_VERSION: Final = 10
+STORAGE_VERSION: Final = 11
+UPDATE_INTERVAL: Final = 60  # seconds
+SAVE_DEBOUNCE_S: Final = 30
 
-# Update interval (seconds)
-UPDATE_INTERVAL: Final = 60
+# Setup-step config keys
+CONF_SITE_NAME: Final = "site_name"
+CONF_NOTIFY_SERVICE: Final = "notify_service"
+CONF_MOTION_ENTITIES: Final = "motion_entities"
+CONF_CONTACT_ENTITIES: Final = "contact_entities"
+CONF_PLUG_ENTITIES: Final = "plug_entities"
+CONF_PANIC_ENTITIES: Final = "panic_entities"
+CONF_LIGHT_ENTITIES: Final = "light_entities"
+CONF_OTHER_ENTITIES: Final = "other_entities"
 
-# Sensor attributes
-ATTR_LAST_UPDATED: Final = "last_updated"
-ATTR_MONITORED_ENTITIES: Final = "monitored_entities"
-ATTR_LEARNING_PROGRESS: Final = "learning_progress"
-ATTR_ANOMALY_DETAILS: Final = "anomaly_details"
-ATTR_ML_STATUS: Final = "ml_status"
-ATTR_LAST_RETRAIN: Final = "last_retrain"
-
-# Elder care severity levels
-SEVERITY_NORMAL: Final = "normal"
-SEVERITY_MINOR: Final = "minor"
-SEVERITY_MODERATE: Final = "moderate"
-SEVERITY_SIGNIFICANT: Final = "significant"
-SEVERITY_CRITICAL: Final = "critical"
-
-WELFARE_DEBOUNCE_CYCLES: Final = 3  # consecutive update cycles before welfare notification fires (~3 min at 60s interval)
-
-# Elder care attributes
-ATTR_SEVERITY: Final = "severity"
-ATTR_TIME_SINCE_ACTIVITY: Final = "time_since_activity"
-ATTR_TYPICAL_INTERVAL: Final = "typical_interval"
-ATTR_ROUTINE_PROGRESS: Final = "routine_progress"
-ATTR_EXPECTED_BY_NOW: Final = "expected_by_now"
-ATTR_ACTUAL_TODAY: Final = "actual_today"
-ATTR_TREND: Final = "trend"
-ATTR_CONSECUTIVE_LOW_DAYS: Final = "consecutive_low_days"
-ATTR_ENTITY_STATUS: Final = "entity_status"
-ATTR_LAST_ACTIVITY_CONTEXT: Final = "last_activity_context"
-ATTR_WELFARE_STATUS: Final = "welfare_status"
-
-# Welfare status levels
-WELFARE_OK: Final = "ok"
-WELFARE_CHECK: Final = "check_recommended"
-WELFARE_CONCERN: Final = "concern"
-WELFARE_ALERT: Final = "alert"
-
-# Holiday mode and snooze
-ATTR_HOLIDAY_MODE: Final = "holiday_mode"
-ATTR_SNOOZE_UNTIL: Final = "snooze_until"
-ATTR_SNOOZE_ACTIVE: Final = "snooze_active"
-
-# Snooze duration options
-SNOOZE_OFF: Final = "off"
-SNOOZE_1_HOUR: Final = "1_hour"
-SNOOZE_2_HOURS: Final = "2_hours"
-SNOOZE_4_HOURS: Final = "4_hours"
-SNOOZE_1_DAY: Final = "1_day"
-
-SNOOZE_DURATIONS: Final = {
-    SNOOZE_OFF: 0,
-    SNOOZE_1_HOUR: 3600,      # 1 hour in seconds
-    SNOOZE_2_HOURS: 7200,     # 2 hours
-    SNOOZE_4_HOURS: 14400,    # 4 hours
-    SNOOZE_1_DAY: 86400,      # 24 hours
+CATEGORY_CONF_KEYS: Final[dict[str, str]] = {
+    "motion": CONF_MOTION_ENTITIES,
+    "contact": CONF_CONTACT_ENTITIES,
+    "plug": CONF_PLUG_ENTITIES,
+    "panic": CONF_PANIC_ENTITIES,
+    "light": CONF_LIGHT_ENTITIES,
+    "other": CONF_OTHER_ENTITIES,
 }
 
-SNOOZE_OPTIONS: Final = [
-    SNOOZE_OFF,
-    SNOOZE_1_HOUR,
-    SNOOZE_2_HOURS,
-    SNOOZE_4_HOURS,
-    SNOOZE_1_DAY,
-]
+# Options-step keys (names match EngineConfig.from_options)
+CONF_MOTION_DEBOUNCE_S: Final = "motion_debounce_s"
+CONF_PLUG_MARGIN_W: Final = "plug_margin_w"
+CONF_LEARNING_DAYS: Final = "learning_days"
+CONF_WINDOW_DAYS: Final = "window_days"
+CONF_HEALTH_GRACE_S: Final = "health_grace_s"
+CONF_PUSH_REPEAT_S: Final = "push_repeat_s"
+CONF_PUSH_MIN_SEVERITY: Final = "push_min_severity"
+CONF_HOUSE_LOW_RATIO: Final = "house_low_ratio"
+CONF_CHAIN_WINDOW_S: Final = "chain_window_s"
+CONF_TIMING_PROMOTE_DAYS: Final = "timing_promote_days"
+CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
 
+OPTION_DEFAULTS: Final[dict[str, int | str]] = {
+    CONF_MOTION_DEBOUNCE_S: 90,
+    CONF_PLUG_MARGIN_W: 5,
+    CONF_LEARNING_DAYS: 14,
+    CONF_WINDOW_DAYS: 28,
+    CONF_HEALTH_GRACE_S: 900,
+    CONF_PUSH_REPEAT_S: 1800,
+    CONF_PUSH_MIN_SEVERITY: "medium",
+    CONF_HOUSE_LOW_RATIO: 3,
+    CONF_CHAIN_WINDOW_S: 1800,
+    CONF_TIMING_PROMOTE_DAYS: 7,
+    CONF_DRIFT_SENSITIVITY: "medium",
+}
+
+SEVERITY_OPTIONS: Final = ["low", "medium", "high", "critical"]
+SENSITIVITY_OPTIONS: Final = ["low", "medium", "high"]
+
+# Legacy (v10) key kept only for migration
+LEGACY_CONF_MONITORED_ENTITIES: Final = "monitored_entities"
+
+# Snooze
+SNOOZE_OFF: Final = "off"
+SNOOZE_DURATIONS: Final = {
+    SNOOZE_OFF: 0,
+    "1_hour": 3600,
+    "2_hours": 7200,
+    "4_hours": 14400,
+    "1_day": 86400,
+}
+SNOOZE_OPTIONS: Final = list(SNOOZE_DURATIONS)
 SNOOZE_LABELS: Final = {
     SNOOZE_OFF: "Off",
-    SNOOZE_1_HOUR: "1 Hour",
-    SNOOZE_2_HOURS: "2 Hours",
-    SNOOZE_4_HOURS: "4 Hours",
-    SNOOZE_1_DAY: "1 Day",
+    "1_hour": "1 Hour",
+    "2_hours": "2 Hours",
+    "4_hours": "4 Hours",
+    "1_day": "1 Day",
 }
 
 # Services
@@ -146,78 +87,40 @@ SERVICE_ENABLE_HOLIDAY_MODE: Final = "enable_holiday_mode"
 SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
-SERVICE_ROUTINE_RESET: Final = "routine_reset"
+SERVICE_ACKNOWLEDGE: Final = "acknowledge"
+SERVICE_RESET_LEARNING: Final = "reset_learning"
+SERVICE_TEST_PANIC: Final = "test_panic"
 
-# ---------------------------------------------------------------------------
-# Detection engine constants (v1.1)
-# ---------------------------------------------------------------------------
+# Repair issue ids
+ISSUE_ASSIGN_CATEGORIES: Final = "assign_categories"
+ISSUE_HEALTH_PREFIX: Final = "health_"
 
-# Number of consecutive polling cycles evidence must persist before an alert fires
-SUSTAINED_EVIDENCE_CYCLES: Final = 3
+# Events
+EVENT_LOGBOOK: Final = "logbook_entry"
 
-# Minimum days of observations before drift detection activates
-MIN_EVIDENCE_DAYS: Final = 3
-
-# Minimum routine confidence before unusual-time alerts fire (Pitfall 6 guard)
-MINIMUM_CONFIDENCE_FOR_UNUSUAL_TIME: Final = 0.3
-
-# CUSUM parameters (k=allowance, h=threshold) keyed by sensitivity level
-# high=(0.25, 2.0): sensitive to small shifts; low=(1.0, 6.0): only large shifts
-CUSUM_PARAMS: Final = {
-    "high": (0.25, 2.0),
-    "medium": (0.5, 4.0),
-    "low": (1.0, 6.0),
-}
-
-# ---------------------------------------------------------------------------
-# Activity-rate tier classification (v3.1)
-# ---------------------------------------------------------------------------
-
-
-class ActivityTier(Enum):
-    """Frequency tier for entity activity classification."""
-
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-# Tier boundary thresholds (events per day)
-# >= TIER_BOUNDARY_HIGH -> HIGH tier
-# <= TIER_BOUNDARY_LOW  -> LOW tier
-# between -> MEDIUM tier
-TIER_BOUNDARY_HIGH: Final = 24
-TIER_BOUNDARY_LOW: Final = 4
-
-# Absolute minimum inactivity floor per tier (seconds)
-# Prevents sub-minute alert thresholds on high-frequency entities
-TIER_FLOOR_SECONDS: Final = {
-    ActivityTier.HIGH: 3600,  # 1 hour — conservative floor for chatty sensors
-    ActivityTier.MEDIUM: 1800,  # 30 minutes
-    ActivityTier.LOW: 0,  # no floor — use multiplier arithmetic as-is
-}
-
-# Multiplier boost factor per tier (applied on top of user's inactivity_multiplier)
-TIER_BOOST_FACTOR: Final = {
-    ActivityTier.HIGH: 2.0,  # double the effective multiplier for chatty sensors
-    ActivityTier.MEDIUM: 1.0,  # no boost
-    ActivityTier.LOW: 1.0,  # no boost
-}
-
-# ---------------------------------------------------------------------------
-# Cross-entity correlation (v4.0)
-# ---------------------------------------------------------------------------
-
-# Config key for user-facing correlation time window
+# Temporary stubs for v4 constants (to allow __init__.py to import)
+# These will be removed when __init__.py is rewritten in Task 5
+CONF_ACTIVITY_TIER_OVERRIDE: Final = "activity_tier_override"
+CONF_ALERT_REPEAT_INTERVAL: Final = "alert_repeat_interval"
 CONF_CORRELATION_WINDOW: Final = "correlation_window"
-
-# Default correlation window in seconds (per D-03: 120s = 2 minutes)
+CONF_HISTORY_WINDOW_DAYS: Final = "history_window_days"
+CONF_INACTIVITY_MULTIPLIER: Final = "inactivity_multiplier"
+CONF_LEARNING_PERIOD: Final = "learning_period"
+CONF_MAX_INACTIVITY_MULTIPLIER: Final = "max_inactivity_multiplier"
+CONF_MIN_INACTIVITY_MULTIPLIER: Final = "min_inactivity_multiplier"
+CONF_TRACK_ATTRIBUTES: Final = "track_attributes"
+CONF_TRACK_ATTRIBUTES_EXCLUDE: Final = "track_attributes_exclude"
+CONF_TRACK_ATTRIBUTES_INCLUDE: Final = "track_attributes_include"
+DEFAULT_ACTIVITY_TIER_OVERRIDE: Final = "auto"
+DEFAULT_ALERT_REPEAT_INTERVAL: Final = 240
 DEFAULT_CORRELATION_WINDOW: Final = 120
-
-# Internal correlation constants (not user-facing config)
-# Minimum co-occurrences before a pair is considered for correlation
-MIN_CO_OCCURRENCES: Final = 10
-
-# PMI threshold — pairs with PMI > this are considered correlated
-# PMI > 1.0 means 2x more likely than chance (medium-confidence, tunable)
-PMI_THRESHOLD: Final[float] = 1.0
+DEFAULT_HISTORY_WINDOW_DAYS: Final = 28
+DEFAULT_INACTIVITY_MULTIPLIER: Final = 3.0
+DEFAULT_LEARNING_PERIOD_DAYS: Final = 7
+DEFAULT_MAX_INACTIVITY_MULTIPLIER: Final = 10.0
+DEFAULT_MIN_INACTIVITY_MULTIPLIER: Final = 1.5
+DEFAULT_TRACK_ATTRIBUTES: Final = False
+DEFAULT_TRACK_ATTRIBUTES_EXCLUDE: Final[list[str]] = []
+DEFAULT_TRACK_ATTRIBUTES_INCLUDE: Final[list[str]] = []
+SENSITIVITY_MEDIUM: Final = "medium"
+SERVICE_ROUTINE_RESET: Final = "routine_reset"

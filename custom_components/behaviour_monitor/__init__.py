@@ -42,7 +42,8 @@ from .const import (
     SERVICE_SNOOZE,
     SNOOZE_DURATIONS,
 )
-from .coordinator import BehaviourMonitorCoordinator
+# from .coordinator import BehaviourMonitorCoordinator  # TODO: Task 5 will restore this
+BehaviourMonitorCoordinator = None  # Stub for now
 
 _LOGGER = logging.getLogger(__name__)
 
