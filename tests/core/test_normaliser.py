@@ -212,6 +212,21 @@ def test_numeric_plug_learns_idle_and_fires_on_rise():
     assert ev[0].kind == EventKind.APPLIANCE_OFF and ev[0].duration_s == 60.0
 
 
+def test_first_numeric_plug_reading_above_margin_fires():
+    n = Normaliser(NormaliserConfig(plug_min_samples=10, plug_margin_w=5.0))
+    # a kettle first seen mid-boil is the person, not the plug's idle level
+    ev = n.handle("sensor.kettle", Category.PLUG, "Kitchen", None, "2800", _t(0))
+    assert [e.kind for e in ev[1:]] == [EventKind.APPLIANCE_ON]
+    ev = n.handle("sensor.kettle", Category.PLUG, "Kitchen", "2800", "0", _t(120))
+    assert ev[0].kind == EventKind.APPLIANCE_OFF and ev[0].duration_s == 120.0
+    # a TV first seen on standby fires once, then goes off as idle is learned
+    n2 = Normaliser(NormaliserConfig(plug_min_samples=10, plug_margin_w=5.0))
+    ev = n2.handle("sensor.tv", Category.PLUG, "Backroom", None, "85", _t(0))
+    assert [e.kind for e in ev[1:]] == [EventKind.APPLIANCE_ON]
+    ev = n2.handle("sensor.tv", Category.PLUG, "Backroom", "85", "86", _t(10))
+    assert ev[0].kind == EventKind.APPLIANCE_OFF
+
+
 def test_numeric_plug_before_min_samples_uses_minimum_seen():
     n = Normaliser(NormaliserConfig(plug_min_samples=10, plug_margin_w=5.0))
     assert n.handle(

@@ -124,7 +124,12 @@ class Normaliser:
             # other is only ever a change between two real states
             return []
         if category is Category.PLUG and new not in (_ON, _OFF):
-            return self._plug(eid, room, "", new, ts)
+            # The reservoir holds only this reading, so a learned idle would be
+            # the reading itself and a kettle first seen mid-boil would never
+            # register. Judge it against a zero idle instead: a plug first seen
+            # at its standby level fires once and goes off again as soon as the
+            # learned idle catches up.
+            return self._plug(eid, room, "", new, ts, idle_override=0.0)
         if new != _ON:
             return []
         handler = {
@@ -233,7 +238,13 @@ class Normaliser:
         return [ActivityEvent(eid, Category.OTHER, EventKind.GENERIC, room, ts)]
 
     def _plug(
-        self, eid: str, room: str, old: str, new: str, ts: datetime
+        self,
+        eid: str,
+        room: str,
+        old: str,
+        new: str,
+        ts: datetime,
+        idle_override: float | None = None,
     ) -> list[ActivityEvent]:
         if new in (_ON, _OFF):
             return self._plug_switch(eid, room, new, ts)
@@ -246,7 +257,7 @@ class Normaliser:
             state = _PlugState(deque(maxlen=self._cfg.plug_reservoir))
             self._plugs[eid] = state
         state.reservoir.append(value)
-        idle = self._idle(state)
+        idle = self._idle(state) if idle_override is None else idle_override
         threshold = idle + self._cfg.plug_margin_w
         if state.on_since is None and value > threshold:
             state.on_since = ts
