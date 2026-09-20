@@ -16,7 +16,7 @@
 
 - The coordinator is the only file that imports both Home Assistant and `core`. Platforms import the coordinator only.
 - Config entry version becomes 11. Store version becomes 11 and a v10 store is discarded.
-- Option keys and defaults match the spec's table exactly: `motion_debounce_s` 90, `plug_margin_w` 5, `learning_days` 14, `window_days` 28, `health_grace_s` 900, `push_repeat_s` 1800, `push_min_severity` medium, `house_low_ratio` 3, `chain_window_s` 900, `timing_promote_days` 7, `drift_sensitivity` medium.
+- Option keys and defaults match the spec's table exactly: `motion_debounce_s` 90, `plug_margin_w` 5, `learning_days` 14, `window_days` 28, `health_grace_s` 900, `push_repeat_s` 1800, `push_min_severity` medium, `house_low_ratio` 3, `chain_window_s` 1800, `timing_promote_days` 7, `drift_sensitivity` medium.
 - Category config keys: `motion_entities`, `contact_entities`, `plug_entities`, `panic_entities`, `light_entities`, `other_entities`. Plus `site_name` and `notify_service`.
 - Manifest version 5.0.0. Device `sw_version` reads from one constant `VERSION` in `const.py`; no hard-coded version strings in platforms.
 - Black 88, ruff clean, conventional commits, run `venv/bin/python -m pytest tests/ -q` before each commit.
@@ -72,7 +72,7 @@ def test_option_defaults_match_spec():
         "push_repeat_s": 1800,
         "push_min_severity": "medium",
         "house_low_ratio": 3,
-        "chain_window_s": 900,
+        "chain_window_s": 1800,
         "timing_promote_days": 7,
         "drift_sensitivity": "medium",
     }
@@ -151,7 +151,7 @@ OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_PUSH_REPEAT_S: 1800,
     CONF_PUSH_MIN_SEVERITY: "medium",
     CONF_HOUSE_LOW_RATIO: 3,
-    CONF_CHAIN_WINDOW_S: 900,
+    CONF_CHAIN_WINDOW_S: 1800,
     CONF_TIMING_PROMOTE_DAYS: 7,
     CONF_DRIFT_SENSITIVITY: "medium",
 }

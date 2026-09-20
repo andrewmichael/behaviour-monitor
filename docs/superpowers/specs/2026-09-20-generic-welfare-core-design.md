@@ -228,7 +228,7 @@ bathroom, kitchen is a three-step chain satisfied by any sensor in each
 room.
 
 Learns ordered pairs of rooms. For each step into room B, every room A
-whose last step was within `chain_window_s` (default 900) before B gets
+whose last step was within `chain_window_s` (default 1800) before B gets
 the pair (A, B) incremented, with the hop duration stored. A pair is
 significant when its count is at least `chain_min_count` (default 10)
 and `P(B follows A) > P(B in any window) * chain_lift` (default 2.0).
@@ -360,7 +360,7 @@ notify service. Options step, all with defaults:
 | push_repeat_s | 1800 |
 | push_min_severity | medium |
 | house_low_ratio | 3 |
-| chain_window_s | 900 |
+| chain_window_s | 1800 |
 | timing_promote_days | 7 |
 | drift_sensitivity | medium |
 
