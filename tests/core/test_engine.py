@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from custom_components.behaviour_monitor.core.alerts import Severity
+from custom_components.behaviour_monitor.core.alerts import (
+    Alert,
+    AlertClass,
+    Severity,
+)
 from custom_components.behaviour_monitor.core.engine import (
     Engine,
     EngineConfig,
@@ -69,6 +73,29 @@ def test_learn_only_produces_no_actions_and_snapshot_reports_learning():
     )
     _train(e, days=3)
     assert e.snapshot(MON + timedelta(days=3))["learning"]["days_remaining"] == 11
+
+
+def test_no_silent_alerts_while_learning():
+    """longest_gap only means "the longest so far" until learning is done, so
+    an entity idling longer than it ever has looks broken on day one.
+
+    The bathroom is used twice each morning and the kitchen keeps the house
+    awake all day, so from mid-morning the bathroom has been quiet for far
+    more than three times its one-hour learned gap.
+    """
+    e = _engine(learning_days=14)
+    actions = []
+    for d in range(3):
+        day = MON + timedelta(days=d)
+        _pulse(e, "binary_sensor.bath", day + timedelta(hours=7))
+        _pulse(e, "binary_sensor.bath", day + timedelta(hours=8))
+        t = day + timedelta(hours=8, minutes=30)
+        while t < day + timedelta(hours=20):
+            _pulse(e, "binary_sensor.kit", t)
+            t += timedelta(minutes=30)
+        actions += e.poll(day + timedelta(hours=21))
+    actions += e.poll(MON + timedelta(days=2, hours=22))
+    assert [a.alert.source for a in actions if a.alert.kind == "silent"] == []
 
 
 def test_daytime_silence_raises_welfare_after_training():
@@ -210,7 +237,21 @@ def test_from_dict_drops_entities_no_longer_configured():
 def test_round_trip():
     e = _engine()
     _train(e, days=5)
+    # yesterday's drift alerts are resubmitted on every poll, so losing them
+    # across a restart silently clears and re-raises them
+    e._last_stat = [
+        Alert(
+            AlertClass.STATISTICAL,
+            "count:binary_sensor.kit",
+            "drift",
+            Severity.MEDIUM,
+            "sustained increase for 4 days",
+            MON + timedelta(days=5),
+            {"direction": "increase", "days": 4},
+        )
+    ]
     e2 = Engine.from_dict(e.to_dict(), EngineConfig.from_options({}), ENTS)
+    assert [a.to_dict() for a in e2._last_stat] == [a.to_dict() for a in e._last_stat]
     assert e2.snapshot(MON + timedelta(days=5)) == e.snapshot(MON + timedelta(days=5))
     assert (
         Engine.from_dict({"junk": 1}, EngineConfig.from_options({}), ENTS).snapshot(

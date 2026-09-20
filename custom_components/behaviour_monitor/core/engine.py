@@ -22,6 +22,11 @@ from .slots import confidence, iso_day
 SCHEMA_VERSION = 2
 
 
+def _no_gap(entity_id: str) -> float | None:
+    """Stand-in for longest_gap while the models are still learning."""
+    return None
+
+
 @dataclass(frozen=True)
 class EntitySpec:
     entity_id: str
@@ -254,13 +259,19 @@ class Engine:
                 self._drift.prune(cutoff)
             self._last_poll_day = now.date()
 
+        learned = confidence(self._days_seen(), self._cfg.learning_days) >= 1.0
         alerts: list[Alert] = []
         alerts.extend(
             self._health.evaluate(
-                now, self._routines.longest_gap, self._house.last_activity
+                now,
+                # Before the learning period is up, "longest gap" only means
+                # "longest so far", so the first time any entity idles longer
+                # than it has before it looks silent. Withhold the measure
+                # until it means something.
+                self._routines.longest_gap if learned else _no_gap,
+                self._house.last_activity,
             )
         )
-        learned = confidence(self._days_seen(), self._cfg.learning_days) >= 1.0
         if self._holiday:
             assessment = HouseAssessment(
                 None, None, None, None, False, self._house.last_room
@@ -304,31 +315,36 @@ class Engine:
         multi-day poll gap walks past with genuinely nothing recorded), so an
         empty day never gets written into drift as a false zero.
         """
-        if not self._house.rooms_visited(day):
-            return
-        for eid, count in self._routines.daily_counts(day).items():
-            self._drift.record(f"count:{eid}", day, float(count), split_day_type=True)
-        for eid, med in self._routines.daily_duration_medians(day).items():
-            spec = self._specs.get(eid)
-            key = "open" if spec and spec.category is Category.CONTACT else "dwell"
-            self._drift.record(f"{key}:{eid}", day, med)
-        for name, secs in self._chains.completions_for_day(day).items():
-            self._drift.record(f"chain:{name}", day, secs, split_day_type=True)
-        self._drift.record(
-            "rooms",
-            day,
-            float(len(self._house.rooms_visited(day))),
-            split_day_type=True,
-        )
+        if self._house.rooms_visited(day):
+            for eid, count in self._routines.daily_counts(day).items():
+                self._drift.record(
+                    f"count:{eid}", day, float(count), split_day_type=True
+                )
+            for eid, med in self._routines.daily_duration_medians(day).items():
+                spec = self._specs.get(eid)
+                key = "open" if spec and spec.category is Category.CONTACT else "dwell"
+                self._drift.record(f"{key}:{eid}", day, med)
+            for name, secs in self._chains.completions_for_day(day).items():
+                self._drift.record(f"chain:{name}", day, secs, split_day_type=True)
+            self._drift.record(
+                "rooms",
+                day,
+                float(len(self._house.rooms_visited(day))),
+                split_day_type=True,
+            )
+        # Always reassign: a day with nothing to say must clear yesterday's
+        # alerts rather than leave them being resubmitted every poll.
         self._last_stat = self._drift.check(day, now)
 
     # ------------------------------------------------------------ snapshot
 
     def _days_seen(self) -> int:
-        if self._first_observation is None:
-            return 0
-        last = self._last_poll_day or self._first_observation.date()
-        return max(0, (last - self._first_observation.date()).days)
+        """Days the house actually saw activity, not days on the calendar.
+
+        An engine that was offline, or a site that was empty, has not learned
+        anything on those days and must not be credited for them.
+        """
+        return self._house.days_observed
 
     def snapshot(self, now: datetime) -> dict[str, Any]:
         days = self._days_seen()
@@ -437,6 +453,7 @@ class Engine:
             "drift": self._drift.to_dict(),
             "health": self._health.to_dict(),
             "router": self._router.to_dict(),
+            "last_stat": [a.to_dict() for a in self._last_stat],
             "meta": {
                 "holiday": self._holiday,
                 "holiday_just_ended": self._holiday_just_ended,
@@ -495,6 +512,7 @@ class Engine:
             )
             e._today = date.fromisoformat(m["today"]) if m.get("today") else None
             e._today_count = int(m.get("today_count", 0))
+            e._last_stat = [Alert.from_dict(a) for a in data.get("last_stat", [])]
         except (KeyError, TypeError, ValueError):
             pass
         # set_entities below only sees removals against what _specs already

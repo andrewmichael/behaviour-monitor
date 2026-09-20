@@ -30,9 +30,19 @@ class EntityRoutine:
     )
     durations: dict[str, list[float]] = field(default_factory=dict)
     last_event: datetime | None = None
-    longest_gap_s: float | None = None
+    longest_gap_by_day: dict[str, float] = field(default_factory=dict)
     days_seen: set[str] = field(default_factory=set)
     first_observation: datetime | None = None
+
+    @property
+    def longest_gap_s(self) -> float | None:
+        """Longest gap that started on a day still inside the window.
+
+        Kept per day rather than as a running maximum so that one long
+        absence stops desensitising the entity once it ages out; otherwise a
+        single holiday makes the sensor permanently impossible to call silent.
+        """
+        return max(self.longest_gap_by_day.values(), default=None)
 
     def record(self, event: ActivityEvent) -> None:
         day = iso_day(event.timestamp.date())
@@ -47,8 +57,9 @@ class EntityRoutine:
             self.first_observation = event.timestamp
         if self.last_event is not None:
             gap = (event.timestamp - self.last_event).total_seconds()
-            if gap > 0 and (self.longest_gap_s is None or gap > self.longest_gap_s):
-                self.longest_gap_s = gap
+            started = iso_day(self.last_event.date())
+            if gap > 0 and gap > self.longest_gap_by_day.get(started, 0.0):
+                self.longest_gap_by_day[started] = gap
         if self.last_event is None or event.timestamp > self.last_event:
             self.last_event = event.timestamp
 
@@ -80,6 +91,9 @@ class EntityRoutine:
             for d in [d for d in slot if d < cutoff]:
                 del slot[d]
         self.durations = {d: v for d, v in self.durations.items() if d >= cutoff}
+        self.longest_gap_by_day = {
+            d: g for d, g in self.longest_gap_by_day.items() if d >= cutoff
+        }
         self.days_seen = {d for d in self.days_seen if d >= cutoff}
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,7 +104,7 @@ class EntityRoutine:
             "slot_days": self.slot_days,
             "durations": self.durations,
             "last_event": self.last_event.isoformat() if self.last_event else None,
-            "longest_gap_s": self.longest_gap_s,
+            "longest_gap_by_day": dict(self.longest_gap_by_day),
             "days_seen": sorted(self.days_seen),
             "first_observation": (
                 self.first_observation.isoformat() if self.first_observation else None
@@ -112,8 +126,9 @@ class EntityRoutine:
         }
         le = data.get("last_event")
         r.last_event = datetime.fromisoformat(le) if le else None
-        lg = data.get("longest_gap_s")
-        r.longest_gap_s = float(lg) if lg is not None else None
+        r.longest_gap_by_day = {
+            str(d): float(g) for d, g in data.get("longest_gap_by_day", {}).items()
+        }
         r.days_seen = set(data.get("days_seen", []))
         fo = data.get("first_observation")
         r.first_observation = datetime.fromisoformat(fo) if fo else None

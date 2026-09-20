@@ -156,6 +156,18 @@ def test_round_trip_and_prune():
     assert ChainModel.from_dict({"nope": 1}, CFG).chains == []
 
 
+def test_prune_decrements_step_counts():
+    """Step counts are the lift denominator, so they must age out too."""
+    m = _trained()
+    before = m.to_dict()
+    assert before["total_steps"]["2"] > 0
+    m.prune(MON.date() + timedelta(days=7))
+    after = m.to_dict()
+    assert after["total_steps"]["2"] < before["total_steps"]["2"]
+    m.prune(MON.date() + timedelta(days=99))
+    assert m.to_dict()["steps_into"] == [] and m.to_dict()["total_steps"] == {}
+
+
 def test_from_dict_tolerates_pre_bucket_store():
     """A store written before chains were bucketed loads as a fresh model."""
     old = {

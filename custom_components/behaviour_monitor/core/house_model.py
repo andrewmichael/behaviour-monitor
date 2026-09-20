@@ -75,6 +75,11 @@ class HouseModel:
     def last_room(self) -> str | None:
         return self._last_room
 
+    @property
+    def days_observed(self) -> int:
+        """Distinct days with activity still inside the window."""
+        return len(self._days_seen)
+
     # ------------------------------------------------------------- recording
 
     def record(self, event: ActivityEvent) -> None:

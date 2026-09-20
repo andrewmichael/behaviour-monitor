@@ -84,6 +84,13 @@ def test_longest_gap_last_event_and_daily_counts():
     assert m.longest_gap("binary_sensor.front") is None
     assert m.last_event(KETTLE) == MON + timedelta(days=2, hours=8, minutes=5)
     assert m.daily_counts(date(2026, 9, 22)) == {KETTLE: 1, "binary_sensor.front": 0}
+    # a week away leaves one very long gap, filed under the day it started
+    for d in (10, 11, 12):
+        m.record(_kettle(MON + timedelta(days=d, hours=8, minutes=5)))
+    assert m.longest_gap(KETTLE) == 8 * 86400.0
+    # once that day drops out of the window the entity is sensitive again
+    m.prune(date(2026, 10, 1))
+    assert m.longest_gap(KETTLE) == 86400.0
 
 
 def test_duration_medians_per_day():

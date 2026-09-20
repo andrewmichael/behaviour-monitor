@@ -89,8 +89,7 @@ class ChainModel:
     def __init__(self, config: ChainConfig) -> None:
         self._cfg = config
         self._pairs: dict[tuple[int, str, str], _Pair] = {}
-        self._steps_into: dict[tuple[int, str], int] = {}
-        self._total_steps: dict[int, int] = {}
+        self._steps_into: dict[tuple[int, str], dict[str, int]] = {}
         self._recent: dict[str, datetime] = {}
         self._current_room: str | None = None
         self._days_seen: set[str] = set()
@@ -127,8 +126,8 @@ class ChainModel:
             pair.days[day] = pair.days.get(day, 0) + 1
             pair.hops.append((day, (ts - prev_ts).total_seconds()))
         bucket = bucket_of(ts)
-        self._steps_into[(bucket, room)] = self._steps_into.get((bucket, room), 0) + 1
-        self._total_steps[bucket] = self._total_steps.get(bucket, 0) + 1
+        into = self._steps_into.setdefault((bucket, room), {})
+        into[day] = into.get(day, 0) + 1
         self._recent[room] = ts
         self._current_room = room
         # The person has moved, so whatever routine was stalled is moot. A
@@ -136,6 +135,16 @@ class ChainModel:
         # is just a safety cap for a house that never reports again.
         self._stalls.clear()
         self._advance_runs(room, ts)
+
+    def _steps_in(self, bucket: int, room: str) -> int:
+        return sum(self._steps_into.get((bucket, room), {}).values())
+
+    def _bucket_totals(self) -> dict[int, int]:
+        """Steps into any room, per bucket, over the days still retained."""
+        totals: dict[int, int] = {}
+        for (bucket, _), days in self._steps_into.items():
+            totals[bucket] = totals.get(bucket, 0) + sum(days.values())
+        return totals
 
     def _expire(self, now: datetime) -> None:
         """Forget rooms last seen longer ago than the pair window."""
@@ -173,10 +182,11 @@ class ChainModel:
     def recompute(self) -> None:
         """Assemble chains within each time bucket, then merge equal paths."""
         old = {c.name: c for c in self._chains}
+        totals = self._bucket_totals()
         order: list[tuple[str, ...]] = []
         buckets_by_path: dict[tuple[str, ...], set[int]] = {}
         for bucket in sorted({b for b, _, _ in self._pairs}):
-            for rooms in self._assemble(bucket):
+            for rooms in self._assemble(bucket, totals.get(bucket, 0)):
                 path = tuple(rooms)
                 if path not in buckets_by_path:
                     buckets_by_path[path] = set()
@@ -199,19 +209,19 @@ class ChainModel:
             k: v for k, v in self._runs.items() if k in {c.name for c in chains}
         }
 
-    def _assemble(self, bucket: int) -> list[list[str]]:
+    def _assemble(self, bucket: int, bucket_steps: int) -> list[list[str]]:
         """Significant pairs and the chains they form inside one bucket."""
         sig: dict[str, list[tuple[str, int]]] = {}
         preds: set[str] = set()
-        total = max(1, self._total_steps.get(bucket, 0))
+        total = max(1, bucket_steps)
         for (b, a, nxt), pair in self._pairs.items():
             if b != bucket or pair.count < self._cfg.min_count:
                 continue
-            steps_a = self._steps_into.get((bucket, a), 0)
+            steps_a = self._steps_in(bucket, a)
             if steps_a == 0:
                 continue
             p_b_given_a = pair.count / steps_a
-            p_b = self._steps_into.get((bucket, nxt), 0) / total
+            p_b = self._steps_in(bucket, nxt) / total
             if p_b_given_a > self._cfg.lift * p_b:
                 sig.setdefault(a, []).append((nxt, pair.count))
                 preds.add(nxt)
@@ -301,8 +311,8 @@ class ChainModel:
             for (bucket, a, b), p in self._pairs.items()
         }
         self._steps_into = {
-            (bucket, new if room == old else room): c
-            for (bucket, room), c in self._steps_into.items()
+            (bucket, new if room == old else room): days
+            for (bucket, room), days in self._steps_into.items()
         }
         if old in self._recent:
             self._recent[new] = self._recent.pop(old)
@@ -330,6 +340,12 @@ class ChainModel:
             pair.hops.extend(kept)
             if pair.count == 0:
                 del self._pairs[key]
+        for key_s in list(self._steps_into):
+            kept_s = {d: c for d, c in self._steps_into[key_s].items() if d >= cutoff}
+            if kept_s:
+                self._steps_into[key_s] = kept_s
+            else:
+                del self._steps_into[key_s]
         self._days_seen = {d for d in self._days_seen if d >= cutoff}
         for c in self._chains:
             for dt_key, dq in c.completions.items():
@@ -352,10 +368,11 @@ class ChainModel:
                 for (bucket, a, b), p in self._pairs.items()
             ],
             "steps_into": [
-                {"bucket": bucket, "room": room, "count": c}
-                for (bucket, room), c in self._steps_into.items()
+                {"bucket": bucket, "room": room, "days": dict(days)}
+                for (bucket, room), days in self._steps_into.items()
             ],
-            "total_steps": {str(b): c for b, c in self._total_steps.items()},
+            # derived, for readers of the store; from_dict recomputes it
+            "total_steps": {str(b): c for b, c in self._bucket_totals().items()},
             "current_room": self._current_room,
             "days_seen": sorted(self._days_seen),
             "chains": [
@@ -380,11 +397,10 @@ class ChainModel:
                 pair.hops.extend((str(d), float(h)) for d, h in p.get("hops", []))
                 m._pairs[(int(p["bucket"]), str(p["a"]), str(p["b"]))] = pair
             m._steps_into = {
-                (int(s["bucket"]), str(s["room"])): int(s["count"])
+                (int(s["bucket"]), str(s["room"])): {
+                    str(d): int(c) for d, c in s["days"].items()
+                }
                 for s in data.get("steps_into", [])
-            }
-            m._total_steps = {
-                int(k): int(v) for k, v in data.get("total_steps", {}).items()
             }
             m._current_room = data.get("current_room")
             m._days_seen = set(data.get("days_seen", []))
