@@ -43,10 +43,14 @@ class DailySeries:
                 continue
             rows.append(((today - dd).days, v))
         if self.split_day_type and len(rows) < 3:
-            rows = [((today - date.fromisoformat(d)).days, v) for d, v in self.values.items() if date.fromisoformat(d) < today]
+            rows = [
+                ((today - date.fromisoformat(d)).days, v)
+                for d, v in self.values.items()
+                if date.fromisoformat(d) < today
+            ]
         if not rows:
             return 0.0, 0.0, 0
-        weights = [_DECAY ** age for age, _ in rows]
+        weights = [_DECAY**age for age, _ in rows]
         mean = sum(w * v for w, (_, v) in zip(weights, rows)) / sum(weights)
         vals = [v for _, v in rows]
         stdev = statistics.stdev(vals) if len(vals) >= 2 else 0.0
@@ -72,7 +76,9 @@ class DriftDetector:
         self._series: dict[str, DailySeries] = {}
         self._cusum: dict[str, CUSUMState] = {}
 
-    def record(self, key: str, day: date, value: float, split_day_type: bool = False) -> None:
+    def record(
+        self, key: str, day: date, value: float, split_day_type: bool = False
+    ) -> None:
         s = self._series.setdefault(key, DailySeries(split_day_type=split_day_type))
         s.split_day_type = split_day_type
         s.values[iso_day(day)] = float(value)
@@ -95,7 +101,9 @@ class DriftDetector:
             z = (series.values[today_iso] - mean) / stdev
             st.s_pos = max(0.0, st.s_pos + z - self._k)
             st.s_neg = max(0.0, st.s_neg - z - self._k)
-            st.days_above = st.days_above + 1 if (st.s_pos > self._h or st.s_neg > self._h) else 0
+            st.days_above = (
+                st.days_above + 1 if (st.s_pos > self._h or st.s_neg > self._h) else 0
+            )
             st.last_day = today_iso
             if st.days_above < self._cfg.min_days:
                 continue
@@ -109,7 +117,12 @@ class DriftDetector:
                     sev,
                     f"{key}: sustained {direction} for {st.days_above} days (baseline {mean:.1f}, today {series.values[today_iso]:.1f})",
                     now,
-                    {"direction": direction, "days": st.days_above, "baseline": round(mean, 2), "today": series.values[today_iso]},
+                    {
+                        "direction": direction,
+                        "days": st.days_above,
+                        "baseline": round(mean, 2),
+                        "today": series.values[today_iso],
+                    },
                 )
             )
         return out
@@ -131,8 +144,19 @@ class DriftDetector:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "series": {k: {"values": s.values, "split": s.split_day_type} for k, s in self._series.items()},
-            "cusum": {k: {"s_pos": c.s_pos, "s_neg": c.s_neg, "days_above": c.days_above, "last_day": c.last_day} for k, c in self._cusum.items()},
+            "series": {
+                k: {"values": s.values, "split": s.split_day_type}
+                for k, s in self._series.items()
+            },
+            "cusum": {
+                k: {
+                    "s_pos": c.s_pos,
+                    "s_neg": c.s_neg,
+                    "days_above": c.days_above,
+                    "last_day": c.last_day,
+                }
+                for k, c in self._cusum.items()
+            },
         }
 
     @classmethod
@@ -140,9 +164,17 @@ class DriftDetector:
         d = cls(config)
         try:
             for k, s in data.get("series", {}).items():
-                d._series[k] = DailySeries({str(dd): float(v) for dd, v in s["values"].items()}, bool(s.get("split", False)))
+                d._series[k] = DailySeries(
+                    {str(dd): float(v) for dd, v in s["values"].items()},
+                    bool(s.get("split", False)),
+                )
             for k, c in data.get("cusum", {}).items():
-                d._cusum[k] = CUSUMState(float(c["s_pos"]), float(c["s_neg"]), int(c["days_above"]), c.get("last_day"))
+                d._cusum[k] = CUSUMState(
+                    float(c["s_pos"]),
+                    float(c["s_neg"]),
+                    int(c["days_above"]),
+                    c.get("last_day"),
+                )
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
         return d

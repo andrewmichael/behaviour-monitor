@@ -31,7 +31,9 @@ class ChainConfig:
 @dataclass
 class _Pair:
     count: int = 0
-    hops: deque[tuple[str, float]] = field(default_factory=lambda: deque(maxlen=_HOPS_KEPT))
+    hops: deque[tuple[str, float]] = field(
+        default_factory=lambda: deque(maxlen=_HOPS_KEPT)
+    )
 
 
 @dataclass
@@ -39,7 +41,10 @@ class Chain:
     rooms: list[str]
     hop_stats: list[tuple[float, float]]
     completions: dict[str, deque[tuple[str, float]]] = field(
-        default_factory=lambda: {"weekday": deque(maxlen=_COMPLETIONS_KEPT), "weekend": deque(maxlen=_COMPLETIONS_KEPT)}
+        default_factory=lambda: {
+            "weekday": deque(maxlen=_COMPLETIONS_KEPT),
+            "weekend": deque(maxlen=_COMPLETIONS_KEPT),
+        }
     )
 
     @property
@@ -118,7 +123,9 @@ class ChainModel:
                 run.step, run.last_step_at = nxt, ts
                 if nxt == len(chain.rooms) - 1:
                     dur = (ts - run.started).total_seconds()
-                    chain.completions[day_type(ts.date())].append((iso_day(ts.date()), dur))
+                    chain.completions[day_type(ts.date())].append(
+                        (iso_day(ts.date()), dur)
+                    )
                     del self._runs[chain.name]
                     self._stalls.pop(chain.name, None)
             elif room == chain.rooms[0]:
@@ -154,14 +161,19 @@ class ChainModel:
                 rooms.append(nxt)
             if len(rooms) < 2:
                 continue
-            stats = [median_mad(h for _, h in self._pairs[(rooms[i], rooms[i + 1])].hops) for i in range(len(rooms) - 1)]
+            stats = [
+                median_mad(h for _, h in self._pairs[(rooms[i], rooms[i + 1])].hops)
+                for i in range(len(rooms) - 1)
+            ]
             chain = Chain(rooms, stats)
             prev = old.get(chain.name)
             if prev is not None:
                 chain.completions = prev.completions
             chains.append(chain)
         self._chains = chains
-        self._runs = {k: v for k, v in self._runs.items() if k in {c.name for c in chains}}
+        self._runs = {
+            k: v for k, v in self._runs.items() if k in {c.name for c in chains}
+        }
 
     # ------------------------------------------------------------ queries
 
@@ -171,7 +183,11 @@ class ChainModel:
             if run is None:
                 continue
             med, mad = chain.hop_stats[run.step]
-            tolerance = med + self._cfg.hop_tolerance_mads * mad if mad > 0 else max(med * 2, self._cfg.window_s)
+            tolerance = (
+                med + self._cfg.hop_tolerance_mads * mad
+                if mad > 0
+                else max(med * 2, self._cfg.window_s)
+            )
             if (now - run.last_step_at).total_seconds() > tolerance:
                 missing = chain.rooms[run.step + 1]
                 alert = Alert(
@@ -183,7 +199,9 @@ class ChainModel:
                     now,
                     {"missing": missing, "step": run.step + 1},
                 )
-                self._stalls[chain.name] = _Stall(alert, now + timedelta(seconds=self._cfg.stall_ttl_s))
+                self._stalls[chain.name] = _Stall(
+                    alert, now + timedelta(seconds=self._cfg.stall_ttl_s)
+                )
                 del self._runs[chain.name]
         self._stalls = {k: s for k, s in self._stalls.items() if s.until > now}
         return [s.alert for s in self._stalls.values()]
@@ -203,7 +221,10 @@ class ChainModel:
     # ------------------------------------------------------- maintenance
 
     def rename_room(self, old: str, new: str) -> None:
-        self._pairs = {(new if a == old else a, new if b == old else b): p for (a, b), p in self._pairs.items()}
+        self._pairs = {
+            (new if a == old else a, new if b == old else b): p
+            for (a, b), p in self._pairs.items()
+        }
         if old in self._steps_into:
             self._steps_into[new] = self._steps_into.pop(old)
         if old in self._recent:
@@ -218,14 +239,20 @@ class ChainModel:
         self._steps_into.pop(room, None)
         self._recent.pop(room, None)
         self._chains = [c for c in self._chains if room not in c.rooms]
-        self._runs = {k: v for k, v in self._runs.items() if k in {c.name for c in self._chains}}
+        self._runs = {
+            k: v for k, v in self._runs.items() if k in {c.name for c in self._chains}
+        }
 
     def prune(self, before: date) -> None:
         cutoff = iso_day(before)
         for key in list(self._pairs):
             pair = self._pairs[key]
             kept = [(d, h) for d, h in pair.hops if d >= cutoff]
-            removed = pair.count - len(kept) if pair.count > len(pair.hops) else len(pair.hops) - len(kept)
+            removed = (
+                pair.count - len(kept)
+                if pair.count > len(pair.hops)
+                else len(pair.hops) - len(kept)
+            )
             pair.hops.clear()
             pair.hops.extend(kept)
             pair.count = max(0, pair.count - removed)
@@ -242,13 +269,20 @@ class ChainModel:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "pairs": [{"a": a, "b": b, "count": p.count, "hops": list(p.hops)} for (a, b), p in self._pairs.items()],
+            "pairs": [
+                {"a": a, "b": b, "count": p.count, "hops": list(p.hops)}
+                for (a, b), p in self._pairs.items()
+            ],
             "steps_into": dict(self._steps_into),
             "total_steps": self._total_steps,
             "current_room": self._current_room,
             "days_seen": sorted(self._days_seen),
             "chains": [
-                {"rooms": c.rooms, "hop_stats": c.hop_stats, "completions": {k: list(v) for k, v in c.completions.items()}}
+                {
+                    "rooms": c.rooms,
+                    "hop_stats": c.hop_stats,
+                    "completions": {k: list(v) for k, v in c.completions.items()},
+                }
                 for c in self._chains
             ],
         }
@@ -261,12 +295,17 @@ class ChainModel:
                 pair = _Pair(int(p["count"]))
                 pair.hops.extend((str(d), float(h)) for d, h in p.get("hops", []))
                 m._pairs[(str(p["a"]), str(p["b"]))] = pair
-            m._steps_into = {str(k): int(v) for k, v in data.get("steps_into", {}).items()}
+            m._steps_into = {
+                str(k): int(v) for k, v in data.get("steps_into", {}).items()
+            }
             m._total_steps = int(data.get("total_steps", 0))
             m._current_room = data.get("current_room")
             m._days_seen = set(data.get("days_seen", []))
             for c in data.get("chains", []):
-                chain = Chain([str(r) for r in c["rooms"]], [(float(a), float(b)) for a, b in c.get("hop_stats", [])])
+                chain = Chain(
+                    [str(r) for r in c["rooms"]],
+                    [(float(a), float(b)) for a, b in c.get("hop_stats", [])],
+                )
                 for k, v in c.get("completions", {}).items():
                     if k in chain.completions:
                         chain.completions[k].extend((str(d), float(x)) for d, x in v)

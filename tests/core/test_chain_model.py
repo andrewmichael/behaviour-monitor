@@ -2,14 +2,20 @@ from datetime import date, datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.alerts import AlertClass
 from custom_components.behaviour_monitor.core.chain_model import ChainConfig, ChainModel
-from custom_components.behaviour_monitor.core.events import ActivityEvent, Category, EventKind
+from custom_components.behaviour_monitor.core.events import (
+    ActivityEvent,
+    Category,
+    EventKind,
+)
 
 MON = datetime(2026, 9, 21, 7, 0, tzinfo=timezone.utc)
 CFG = ChainConfig(min_count=5, lift=1.5)
 
 
 def _ev(ts: datetime, room: str, eid: str = "x") -> ActivityEvent:
-    return ActivityEvent(f"binary_sensor.{eid}", Category.MOTION, EventKind.PRESENCE, room, ts)
+    return ActivityEvent(
+        f"binary_sensor.{eid}", Category.MOTION, EventKind.PRESENCE, room, ts
+    )
 
 
 def _morning(m: ChainModel, day: datetime, hop_min: float = 4.0) -> None:
@@ -20,7 +26,9 @@ def _morning(m: ChainModel, day: datetime, hop_min: float = 4.0) -> None:
     m.record(_ev(t, "Bathroom"))
     t += timedelta(minutes=hop_min)
     m.record(_ev(t, "Kitchen", "kmotion"))
-    m.record(_ev(t + timedelta(seconds=30), "Kitchen", "kettle"))  # same room: no new step
+    m.record(
+        _ev(t + timedelta(seconds=30), "Kitchen", "kettle")
+    )  # same room: no new step
     # afternoon noise: kitchen <-> lounge back and forth, outside the window from the morning
     t += timedelta(hours=6)
     m.record(_ev(t, "Lounge"))
@@ -64,7 +72,9 @@ def test_stall_raises_note_naming_missing_room():
     m.record(_ev(day, "Bedroom"))
     m.record(_ev(day + timedelta(minutes=4), "Bathroom"))
     assert m.evaluate(day + timedelta(minutes=6)) == []
-    notes = m.evaluate(day + timedelta(minutes=20))  # 240s median, 0 mad -> tolerance falls back to window
+    notes = m.evaluate(
+        day + timedelta(minutes=20)
+    )  # 240s median, 0 mad -> tolerance falls back to window
     assert notes == [] or notes[0].kind == "chain_stall"
     notes = m.evaluate(day + timedelta(minutes=25))
     assert len(notes) == 1

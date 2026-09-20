@@ -1,13 +1,18 @@
 from datetime import date, datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.alerts import AlertClass, Severity
-from custom_components.behaviour_monitor.core.drift_detector import DriftConfig, DriftDetector
+from custom_components.behaviour_monitor.core.drift_detector import (
+    DriftConfig,
+    DriftDetector,
+)
 
 D0 = date(2026, 9, 1)
 NOW = datetime(2026, 9, 30, 23, 59, tzinfo=timezone.utc)
 
 
-def _feed(det: DriftDetector, key: str, values: list[float], split: bool = False) -> list[list]:
+def _feed(
+    det: DriftDetector, key: str, values: list[float], split: bool = False
+) -> list[list]:
     out = []
     for i, v in enumerate(values):
         day = D0 + timedelta(days=i)
@@ -18,7 +23,9 @@ def _feed(det: DriftDetector, key: str, values: list[float], split: bool = False
 
 def test_stable_series_never_alerts():
     det = DriftDetector(DriftConfig())
-    results = _feed(det, "count:x", [10, 11, 9, 10, 12, 10, 9, 11, 10, 10, 11, 9, 10, 10])
+    results = _feed(
+        det, "count:x", [10, 11, 9, 10, 12, 10, 9, 11, 10, 10, 11, 9, 10, 10]
+    )
     assert all(r == [] for r in results)
 
 
@@ -29,7 +36,11 @@ def test_step_change_alerts_after_min_days_with_direction_and_severity():
     first = next(i for i, r in enumerate(results) if r)
     assert first == 12  # 10 baseline days, alert on the third shifted day
     a = results[first][0]
-    assert a.cls is AlertClass.STATISTICAL and a.kind == "drift" and a.severity is Severity.MEDIUM
+    assert (
+        a.cls is AlertClass.STATISTICAL
+        and a.kind == "drift"
+        and a.severity is Severity.MEDIUM
+    )
     assert a.details["direction"] == "increase" and a.details["days"] == 3
     assert a.details["baseline"] < a.details["today"]
     assert results[-1][0].severity is Severity.HIGH  # 7+ days
