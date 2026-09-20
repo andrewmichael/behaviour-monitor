@@ -101,3 +101,22 @@ async def test_options_flow_updates_data_and_options():
         "binary_sensor.b",
     ]
     assert CONF_LEARNING_DAYS not in kwargs["data"]
+
+
+@pytest.mark.asyncio
+async def test_options_flow_clearing_a_category_persists_empty_list():
+    entry = MagicMock()
+    entry.data = dict(GOOD)
+    entry.options = {}
+    flow = BehaviourMonitorOptionsFlow(entry)
+    flow.hass = MagicMock()
+    submitted = {
+        CONF_SITE_NAME: GOOD[CONF_SITE_NAME],
+        CONF_NOTIFY_SERVICE: GOOD[CONF_NOTIFY_SERVICE],
+        CONF_MOTION_ENTITIES: GOOD[CONF_MOTION_ENTITIES],
+    }
+    result = await flow.async_step_init(submitted)
+    assert result["type"] == "create_entry"
+    kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
+    assert kwargs["data"][CONF_CONTACT_ENTITIES] == []
+    assert kwargs["data"][CONF_MOTION_ENTITIES] == GOOD[CONF_MOTION_ENTITIES]

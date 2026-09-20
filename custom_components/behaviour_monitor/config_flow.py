@@ -219,6 +219,8 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
         current = {**self._entry.data, **self._entry.options}
         if user_input is not None:
             merged = {**current, **user_input}
+            for key in CATEGORY_CONF_KEYS.values():
+                merged[key] = list(user_input.get(key) or [])
             err = validate_categories(merged)
             if err:
                 errors["base"] = err
