@@ -2045,7 +2045,7 @@ class ChainModel:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `venv/bin/python -m pytest tests/core/test_chain_model.py -v`
-Expected: 6 passed. `test_stall_raises_note_naming_missing_room` tolerates a stall at 20 minutes because with zero MAD the tolerance is `max(2 * median, window_s)` = 900 s; the stall must exist by 25 minutes.
+Expected: 6 passed. `test_stall_raises_note_naming_missing_room` tolerates a stall at 20 minutes because with zero MAD the tolerance is `max(median + 3 MAD, 3 * median, 2 * window_s)` = 3600 s after ruling R23; the stall must exist by 40 minutes (see the chain test as amended in fix rounds).
 
 - [ ] **Step 5: Commit**
 
@@ -3150,7 +3150,7 @@ class EngineConfig:
             normaliser=NormaliserConfig(motion_debounce_s=float(o.get("motion_debounce_s", 90)), plug_margin_w=float(o.get("plug_margin_w", 5))),
             house=HouseConfig(learning_days=ld, window_days=wd, low_ratio=low, medium_ratio=low * 2, high_ratio=low * 4),
             routine=RoutineConfig(learning_days=ld, window_days=wd),
-            chain=ChainConfig(window_s=float(o.get("chain_window_s", 900)), learning_days=ld, window_days=wd),
+            chain=ChainConfig(window_s=float(o.get("chain_window_s", 1800)), learning_days=ld, window_days=wd),
             drift=DriftConfig(sensitivity=str(o.get("drift_sensitivity", "medium")), window_days=wd),
             health=HealthConfig(grace_s=float(o.get("health_grace_s", 900))),
             router=RouterConfig(push_min_severity=Severity(str(o.get("push_min_severity", "medium"))),
