@@ -85,15 +85,15 @@ test-config: ## Run only config flow tests
 
 lint: ## Run linters (ruff, mypy)
 	@echo "$(GREEN)Running ruff...$(NC)"
-	-$(PYTHON_VENV) -m ruff check custom_components/ tests/ scripts/replay.py
+	-$(PYTHON_VENV) -m ruff check custom_components/ tests/ scripts/
 	@echo "$(GREEN)Running mypy...$(NC)"
-	-$(PYTHON_VENV) -m mypy custom_components/behaviour_monitor/ scripts/replay.py
+	-$(PYTHON_VENV) -m mypy custom_components/behaviour_monitor/ scripts/replay.py scripts/export_fixture.py
 
 format: ## Format code with black and ruff
 	@echo "$(GREEN)Formatting code with black...$(NC)"
-	$(PYTHON_VENV) -m black custom_components/ tests/ scripts/replay.py
+	$(PYTHON_VENV) -m black custom_components/ tests/ scripts/
 	@echo "$(GREEN)Running ruff --fix...$(NC)"
-	$(PYTHON_VENV) -m ruff check --fix custom_components/ tests/ scripts/replay.py
+	$(PYTHON_VENV) -m ruff check --fix custom_components/ tests/ scripts/
 
 check: lint test ## Run linters and tests
 
