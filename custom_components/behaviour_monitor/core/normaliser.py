@@ -182,7 +182,49 @@ class Normaliser:
     def _plug(
         self, eid: str, room: str, old: str, new: str, ts: datetime
     ) -> list[ActivityEvent]:
-        return []  # Task 5
+        if new in (_ON, _OFF):
+            return self._plug_switch(eid, room, new, ts)
+        try:
+            value = float(new)
+        except (TypeError, ValueError):
+            return []
+        state = self._plugs.get(eid)
+        if state is None:
+            state = _PlugState(deque(maxlen=self._cfg.plug_reservoir))
+            self._plugs[eid] = state
+        state.reservoir.append(value)
+        idle = self._idle(state)
+        threshold = idle + self._cfg.plug_margin_w
+        if state.on_since is None and value > threshold:
+            state.on_since = ts
+            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_ON, room, ts)]
+        if state.on_since is not None and value <= threshold:
+            dur = (ts - state.on_since).total_seconds()
+            state.on_since = None
+            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_OFF, room, ts, duration_s=dur)]
+        return []
+
+    def _plug_switch(self, eid: str, room: str, new: str, ts: datetime) -> list[ActivityEvent]:
+        state = self._plugs.setdefault(eid, _PlugState(deque(maxlen=self._cfg.plug_reservoir)))
+        if new == _ON and state.on_since is None:
+            state.on_since = ts
+            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_ON, room, ts)]
+        if new == _OFF and state.on_since is not None:
+            dur = (ts - state.on_since).total_seconds()
+            state.on_since = None
+            return [ActivityEvent(eid, Category.PLUG, EventKind.APPLIANCE_OFF, room, ts, duration_s=dur)]
+        return []
+
+    def _idle(self, state: _PlugState) -> float:
+        vals = sorted(state.reservoir)
+        if len(vals) < self._cfg.plug_min_samples:
+            return vals[0] if vals else 0.0
+        quintile = vals[: max(1, len(vals) // 5)]
+        return float(median(quintile))
+
+    def idle_level(self, entity_id: str) -> float | None:
+        state = self._plugs.get(entity_id)
+        return self._idle(state) if state and state.reservoir else None
 
     # ------------------------------------------------------------ persistence
 

@@ -98,3 +98,39 @@ def test_round_trip_serialisation_keeps_burst_state():
     out = n2.flush(_t(151))
     assert out and out[0].kind == EventKind.BURST_END
     assert Normaliser.from_dict({"garbage": 1}, NormaliserConfig()).flush(_t(0)) == []
+
+
+def test_numeric_plug_learns_idle_and_fires_on_rise():
+    n = Normaliser(NormaliserConfig(plug_min_samples=10, plug_margin_w=5.0))
+    # TV on standby at ~85 W: idle should settle near 85, not 0
+    prev = "0"
+    for i in range(20):
+        val = f"{85 + (i % 3)}"
+        assert n.handle("sensor.tv", Category.PLUG, "Backroom", prev, val, _t(i)) == []
+        prev = val
+    assert 84.5 <= n.idle_level("sensor.tv") <= 86.0
+    ev = n.handle("sensor.tv", Category.PLUG, "Backroom", prev, "120", _t(30))
+    assert [e.kind for e in ev] == [EventKind.APPLIANCE_ON]
+    assert n.handle("sensor.tv", Category.PLUG, "Backroom", "120", "125", _t(31)) == []
+    ev = n.handle("sensor.tv", Category.PLUG, "Backroom", "125", "86", _t(90))
+    assert ev[0].kind == EventKind.APPLIANCE_OFF and ev[0].duration_s == 60.0
+
+
+def test_numeric_plug_before_min_samples_uses_minimum_seen():
+    n = Normaliser(NormaliserConfig(plug_min_samples=10, plug_margin_w=5.0))
+    assert n.handle("sensor.kettle", Category.PLUG, "Kitchen", None, "0", _t(0))  # health only
+    assert n.handle("sensor.kettle", Category.PLUG, "Kitchen", "0", "0.5", _t(1)) == []
+    ev = n.handle("sensor.kettle", Category.PLUG, "Kitchen", "0.5", "2800", _t(2))
+    assert ev[0].kind == EventKind.APPLIANCE_ON
+
+
+def test_switch_plug_uses_on_off():
+    n = _n()
+    assert n.handle("switch.p", Category.PLUG, "Loft", "off", "on", _t(0))[0].kind == EventKind.APPLIANCE_ON
+    ev = n.handle("switch.p", Category.PLUG, "Loft", "on", "off", _t(30))
+    assert ev[0].kind == EventKind.APPLIANCE_OFF and ev[0].duration_s == 30.0
+
+
+def test_non_numeric_non_switch_plug_state_is_ignored():
+    n = _n()
+    assert n.handle("sensor.p", Category.PLUG, "Loft", "abc", "def", _t(0)) == []
