@@ -31,6 +31,7 @@ def _setup_ha_mocks():
     # Mock homeassistant.const
     class MockPlatform:
         """Mock Platform enum."""
+
         SENSOR = "sensor"
         SWITCH = "switch"
         SELECT = "select"
@@ -56,7 +57,14 @@ def _setup_ha_mocks():
             # The actual HA implementation modifies the schema to include suggested values
             return data_schema
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
+        def async_show_form(
+            self,
+            step_id,
+            data_schema=None,
+            errors=None,
+            description_placeholders=None,
+            suggested_values=None,
+        ):
             """Mock show form method (not actually async despite the name)."""
             return {
                 "type": "form",
@@ -67,7 +75,9 @@ def _setup_ha_mocks():
                 "suggested_values": suggested_values,
             }
 
-        def async_create_entry(self, title, data, description=None, description_placeholders=None, **kwargs):
+        def async_create_entry(
+            self, title, data, description=None, description_placeholders=None, **kwargs
+        ):
             """Mock create entry method."""
             return {
                 "type": "create_entry",
@@ -88,6 +98,7 @@ def _setup_ha_mocks():
 
     class MockOptionsFlow:
         """Mock OptionsFlow base class."""
+
         def __init__(self):
             pass
 
@@ -97,7 +108,14 @@ def _setup_ha_mocks():
             # The actual HA implementation modifies the schema to include suggested values
             return data_schema
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
+        def async_show_form(
+            self,
+            step_id,
+            data_schema=None,
+            errors=None,
+            description_placeholders=None,
+            suggested_values=None,
+        ):
             """Mock show form method."""
             return {
                 "type": "form",
@@ -132,6 +150,7 @@ def _setup_ha_mocks():
     # Mock Storage with proper async methods
     class MockStore:
         """Mock Home Assistant storage."""
+
         def __init__(self, hass, version, key):
             self.hass = hass
             self.version = version
@@ -152,6 +171,7 @@ def _setup_ha_mocks():
     # Mock CoordinatorEntity and DataUpdateCoordinator
     class MockCoordinatorEntity:
         """Mock CoordinatorEntity base class."""
+
         def __init__(self, coordinator):
             self.coordinator = coordinator
             self._attr_unique_id = None
@@ -181,6 +201,7 @@ def _setup_ha_mocks():
 
     class MockDataUpdateCoordinator:
         """Mock DataUpdateCoordinator."""
+
         def __init__(self, hass, logger, name, update_interval):
             self.hass = hass
             self.logger = logger
@@ -225,6 +246,7 @@ def _setup_ha_mocks():
 
     class MockSensorEntity:
         """Mock SensorEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -258,6 +280,7 @@ def _setup_ha_mocks():
     @real_dataclass(frozen=True)
     class MockSensorEntityDescription:
         """Mock SensorEntityDescription as a frozen dataclass."""
+
         key: str
         name: str = None
         icon: str = None
@@ -277,6 +300,7 @@ def _setup_ha_mocks():
 
     class MockSelectEntity:
         """Mock SelectEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -305,6 +329,7 @@ def _setup_ha_mocks():
 
     class MockSwitchEntity:
         """Mock SwitchEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -353,25 +378,31 @@ def _setup_ha_mocks():
     mock_voluptuous.In = lambda x: lambda v: v
 
     # Install all mocks in sys.modules
-    sys.modules['homeassistant'] = mock_ha
-    sys.modules['homeassistant.core'] = mock_ha_core
-    sys.modules['homeassistant.const'] = mock_ha_const
-    sys.modules['homeassistant.config_entries'] = mock_config_entries
-    sys.modules['homeassistant.helpers'] = mock_ha_helpers
-    sys.modules['homeassistant.helpers.config_validation'] = mock_ha_helpers.config_validation
-    sys.modules['homeassistant.helpers.entity_registry'] = mock_ha_helpers.entity_registry
-    sys.modules['homeassistant.helpers.entity'] = mock_ha_helpers.entity
-    sys.modules['homeassistant.helpers.entity_platform'] = mock_ha_helpers.entity_platform
-    sys.modules['homeassistant.helpers.selector'] = mock_ha_helpers.selector
-    sys.modules['homeassistant.helpers.storage'] = mock_ha_helpers.storage
-    sys.modules['homeassistant.helpers.update_coordinator'] = mock_update_coordinator
-    sys.modules['homeassistant.components'] = mock_components
-    sys.modules['homeassistant.components.sensor'] = mock_sensor
-    sys.modules['homeassistant.components.select'] = mock_select
-    sys.modules['homeassistant.components.switch'] = mock_switch
-    sys.modules['homeassistant.util'] = mock_ha_util
-    sys.modules['homeassistant.util.dt'] = mock_dt_util
-    sys.modules['voluptuous'] = mock_voluptuous
+    sys.modules["homeassistant"] = mock_ha
+    sys.modules["homeassistant.core"] = mock_ha_core
+    sys.modules["homeassistant.const"] = mock_ha_const
+    sys.modules["homeassistant.config_entries"] = mock_config_entries
+    sys.modules["homeassistant.helpers"] = mock_ha_helpers
+    sys.modules["homeassistant.helpers.config_validation"] = (
+        mock_ha_helpers.config_validation
+    )
+    sys.modules["homeassistant.helpers.entity_registry"] = (
+        mock_ha_helpers.entity_registry
+    )
+    sys.modules["homeassistant.helpers.entity"] = mock_ha_helpers.entity
+    sys.modules["homeassistant.helpers.entity_platform"] = (
+        mock_ha_helpers.entity_platform
+    )
+    sys.modules["homeassistant.helpers.selector"] = mock_ha_helpers.selector
+    sys.modules["homeassistant.helpers.storage"] = mock_ha_helpers.storage
+    sys.modules["homeassistant.helpers.update_coordinator"] = mock_update_coordinator
+    sys.modules["homeassistant.components"] = mock_components
+    sys.modules["homeassistant.components.sensor"] = mock_sensor
+    sys.modules["homeassistant.components.select"] = mock_select
+    sys.modules["homeassistant.components.switch"] = mock_switch
+    sys.modules["homeassistant.util"] = mock_ha_util
+    sys.modules["homeassistant.util.dt"] = mock_dt_util
+    sys.modules["voluptuous"] = mock_voluptuous
 
 
 # Set up mocks before pytest collects tests
@@ -400,9 +431,11 @@ def mock_hass() -> MagicMock:
 @pytest.fixture
 def mock_config_entry() -> MagicMock:
     """Create a mock config entry."""
+
     # Use a simple object instead of MagicMock to avoid spec issues
     class MockConfigEntry:
         """Mock config entry object."""
+
         def __init__(self):
             self.entry_id = "test_entry_id"
             self.version = 4
