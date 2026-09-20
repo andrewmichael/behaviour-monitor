@@ -102,3 +102,27 @@ def test_round_trip_and_prune():
     m2.recompute()
     assert m2.chains == []
     assert ChainModel.from_dict({"nope": 1}, CFG).chains == []
+
+
+def test_prune_keeps_counts_exact_when_hops_overflow():
+    m = ChainModel(CFG)
+    day_starts = [MON + timedelta(days=d) for d in range(5)]
+    for day_start in day_starts:
+        for i in range(50):
+            t = day_start + timedelta(minutes=i * 3)
+            m.record(_ev(t, "Bedroom"))
+            m.record(_ev(t + timedelta(minutes=1), "Bathroom"))
+            m.record(_ev(t + timedelta(minutes=2), "Lounge"))
+    m.recompute()
+
+    def _pair_count() -> int:
+        for p in m.to_dict()["pairs"]:
+            if p["a"] == "Bedroom" and p["b"] == "Bathroom":
+                return sum(p["days"].values())
+        return 0
+
+    assert _pair_count() == 250
+    m.prune(day_starts[2].date())
+    assert _pair_count() == 150
+    m.prune(day_starts[-1].date() + timedelta(days=1))
+    assert _pair_count() == 0

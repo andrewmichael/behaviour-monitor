@@ -30,10 +30,14 @@ class ChainConfig:
 
 @dataclass
 class _Pair:
-    count: int = 0
+    days: dict[str, int] = field(default_factory=dict)
     hops: deque[tuple[str, float]] = field(
         default_factory=lambda: deque(maxlen=_HOPS_KEPT)
     )
+
+    @property
+    def count(self) -> int:
+        return sum(self.days.values())
 
 
 @dataclass
@@ -103,7 +107,7 @@ class ChainModel:
             if prev_room == room:
                 continue
             pair = self._pairs.setdefault((prev_room, room), _Pair())
-            pair.count += 1
+            pair.days[day] = pair.days.get(day, 0) + 1
             pair.hops.append((day, age))
         self._steps_into[room] = self._steps_into.get(room, 0) + 1
         self._total_steps += 1
@@ -247,15 +251,10 @@ class ChainModel:
         cutoff = iso_day(before)
         for key in list(self._pairs):
             pair = self._pairs[key]
+            pair.days = {d: c for d, c in pair.days.items() if d >= cutoff}
             kept = [(d, h) for d, h in pair.hops if d >= cutoff]
-            removed = (
-                pair.count - len(kept)
-                if pair.count > len(pair.hops)
-                else len(pair.hops) - len(kept)
-            )
             pair.hops.clear()
             pair.hops.extend(kept)
-            pair.count = max(0, pair.count - removed)
             if pair.count == 0:
                 del self._pairs[key]
         self._days_seen = {d for d in self._days_seen if d >= cutoff}
@@ -270,7 +269,7 @@ class ChainModel:
     def to_dict(self) -> dict[str, Any]:
         return {
             "pairs": [
-                {"a": a, "b": b, "count": p.count, "hops": list(p.hops)}
+                {"a": a, "b": b, "days": dict(p.days), "hops": list(p.hops)}
                 for (a, b), p in self._pairs.items()
             ],
             "steps_into": dict(self._steps_into),
@@ -292,7 +291,9 @@ class ChainModel:
         m = cls(config)
         try:
             for p in data.get("pairs", []):
-                pair = _Pair(int(p["count"]))
+                pair = _Pair()
+                for d, c in p.get("days", {}).items():
+                    pair.days[str(d)] = int(c)
                 pair.hops.extend((str(d), float(h)) for d, h in p.get("hops", []))
                 m._pairs[(str(p["a"]), str(p["b"]))] = pair
             m._steps_into = {
