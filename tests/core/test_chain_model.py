@@ -92,19 +92,32 @@ def test_stall_raises_note_naming_missing_room():
     day = MON + timedelta(days=14)
     m.record(_ev(day, "Bedroom"))
     m.record(_ev(day + timedelta(minutes=4), "Bathroom"))
-    # 240 s median, 0 mad -> tolerance is max(240, 720, 2 * 900) = 1800 s
+    # 240 s median, 0 mad -> tolerance is max(240, 720, 2 * 900) = 1800 s,
+    # measured from the step into the Bathroom at +4 min
     assert m.evaluate(day + timedelta(minutes=6)) == []
-    assert m.evaluate(day + timedelta(minutes=20)) == []
     assert m.evaluate(day + timedelta(minutes=25)) == []
-    notes = m.evaluate(day + timedelta(minutes=40))
+    assert m.evaluate(day + timedelta(minutes=30)) == []
+    notes = m.evaluate(day + timedelta(minutes=35))
     assert len(notes) == 1
     n = notes[0]
     assert n.cls is AlertClass.STATISTICAL and n.kind == "chain_stall"
     assert n.source == "Bedroom → Bathroom → Kitchen"
     assert n.details == {"missing": "Kitchen", "step": 2}
-    # stall persists for its ttl then clears
-    assert len(m.evaluate(day + timedelta(minutes=45))) == 1
-    assert m.evaluate(day + timedelta(minutes=40 + 61)) == []
+    # nothing else happens, so the stall stands until the six-hour safety cap
+    assert len(m.evaluate(day + timedelta(minutes=40))) == 1
+    assert len(m.evaluate(day + timedelta(hours=3))) == 1
+    assert m.evaluate(day + timedelta(minutes=35, hours=6, seconds=60)) == []
+
+
+def test_stall_clears_on_next_step():
+    m = _trained()
+    day = MON + timedelta(days=14)
+    m.record(_ev(day, "Bedroom"))
+    m.record(_ev(day + timedelta(minutes=4), "Bathroom"))
+    assert len(m.evaluate(day + timedelta(minutes=35))) == 1
+    # the person moved, so the stalled routine is moot well before the cap
+    m.record(_ev(day + timedelta(minutes=40), "Lounge"))
+    assert m.evaluate(day + timedelta(minutes=41)) == []
 
 
 def test_clear_runs_drops_open_runs_and_stalls():

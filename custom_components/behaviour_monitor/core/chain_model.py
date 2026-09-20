@@ -37,7 +37,7 @@ class ChainConfig:
     window_days: int = 28
     hop_tolerance_mads: float = 3.0
     max_chain_len: int = 6
-    stall_ttl_s: float = 3600.0
+    stall_ttl_s: float = 21600.0
 
 
 @dataclass
@@ -131,6 +131,10 @@ class ChainModel:
         self._total_steps[bucket] = self._total_steps.get(bucket, 0) + 1
         self._recent[room] = ts
         self._current_room = room
+        # The person has moved, so whatever routine was stalled is moot. A
+        # stall is only interesting while nothing at all is happening; the TTL
+        # is just a safety cap for a house that never reports again.
+        self._stalls.clear()
         self._advance_runs(room, ts)
 
     def _expire(self, now: datetime) -> None:
