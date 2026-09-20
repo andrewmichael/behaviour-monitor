@@ -158,6 +158,19 @@ class HouseModel:
             gap, expected, ratio, severity, degraded, self._last_room
         )
 
+    def restart_clock(self, now: datetime) -> None:
+        """Reset the gap clock and severity ladder without recording a gap.
+
+        Used when a paused period (e.g. holiday) ends: the silence during the
+        pause must not be treated as an activity gap, and any severity the
+        ladder held before the pause must not survive into the resumed clock.
+        """
+        self._last_activity = now
+        self._current = None
+        self._pending = None
+        self._pending_count = 0
+        self._below_count = 0
+
     def _sustain(self, raw: Severity | None) -> None:
         if raw is not None and (self._current is None or raw > self._current):
             if raw == self._pending:

@@ -11,9 +11,9 @@ from .alerts import Alert, AlertClass, Severity
 from .chain_model import ChainConfig, ChainModel
 from .drift_detector import DriftConfig, DriftDetector
 from .entity_routine import EntityRoutineModel, RoutineConfig
-from .events import ActivityEvent, Category, HealthEvent
+from .events import ActivityEvent, Category, EventKind, HealthEvent
 from .health_tracker import HealthConfig, HealthTracker
-from .house_model import HouseConfig, HouseModel
+from .house_model import HouseAssessment, HouseConfig, HouseModel
 from .normaliser import Normaliser, NormaliserConfig
 from .slots import confidence, iso_day
 
@@ -88,6 +88,7 @@ class Engine:
         self._health = HealthTracker(config.health)
         self._router = AlertRouter(config.router)
         self._holiday = False
+        self._holiday_just_ended = False
         self._snooze_until: datetime | None = None
         self._last_poll_day: date | None = None
         self._first_observation: datetime | None = None
@@ -140,7 +141,10 @@ class Engine:
 
     @holiday.setter
     def holiday(self, value: bool) -> None:
-        self._holiday = bool(value)
+        value = bool(value)
+        if self._holiday and not value:
+            self._holiday_just_ended = True
+        self._holiday = value
 
     @property
     def snooze_until(self) -> datetime | None:
@@ -217,9 +221,33 @@ class Engine:
     def poll(self, now: datetime) -> list[DeliveryAction]:
         for ev in self._normaliser.flush(now):
             self._learn(ev)
-        if self._last_poll_day is not None and now.date() != self._last_poll_day:
-            self._rollover(self._last_poll_day, now)
-        self._last_poll_day = now.date()
+
+        if self._holiday:
+            # No rollover while paused: there is nothing learned to finalise,
+            # and running it would record zero daily counts into drift.
+            self._last_poll_day = now.date()
+        elif self._holiday_just_ended:
+            # First poll back: the pause must not look like a stale multi-day
+            # gap to rollover either, so skip it here too and pick back up
+            # cleanly from today.
+            self._house.restart_clock(now)
+            self._chains.clear_runs()
+            # Entities' last-seen bookkeeping is frozen from before the pause;
+            # without this, the jump in house.last_activity makes every
+            # entity look silent the instant the clock restarts, tanking
+            # live_fraction and permanently degrading the ladder.
+            for s in self._specs.values():
+                self._health.record_activity(
+                    ActivityEvent(
+                        s.entity_id, s.category, EventKind.GENERIC, s.room, now
+                    )
+                )
+            self._last_poll_day = now.date()
+            self._holiday_just_ended = False
+        else:
+            if self._last_poll_day is not None and now.date() != self._last_poll_day:
+                self._rollover(self._last_poll_day, now)
+            self._last_poll_day = now.date()
 
         alerts: list[Alert] = []
         alerts.extend(
@@ -228,8 +256,13 @@ class Engine:
             )
         )
         learned = confidence(self._days_seen(), self._cfg.learning_days) >= 1.0
-        live = self._health.live_fraction(now)
-        assessment = self._house.evaluate(now, live_fraction=live)
+        if self._holiday:
+            assessment = HouseAssessment(
+                None, None, None, None, False, self._house.last_room
+            )
+        else:
+            live = self._health.live_fraction(now)
+            assessment = self._house.evaluate(now, live_fraction=live)
         if learned and not self._holiday:
             if assessment.severity is not None:
                 hours = (assessment.gap_s or 0) / 3600
@@ -397,6 +430,7 @@ class Engine:
             "router": self._router.to_dict(),
             "meta": {
                 "holiday": self._holiday,
+                "holiday_just_ended": self._holiday_just_ended,
                 "snooze_until": (
                     self._snooze_until.isoformat() if self._snooze_until else None
                 ),
@@ -434,6 +468,7 @@ class Engine:
         try:
             m = data.get("meta", {})
             e._holiday = bool(m.get("holiday", False))
+            e._holiday_just_ended = bool(m.get("holiday_just_ended", False))
             e._snooze_until = (
                 datetime.fromisoformat(m["snooze_until"])
                 if m.get("snooze_until")

@@ -131,6 +131,40 @@ def test_set_entities_add_remove_and_reset():
     assert e.snapshot(MON)["learning"]["confidence"] == 0.0
 
 
+def test_holiday_pauses_the_ladder_and_ends_cleanly():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    day15 = MON + timedelta(days=15)
+    _pulse(e, "binary_sensor.kit", day15 + timedelta(hours=9), learn_only=False)
+    e.holiday = True
+
+    holiday_start = day15 + timedelta(hours=9, minutes=1)
+    acts = []
+    last_holiday_poll = holiday_start
+    for h in range(72):
+        last_holiday_poll = holiday_start + timedelta(hours=h)
+        acts += e.poll(last_holiday_poll)
+    assert [a for a in acts if a.action == "push"] == []
+    assert e.snapshot(last_holiday_poll)["welfare"]["status"] != "degraded"
+
+    day18_noon = MON + timedelta(days=18, hours=12)
+    e.holiday = False
+    acts = e.poll(day18_noon + timedelta(minutes=1))
+    assert [a for a in acts if a.action == "push"] == []
+    acts = e.poll(day18_noon + timedelta(minutes=5))
+    assert [a for a in acts if a.action == "push"] == []
+
+    pushes = []
+    t = day18_noon + timedelta(minutes=5)
+    end = day18_noon + timedelta(minutes=5) + timedelta(hours=4)
+    while t <= end:
+        pushes += [a for a in e.poll(t) if a.action == "push"]
+        t += timedelta(minutes=10)
+    assert pushes
+    assert pushes[0].alert.kind == "inactivity"
+    assert pushes[0].alert.raised_at > day18_noon
+
+
 def test_round_trip():
     e = _engine()
     _train(e, days=5)

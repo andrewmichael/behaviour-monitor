@@ -87,6 +87,15 @@ def test_stall_raises_note_naming_missing_room():
     assert m.evaluate(day + timedelta(minutes=25 + 61)) == []
 
 
+def test_clear_runs_drops_open_runs_and_stalls():
+    m = _trained()
+    day = MON + timedelta(days=14)
+    m.record(_ev(day, "Bedroom"))
+    m.record(_ev(day + timedelta(minutes=4), "Bathroom"))
+    m.clear_runs()
+    assert m.evaluate(day + timedelta(days=10)) == []
+
+
 def test_rename_room_keeps_counts():
     m = _trained()
     m.rename_room("Bathroom", "Washroom")

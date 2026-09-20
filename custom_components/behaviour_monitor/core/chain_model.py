@@ -224,6 +224,16 @@ class ChainModel:
 
     # ------------------------------------------------------- maintenance
 
+    def clear_runs(self) -> None:
+        """Drop in-progress runs and stalls without touching learned chains.
+
+        Used when a paused period (e.g. holiday) ends: a run that started
+        before the pause, or a stall accumulated across it, no longer means
+        anything about the resumed routine.
+        """
+        self._runs.clear()
+        self._stalls.clear()
+
     def rename_room(self, old: str, new: str) -> None:
         self._pairs = {
             (new if a == old else a, new if b == old else b): p

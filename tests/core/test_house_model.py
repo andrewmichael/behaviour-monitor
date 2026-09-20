@@ -64,6 +64,25 @@ def test_severity_ladder_and_sustain():
     assert a.severity is Severity.MEDIUM
 
 
+def test_restart_clock_resets_gap_and_ladder():
+    m = HouseModel(HouseConfig(sustain_polls=2))
+    _train(m)
+    now = MON + timedelta(days=14)
+    m.record(_ev(now))
+    m.evaluate(now + timedelta(minutes=20))  # ratio 4 -> low, first poll
+    m.evaluate(now + timedelta(minutes=21))  # second poll sustains -> LOW
+    m.evaluate(now + timedelta(minutes=35))  # ratio 7 -> medium, first poll
+    m.evaluate(now + timedelta(minutes=36))  # second poll sustains -> MEDIUM
+    m.evaluate(now + timedelta(minutes=61))  # ratio 12.2 -> high, first poll
+    a = m.evaluate(now + timedelta(minutes=62))  # second poll sustains -> HIGH
+    assert a.severity is Severity.HIGH
+    t = now + timedelta(minutes=70)
+    m.restart_clock(t)
+    assert m.last_activity == t
+    a = m.evaluate(t + timedelta(minutes=1))
+    assert a.severity is None
+
+
 def test_floor_prevents_tiny_median_blowing_up_ratio():
     m = HouseModel(HouseConfig(floor_s=300.0))
     _train(m, gap_min=1)
