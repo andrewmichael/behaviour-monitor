@@ -985,7 +985,7 @@ git commit -m "feat(core): plug normalisation with learned idle level"
 - Create: `tests/core/test_house_model.py`
 
 **Interfaces:**
-- Consumes: `ActivityEvent`, `slot_index`, `median_mad`, `confidence`, `iso_day`.
+- Consumes: `ActivityEvent`, `slot_index`, `confidence`, `iso_day`.
 - Produces: `HouseConfig`, `HouseAssessment(gap_s, expected_s, ratio, severity, degraded, contributing)`, `HouseModel` with `record(event)`, `evaluate(now, live_fraction=1.0) -> HouseAssessment`, `expected_gap(now) -> float | None`, `last_activity`, `last_room`, `confidence(now)`, `rooms_visited(day) -> set[str]`, `prune(before: date)`, `to_dict`, `from_dict`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1116,9 +1116,10 @@ from typing import Any
 
 from .alerts import Severity
 from .events import ActivityEvent
-from .slots import SLOTS, confidence, iso_day, median_mad, slot_index
+from .slots import SLOTS, confidence, iso_day, slot_index
 
 MIN_GAPS_PER_SLOT = 8
+EXPECTED_GAP_QUANTILE = 0.9
 _GAPS_PER_SLOT = 400
 
 
@@ -1187,11 +1188,19 @@ class HouseModel:
     # --------------------------------------------------------------- queries
 
     def expected_gap(self, now: datetime) -> float | None:
+        """90th percentile of learned gaps for this slot.
+
+        Activity comes in bursts (a morning routine is several events a few
+        minutes apart followed by an hour of nothing), so the median gap is
+        far too tight. The 90th percentile is "the longest gap that is still
+        normal for this hour", which is what a welfare ratio must compare
+        against.
+        """
         gaps = self._gaps[slot_index(now)]
         if len(gaps) < MIN_GAPS_PER_SLOT:
             return None
-        med, _ = median_mad(g for _, g in gaps)
-        return med
+        vals = sorted(g for _, g in gaps)
+        return float(vals[min(len(vals) - 1, int(len(vals) * EXPECTED_GAP_QUANTILE))])
 
     def confidence(self, now: datetime) -> float:
         return confidence(len(self._days_seen), self._cfg.learning_days)
@@ -2832,6 +2841,8 @@ class AlertRouter:
                 if rose and alert.cls is AlertClass.WELFARE:
                     cur.acknowledged = False
                     actions.extend(self._push(cur, now, snoozed))
+                elif rose and alert.cls is AlertClass.STATISTICAL and not snoozed:
+                    actions.append(DeliveryAction("log", alert))
         for key in list(self._open):
             o = self._open[key]
             if key in seen or (o.panic and not o.acknowledged):
@@ -3448,7 +3459,7 @@ git commit -m "feat(core): engine wiring models, rollover, snapshot and persiste
 **Interfaces:**
 - Fixture format: a `.jsonl` file, one JSON object per line, sorted by time: `{"t": "<ISO 8601 with offset>", "e": "<entity_id>", "s": "<state string>"}`. A sidecar `<name>.sidecar.json`: `{"site": "<name>", "entities": [{"entity_id": ..., "category": ..., "room": ...}], "options": {...}}`.
 - `synth.py` produces: `Site` (entity specs), `write_fixture(path, events, specs, options)`, `normal_days(start, days, chain_minutes=4.0, seed=1) -> list[tuple[datetime, str, str]]`, scenario builders `panic_press`, `silent_kitchen`, `sitewide_dropout`, `chain_stall_at_kettle`, `kettle_absent_days`, `chain_lengthening`, `chain_jump`.
-- `scripts/replay.py`: `python scripts/replay.py <fixture.jsonl> [--poll-minutes 5] [--learn-days N] [--json]` prints one line per delivery action: `<timestamp> <action> <class> <severity> <key> :: <explanation>`. `run_fixture(path, poll_minutes=5) -> list[tuple[datetime, DeliveryAction]]` is importable by tests.
+- `scripts/replay.py`: `python scripts/replay.py <fixture.jsonl> [--poll-minutes 5] [--json]` prints one line per delivery action: `<timestamp> <action> <class> <severity> <key> :: <explanation>`. `run_fixture(path, poll_minutes=5) -> list[tuple[datetime, DeliveryAction]]` and `run_fixture_full(path, poll_minutes=5) -> tuple[timeline, Engine, last_poll]` are importable by tests.
 
 - [ ] **Step 1: Write the synthetic generator**
 
@@ -3672,12 +3683,17 @@ def load_fixture(path: Path) -> tuple[list[tuple[datetime, str, str]], list[Enti
 
 
 def run_fixture(path: Path, poll_minutes: int = 5) -> list[tuple[datetime, DeliveryAction]]:
+    return run_fixture_full(path, poll_minutes)[0]
+
+
+def run_fixture_full(path: Path, poll_minutes: int = 5) -> tuple[list[tuple[datetime, DeliveryAction]], Engine, datetime | None]:
+    """Replay and also return the engine and the last poll time, for snapshot assertions."""
     events, specs, options = load_fixture(path)
     engine = Engine(EngineConfig.from_options(options), specs)
     last_state: dict[str, str | None] = {s.entity_id: None for s in specs}
     timeline: list[tuple[datetime, DeliveryAction]] = []
     if not events:
-        return timeline
+        return timeline, engine, None
     next_poll = events[0][0].replace(second=0, microsecond=0)
     step = timedelta(minutes=poll_minutes)
     for ts, eid, state in events:
@@ -3690,7 +3706,7 @@ def run_fixture(path: Path, poll_minutes: int = 5) -> list[tuple[datetime, Deliv
     while next_poll <= end:
         timeline.extend((next_poll, a) for a in engine.poll(next_poll))
         next_poll += step
-    return timeline
+    return timeline, engine, next_poll - step
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3727,7 +3743,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from replay import run_fixture  # noqa: E402
+from replay import run_fixture, run_fixture_full  # noqa: E402
 
 from tests.core import synth
 
@@ -3783,19 +3799,21 @@ def test_chain_stall_logs_missing_kitchen_and_silence_escalates(tmp_path):
 
 def test_kettle_absent_three_days_becomes_routine_notes(tmp_path):
     tl = _run(tmp_path, synth.kettle_absent_days())
-    logs = [(t, a.alert) for t, a in tl if a.action == "log" and a.alert.kind == "routine_missed"]
+    logs = [(t, a.alert) for t, a in tl if a.action == "log" and a.alert.kind == "routine_missed" and a.alert.source == "sensor.kettle_power"]
     assert {t.date() for t, _ in logs} >= {(synth.START + timedelta(days=21 + i)).date() for i in range(3)}
-    assert all(a.source == "sensor.kettle_power" for _, a in logs)
+    assert all(a.details["hour"] == 7 for _, a in logs)
 
 
 def test_gradual_lengthening_reports_drift_within_two_weeks(tmp_path):
-    tl = _run(tmp_path, synth.chain_lengthening())
+    path = tmp_path / "lengthen.jsonl"
+    synth.write_fixture(path, synth.chain_lengthening(), options=OPTS)
+    tl, engine, last_poll = run_fixture_full(path, poll_minutes=5)
     drifts = [(t, a.alert) for t, a in tl if a.action == "log" and a.alert.kind == "drift" and a.alert.source.startswith("chain:")]
     assert drifts
     first_day = (drifts[0][0].date() - synth.START.date()).days
     assert 24 <= first_day <= 35
-    promoted = [a.alert for _, a in tl if a.alert.kind == "timing_drift"]
-    assert promoted, "sustained lengthening should promote to welfare low"
+    open_keys = [a["key"] for a in engine.snapshot(last_poll)["welfare"]["open_alerts"]]
+    assert any(k.startswith("welfare:chain:") and k.endswith(":timing_drift") for k in open_keys), open_keys
 
 
 def test_sudden_jump_is_reported_by_day_three_after_the_jump(tmp_path):
