@@ -69,7 +69,10 @@ def test_sitewide_dropout_is_one_alert_and_counted():
     assert alerts[0].source == "site" and alerts[0].details["count"] == 3
     for eid, _, _ in ENTS[:3]:
         _down(t, eid, T0 + timedelta(seconds=40), available=True)
-    assert t.evaluate(T0 + timedelta(seconds=60), lambda e: None, None) == []
+    # the dropout latches until an evaluate has reported it back up again
+    back = t.evaluate(T0 + timedelta(seconds=60), lambda e: None, None)
+    assert [a.kind for a in back] == ["dropout"] and back[0].details["count"] == 3
+    assert t.evaluate(T0 + timedelta(seconds=90), lambda e: None, None) == []
     assert t.sitewide_dropouts_today(date(2026, 9, 21)) == 1
 
 

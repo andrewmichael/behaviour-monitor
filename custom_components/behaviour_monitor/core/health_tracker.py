@@ -39,6 +39,8 @@ class HealthTracker:
         self._ent: dict[str, _EntityHealth] = {}
         self._recent_downs: list[tuple[str, datetime]] = []
         self._sitewide_open: datetime | None = None
+        self._sitewide_pending = False
+        self._sitewide_count = 0
         self._sitewide_by_day: dict[str, int] = {}
 
     # ----------------------------------------------------------- membership
@@ -80,12 +82,16 @@ class HealthTracker:
         ]
         if not self._ent:
             return
+        down = len({e for e, _ in self._recent_downs})
         if (
-            len({e for e, _ in self._recent_downs})
-            > self._cfg.sitewide_fraction * len(self._ent)
+            down > self._cfg.sitewide_fraction * len(self._ent)
             and self._sitewide_open is None
         ):
             self._sitewide_open = now
+            # A dropout that heals between two polls is still a dropout, so
+            # latch it until an evaluate has had the chance to report it.
+            self._sitewide_pending = True
+            self._sitewide_count = down
             day = iso_day(now.date())
             self._sitewide_by_day[day] = self._sitewide_by_day.get(day, 0) + 1
 
@@ -162,20 +168,23 @@ class HealthTracker:
         out: list[Alert] = []
         down_now = {eid for eid, e in self._ent.items() if e.down_since is not None}
         if self._sitewide_open is not None:
-            if len(down_now) <= self._cfg.sitewide_fraction * len(self._ent):
-                self._sitewide_open = None
-            else:
+            still_down = len(down_now) > self._cfg.sitewide_fraction * len(self._ent)
+            if still_down or self._sitewide_pending:
+                count = max(len(down_now), self._sitewide_count)
                 out.append(
                     Alert(
                         AlertClass.HEALTH,
                         "site",
                         "dropout",
                         Severity.MEDIUM,
-                        f"{len(down_now)} of {len(self._ent)} sensors went unavailable together",
+                        f"{count} of {len(self._ent)} sensors went unavailable together",
                         now,
-                        {"count": len(down_now)},
+                        {"count": count},
                     )
                 )
+            if not still_down:
+                self._sitewide_open = None
+                self._sitewide_pending = False
         for eid in sorted(self._unavailable(now)):
             e = self._ent[eid]
             sev = Severity.HIGH if e.category is Category.PANIC else Severity.MEDIUM
@@ -227,6 +236,8 @@ class HealthTracker:
             "sitewide_open": (
                 self._sitewide_open.isoformat() if self._sitewide_open else None
             ),
+            "sitewide_pending": self._sitewide_pending,
+            "sitewide_count": self._sitewide_count,
             "sitewide_by_day": dict(self._sitewide_by_day),
         }
 
@@ -242,6 +253,8 @@ class HealthTracker:
                     _dt(e.get("last_event")),
                 )
             t._sitewide_open = _dt(data.get("sitewide_open"))
+            t._sitewide_pending = bool(data.get("sitewide_pending", False))
+            t._sitewide_count = int(data.get("sitewide_count", 0))
             t._sitewide_by_day = {
                 str(k): int(v) for k, v in data.get("sitewide_by_day", {}).items()
             }
