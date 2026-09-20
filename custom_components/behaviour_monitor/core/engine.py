@@ -360,7 +360,11 @@ class Engine:
                 ),
                 "last_room": self._house.last_room,
                 "gap_s": assessment_gap,
-                "expected_s": self._house.expected_gap(now),
+                "expected_s": (
+                    self._house.expected_gap(self._house.last_activity)
+                    if self._house.last_activity
+                    else None
+                ),
                 "rooms_today": sorted(self._house.rooms_visited(now.date())),
                 "daily_count": self._today_count if self._today == now.date() else 0,
             },

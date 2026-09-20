@@ -140,37 +140,38 @@ def test_rooms_visited_and_prune():
     assert m.rooms_visited(date(2026, 9, 21)) == set()
 
 
+def _burst(m: HouseModel, start: datetime, minutes: int, gap_min: int = 5) -> None:
+    """Events every gap_min minutes for `minutes` minutes from `start`."""
+    for mins in range(0, minutes + 1, gap_min):
+        m.record(_ev(start + timedelta(minutes=mins)))
+
+
 def test_expected_gap_pools_across_days_when_slot_is_sparse():
-    """The 11:00 boundary event only fires once a day, so the exact weekday+hour
-    slot stays sparse for weeks; expected_gap should pool by hour of day instead
-    of returning None until a full month of weekday recurrences pile up."""
+    """A single day of events leaves the exact weekday+hour slot short of
+    MIN_GAPS_PER_SLOT; expected_gap should pool by hour of day across the same
+    day type instead of returning None."""
     m = HouseModel(HouseConfig())
-    _train(m, days=7)  # one of each weekday, events every 5 min from 09:00-11:00
-    sparse = MON + timedelta(days=7, hours=2, minutes=30)  # next Monday, 11:30
-    assert m.expected_gap(sparse) is None  # slot=1, weekday pool=5, all-days pool=7
-    _train(m, days=3, start=MON + timedelta(days=7))  # 3 more days -> 10 trained
-    dense = MON + timedelta(days=14, hours=2, minutes=30)  # a later Monday, 11:30
-    assert m.expected_gap(dense) == 300.0  # weekday pool reaches 8
+    _burst(m, MON, 30)  # Monday 09:00-09:30 -> six gaps filed under Mon 09
+    query = MON + timedelta(days=7, minutes=15)  # the next Monday, 09:15
+    assert m.expected_gap(query) is None  # slot 6, weekday pool 6, all-days 6
+    _burst(m, MON + timedelta(days=1), 30)  # the Tuesday too -> weekday pool 13
+    assert m.expected_gap(query) == 300.0
 
 
 def test_expected_gap_falls_back_to_all_days_pool():
     """When the same-day-type pool is also sparse, pool across all seven weekdays."""
     m = HouseModel(HouseConfig())
-    m.record(_ev(datetime(2026, 9, 23, 15, 10, tzinfo=timezone.utc)))  # one Wednesday
-    weekends = (
-        date(2026, 9, 26),  # Sat
-        date(2026, 9, 27),  # Sun
-        date(2026, 10, 3),  # Sat
-        date(2026, 10, 4),  # Sun
-    )
-    for d in weekends:
-        base = datetime(d.year, d.month, d.day, 15, 0, tzinfo=timezone.utc)
-        for mins in range(0, 61, 5):
-            m.record(_ev(base + timedelta(minutes=mins)))
-    query = datetime(2026, 9, 30, 15, 30, tzinfo=timezone.utc)  # following Wednesday
+    # Two weekend days, 09:00-10:00 every 5 min: twelve gaps each under hour 9.
+    # The last event of each day sits in hour 10, so the overnight silence is
+    # filed under hour 10 and never pollutes the hour 9 pool.
+    for d in (date(2026, 9, 26), date(2026, 9, 27)):  # Sat, Sun
+        _burst(m, datetime(d.year, d.month, d.day, 9, 0, tzinfo=timezone.utc), 60)
+    wed = datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc)
+    _burst(m, wed, 10)  # one Wednesday, 09:00/09:05/09:10 -> two gaps
+    query = wed + timedelta(days=7, minutes=7)  # the following Wednesday, 09:07
     assert query.weekday() == 2  # a weekday, so the weekend pool can't serve it
-    assert m.expected_gap(query) == 300.0  # served by the all-days pool
-    assert m.expected_gap(datetime(2026, 9, 30, 3, 30, tzinfo=timezone.utc)) is None
+    assert m.expected_gap(query) == 300.0  # slot 2, weekday pool 2, all-days 26
+    assert m.expected_gap(query.replace(hour=3)) is None
 
 
 def test_round_trip():

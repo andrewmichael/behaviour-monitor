@@ -83,17 +83,21 @@ class HouseModel:
         day = iso_day(event.timestamp.date())
         self._days_seen.add(day)
         self._rooms_by_day.setdefault(day, set()).add(event.room)
-        if self._last_activity is not None and event.timestamp > self._last_activity:
-            gap = (event.timestamp - self._last_activity).total_seconds()
-            self._gaps[slot_index(event.timestamp)].append((day, gap))
+        started = self._last_activity
+        if started is not None and event.timestamp > started:
+            # A silence belongs to the slot it starts in, not the one it ends
+            # in: an hour whose activity is one tight burst followed by quiet
+            # must learn the quiet, or its own idle tail looks like an anomaly.
+            gap = (event.timestamp - started).total_seconds()
+            self._gaps[slot_index(started)].append((iso_day(started.date()), gap))
         if self._last_activity is None or event.timestamp >= self._last_activity:
             self._last_activity = event.timestamp
             self._last_room = event.room
 
     # --------------------------------------------------------------- queries
 
-    def expected_gap(self, now: datetime) -> float | None:
-        """90th percentile of learned gaps for this slot.
+    def expected_gap(self, ts: datetime) -> float | None:
+        """90th percentile length of a silence that starts at ``ts``.
 
         Activity comes in bursts (a morning routine is several events a few
         minutes apart followed by an hour of nothing), so the median gap is
@@ -105,11 +109,11 @@ class HouseModel:
         is still sparse: same day type (weekday/weekend) first, then all seven
         weekdays, before giving up.
         """
-        direct = self._gaps[slot_index(now)]
+        direct = self._gaps[slot_index(ts)]
         if len(direct) >= MIN_GAPS_PER_SLOT:
             return self._quantile(direct)
-        hour = now.hour
-        same_type = _WEEKEND_INDICES if is_weekend(now.date()) else _WEEKDAY_INDICES
+        hour = ts.hour
+        same_type = _WEEKEND_INDICES if is_weekend(ts.date()) else _WEEKDAY_INDICES
         pooled = self._pool(hour, same_type)
         if len(pooled) >= MIN_GAPS_PER_SLOT:
             return self._quantile(pooled)
@@ -140,7 +144,11 @@ class HouseModel:
         gap = (
             (now - self._last_activity).total_seconds() if self._last_activity else None
         )
-        expected = self.expected_gap(now)
+        expected = (
+            self.expected_gap(self._last_activity)
+            if self._last_activity is not None
+            else None
+        )
         ratio = None
         raw: Severity | None = None
         if gap is not None and expected is not None and not degraded:
