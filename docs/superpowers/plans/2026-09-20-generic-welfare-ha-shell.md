@@ -762,7 +762,7 @@ async def test_holiday_snooze_ack_reset_roundtrip(coordinator):
     await coordinator.async_reset_learning()
     await coordinator.async_acknowledge()
     saved = coordinator._store._data
-    assert saved["engine"]["schema"] == 1 and saved["site"] == "Test House"
+    assert saved["engine"]["schema"] == 2 and saved["site"] == "Test House"
 
 
 @pytest.mark.asyncio
