@@ -16,7 +16,7 @@
 - Every model exposes `to_dict() -> dict` and `@classmethod from_dict(cls, data, config) -> Self`, and `from_dict` must tolerate a missing or malformed section by returning a fresh instance.
 - All timestamps are timezone-aware `datetime` values passed as arguments. No module calls `datetime.now()`.
 - Slot scheme everywhere: `weekday * 24 + hour`, 168 slots.
-- Defaults are the spec's table: motion_debounce_s 90, plug_margin_w 5, learning_days 14, window_days 28, health_grace_s 900, push_repeat_s 1800, push_min_severity medium, house_low_ratio 3, chain_window_s 900, timing_promote_days 7, drift_sensitivity medium.
+- Defaults are the spec's table: motion_debounce_s 90, plug_margin_w 5, learning_days 14, window_days 28, health_grace_s 900, push_repeat_s 1800, push_min_severity medium, house_low_ratio 3, chain_window_s 1800, timing_promote_days 7, drift_sensitivity medium.
 - Black, line length 88. Ruff clean. Type hints on every function.
 - Commit after every task with a conventional commit message.
 - Run tests with `venv/bin/python -m pytest` (the Makefile's `test` target). `tests/conftest.py` installs Home Assistant mocks at import time; core tests do not need them but are unaffected.
@@ -1652,7 +1652,7 @@ git commit -m "feat(core): entity routine model with expected windows and routin
 - Create: `tests/core/test_chain_model.py`
 
 **Interfaces:**
-- Produces: `ChainConfig(window_s=900.0, min_count=10, lift=2.0, learning_days=14, window_days=28, hop_tolerance_mads=3.0, max_chain_len=6, stall_ttl_s=3600.0)`, `Chain(rooms, hop_stats, completions)` with `name`, `ChainModel` with `record(event)`, `recompute()`, `evaluate(now) -> list[Alert]`, `chains -> list[Chain]`, `completions_for_day(day) -> dict[str, float]`, `rename_room(old, new)`, `remove_room(room)`, `prune(before)`, `confidence(now)`, `to_dict`, `from_dict`.
+- Produces: `ChainConfig(window_s=1800.0, min_count=10, lift=2.0, learning_days=14, window_days=28, hop_tolerance_mads=3.0, max_chain_len=6, stall_ttl_s=21600.0)`, `Chain(rooms, hop_stats, completions)` with `name`, `ChainModel` with `record(event)`, `recompute()`, `evaluate(now) -> list[Alert]`, `chains -> list[Chain]`, `completions_for_day(day) -> dict[str, float]`, `rename_room(old, new)`, `remove_room(room)`, `prune(before)`, `confidence(now)`, `to_dict`, `from_dict`.
 - Stall alerts are `Alert(STATISTICAL, chain.name, "chain_stall", LOW, details={"missing": room, "step": idx})`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1784,14 +1784,14 @@ ARROW = " → "
 
 @dataclass(frozen=True)
 class ChainConfig:
-    window_s: float = 900.0
+    window_s: float = 1800.0
     min_count: int = 10
     lift: float = 2.0
     learning_days: int = 14
     window_days: int = 28
     hop_tolerance_mads: float = 3.0
     max_chain_len: int = 6
-    stall_ttl_s: float = 3600.0
+    stall_ttl_s: float = 21600.0
 
 
 @dataclass
