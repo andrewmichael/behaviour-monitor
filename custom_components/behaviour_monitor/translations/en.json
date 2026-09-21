@@ -80,6 +80,9 @@
     },
     "switch": {"holiday_mode": {"name": "Holiday Mode"}},
     "select": {"snooze": {"name": "Snooze Notifications"}},
-    "button": {"acknowledge": {"name": "Acknowledge"}}
+    "button": {
+      "acknowledge": {"name": "Acknowledge"},
+      "test_notification": {"name": "Test notification"}
+    }
   }
 }

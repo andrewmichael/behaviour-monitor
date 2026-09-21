@@ -85,6 +85,7 @@ in one category's list.
 | `switch.<site>_holiday_mode` | Pauses learning and suppresses welfare and statistical alerts while the occupant is away. Panic and device health still alert |
 | `select.<site>_snooze` | Suppresses welfare and statistical delivery for a chosen duration (1 hour, 2 hours, 4 hours, or 1 day). Panic and device health still alert |
 | `button.<site>_acknowledge` | Stops repeat pushes for open welfare alerts; the alert stays open until the house recovers |
+| `button.<site>_test_notification` | Sends a test panic push through the notify service and the persistent notification, then acknowledges it. Learned state is untouched |
 
 ## Services
 
