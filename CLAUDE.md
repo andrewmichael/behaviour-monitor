@@ -66,6 +66,16 @@ make clean-all    # Remove venv and all generated files
 - Use conventional commits for automatic versioning
 - `feat:` = minor bump, `fix:` = patch bump, `!` or `BREAKING CHANGE:` = major bump
 
+### Versioning
+- Never edit the version in `manifest.json` by hand. The release workflow
+  reads it, adds the bump implied by the commits since the last tag, and
+  writes it back. A manual bump plus the automatic one skips a major
+  (5.0.0 written by hand then `feat!:` on merge released as 6.0.0).
+- The git tag is the source of truth for the version. Docs and release
+  notes should quote the tag, not a number chosen in advance.
+- Every push to main with a `docs:`, `chore:`, `ci:` or similar commit
+  cuts a patch release. Append `[skip ci]` to docs-only commits on main.
+
 ### Code Style
 - Black for formatting (line length 88)
 - Ruff for linting
