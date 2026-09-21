@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-09-21
+
+### Added
+- test notification button
+
+### Changed
+- Documentation: upgrade section — no entities until configured; which v4 ids survive [skip ci]
+- Documentation: versioning rule — never hand-edit manifest version; tag is source of truth [skip ci]
+
 ## [6.0.1] - 2026-09-21
 
 ### Changed
