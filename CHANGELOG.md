@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-09-21
+
+### Changed
+- Documentation: how to export site history for tuning and keep 35 days of recorder data [skip ci]
+
+### Fixed
+- options form failed with 400 because a unitless number passed None as its unit
+
 ## [6.0.0] - 2026-09-21
 
 ### Added
