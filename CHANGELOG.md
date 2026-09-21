@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-09-21
+
+### Added
+- remove v4 detectors, bump to 5.0.0, document the v5 architecture
+- real-site fixture exporter with anonymised ids and rooms
+- v11 migration with assign-categories repair, new services, button platform
+- v5 services and translations with category fields and repair texts
+- sensors on the engine snapshot, acknowledge button, shared device info
+- coordinator drives core Engine, resolves rooms from areas, routes delivery actions
+- config flow with site name, notify service and six category lists
+- v5 constants with category config keys and spec option defaults
+- chain step window defaults to thirty minutes
+- synthetic scenarios, fixture format and replay CLI
+- engine wiring models, rollover, snapshot and persistence
+- alert router with escalation, promotion and class-based delivery
+- health tracker with grace, site-wide dropout and silent sensor
+- CUSUM drift detector over named daily series
+- room chain model with live runs, stalls and completion timing
+- entity routine model with expected windows and routine notes
+- house activity model with sustained severity ladder
+- plug normalisation with learned idle level
+- normaliser for motion, contact, panic, light, other and availability
+- slot index and statistics helpers
+- Alert, AlertClass and ordered Severity
+- event types and category enums
+
+### Changed
+- Documentation: Part 2 outcomes — rulings and deferred items
+- Documentation: spec 12 unconfigured entries have no entities (ruling P8)
+- Documentation: README for v5 categories, options, entities, services and upgrade
+- black conftest
+- Documentation: Part 1 outcomes — rulings and deferred items for Part 2
+- Documentation: Part 1 plan last chain-window straggler and stall tolerance note
+- Documentation: Part 2 plan expects engine schema 2
+- Documentation: Part 1 plan reflects rulings R24 and R25 defaults
+- Documentation: chain step window default is 1800 s (ruling R25)
+- format health tracker and its tests with black; fix E731 in test
+- format chain model and drift detector with black
+- format normaliser and its tests with black
+- format core tests with black
+- Documentation: plan pre-flight rulings — p90 expected gap, observable timing promotion, scoped scenario asserts
+- Documentation: implementation plans for the generic welfare core (pure core) and Home Assistant shell
+- Documentation: room display names strip the site-name prefix; models stay room-agnostic
+- Documentation: rooms from Home Assistant areas as chain nodes, drift input and explanation context
+- Documentation: design spec for generic welfare core with categories, learned models and classed alerts
+
+### Fixed
+- house slots keep the longest silence per day; trust needs three days; floor 20 min
+- device-area changes re-resolve rooms; reset keeps holiday and snooze; stale store schema triggers bootstrap
+- shutdown stops both timers; setup isolates store and recorder failures; area moves no longer merge rooms
+- store migration discards v4 state; recorder replay by entity id; bootstrap actions are delivered
+- cleared category lists persist as empty in the options flow
+- silent detection waits for learning; pruned gaps and step counts; persisted drift alerts
+- chain store loader tolerates old shapes; schema 2; round-trip asserts buckets
+- stalls persist until the next step; six-hour safety cap
+- live chain runs tolerate three times the learned hop before stalling
+- first numeric plug reading is judged against zero idle
+- routine notes escalate welfare only from entities alive today
+- site-wide dropout latches until reported once
+- chains are learned per three-hour bucket; same-room events refresh recency
+- house gaps are filed under the hour the silence starts
+- first sighting of an on state counts as activity
+- holiday restarts every clock; rollover walks skipped days; from_dict drops orphans
+- holiday pauses the house ladder and rollover; holiday end restarts the clock
+- house expected_gap pools by hour of day while weekday slots are sparse
+- holiday suppresses welfare and statistical clear deliveries
+- chain pair counts are exact per day so prune never over-subtracts
+- freeze the house ladder while degraded; fraction-gate test observes all Mondays
+- house model compares against the current slot; test trains two hours per day
+- emit restore HealthEvent when old state is unavailable; ruff clean
+- explicit Severity comparison operators
+
 ## [4.2.1] - 2026-09-18
 
 ### Fixed
