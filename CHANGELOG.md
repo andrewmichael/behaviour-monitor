@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-09-21
+
+### Fixed
+- test push never replaces or acknowledges a real panic
+
 ## [6.1.0] - 2026-09-21
 
 ### Added
