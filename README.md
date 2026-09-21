@@ -130,6 +130,42 @@ you to place them into the new categories under the integration's options.
 Until you do, nothing is monitored and the welfare sensor reports
 `unconfigured`.
 
+## Exporting Site Data for Tuning
+
+The learned store is the output of the current rules, so it cannot be used to
+test new ones. What refines the monitor is the raw state-change history of the
+monitored sensors, which can be replayed through the engine as often as needed
+and the alert timelines compared.
+
+`scripts/export_fixture.py` pulls that history from the Home Assistant recorder
+through the REST API and writes an anonymised fixture: a `.jsonl` file of state
+changes and a `.sidecar.json` with categories and rooms. Entity ids and room
+names are replaced with generic ones in the files; the real names are printed
+to the terminal only.
+
+1. Create a long-lived access token under your Home Assistant profile,
+   Security tab, and save it to `~/.ha_token`.
+2. Write `site_entities.json` listing each monitored entity:
+
+   ```json
+   [{"entity_id": "binary_sensor.kitchen_motion", "category": "motion", "room": "Kitchen"}]
+   ```
+
+3. From a checkout of this repository:
+
+   ```bash
+   source venv/bin/activate
+   python scripts/export_fixture.py --url http://homeassistant.local:8123 \
+     --token "$(cat ~/.ha_token)" --entities site_entities.json \
+     --days 28 --out tests/fixtures/site_real.jsonl --site "Real site"
+   ```
+
+4. Replay it with `python scripts/replay.py tests/fixtures/site_real.jsonl`.
+
+The recorder keeps 10 days of history by default, so an export covers at most
+that. The models learn over a 28-day window; set `purge_keep_days: 35` under
+`recorder:` in `configuration.yaml` now to have a full window available later.
+
 ## Development
 
 See [README-DEV.md](README-DEV.md) for complete development setup
