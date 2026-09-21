@@ -127,8 +127,17 @@ major version, so nothing is carried forward.
 The config entry migrates automatically to version 11. Your previously
 monitored entities are kept but left unassigned, and a repair issue asks
 you to place them into the new categories under the integration's options.
-Until you do, nothing is monitored and the welfare sensor reports
-`unconfigured`.
+Until you do, nothing is monitored and the integration creates no entities.
+
+Once categories are assigned, v4 sensors with a v5 counterpart of the same
+key (`welfare_status`, `last_activity`, `daily_activity_count`,
+`last_notification`, the holiday switch and the snooze select) keep their
+existing entity ids. New sensors and the acknowledge button get ids from the
+site name. v4-only sensors (`activity_score`, `anomaly_detected`,
+`baseline_confidence`, `entity_status_summary`, `routine_progress`,
+`statistical_training_remaining`, `time_since_activity`) remain in the
+entity registry as `unavailable` and can be deleted; dashboards that
+reference them need repointing at the v5 sensors.
 
 ## Exporting Site Data for Tuning
 
