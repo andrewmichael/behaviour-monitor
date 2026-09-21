@@ -72,17 +72,27 @@ def validate_categories(data: dict[str, Any]) -> str | None:
     return None
 
 
+def _number_config(
+    minimum: float, maximum: float, step: float, unit: str | None
+) -> dict[str, Any]:
+    """NumberSelector config. The unit key is omitted when there is no unit:
+    Home Assistant validates it as a string, so None fails the whole form."""
+    cfg: dict[str, Any] = {
+        "min": minimum,
+        "max": maximum,
+        "step": step,
+        "mode": NumberSelectorMode.BOX,
+    }
+    if unit is not None:
+        cfg["unit_of_measurement"] = unit
+    return cfg
+
+
 def _number(
     key: str, minimum: float, maximum: float, step: float, unit: str | None = None
 ) -> NumberSelector:
     return NumberSelector(
-        NumberSelectorConfig(
-            min=minimum,
-            max=maximum,
-            step=step,
-            mode=NumberSelectorMode.BOX,
-            unit_of_measurement=unit,
-        )
+        NumberSelectorConfig(**_number_config(minimum, maximum, step, unit))
     )
 
 

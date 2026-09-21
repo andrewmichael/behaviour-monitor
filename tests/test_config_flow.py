@@ -8,6 +8,7 @@ import pytest
 from custom_components.behaviour_monitor.config_flow import (
     BehaviourMonitorConfigFlow,
     BehaviourMonitorOptionsFlow,
+    _number_config,
     entity_specs_from_data,
     validate_categories,
 )
@@ -120,3 +121,11 @@ async def test_options_flow_clearing_a_category_persists_empty_list():
     kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
     assert kwargs["data"][CONF_CONTACT_ENTITIES] == []
     assert kwargs["data"][CONF_MOTION_ENTITIES] == GOOD[CONF_MOTION_ENTITIES]
+
+
+def test_number_config_omits_unit_when_none():
+    """Home Assistant's NumberSelector requires a string unit when the key is
+    present, so a unitless option must leave the key out entirely rather than
+    pass None. Passing None makes every options form fail to build (400)."""
+    assert "unit_of_measurement" not in _number_config(1.5, 10, 0.5, None)
+    assert _number_config(10, 600, 5, "s")["unit_of_measurement"] == "s"
