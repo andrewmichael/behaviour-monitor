@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: Cross-Entity Correlation
-status: executing
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-04-07T15:56:52.187Z"
-last_activity: 2026-04-07
+milestone: v6.1
+milestone_name: Generic Welfare Core
+status: complete
+stopped_at: Shipped v6.1.1 (test push isolation)
+last_updated: "2026-09-21T09:30:00.000Z"
+last_activity: 2026-09-21
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 8
-  completed_plans: 8
-  percent: 0
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Anomaly alerts must be trustworthy — when a notification fires, it should represent something genuinely unusual, not normal routine variation.
-**Current focus:** Phase 20 — Correlation Lifecycle
+**Current focus:** Real-site tuning of the v6 generic welfare core
 
 ## Current Position
 
-Phase: 20
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-07
+Milestone: v6.1 Generic Welfare Core (shipped 2026-09-21 as v6.0.0, v6.0.1, v6.1.0, v6.1.1)
+Built outside GSD with the superpowers workflow. Spec:
+docs/superpowers/specs/2026-09-20-generic-welfare-core-design.md. Plans and
+outcomes: docs/superpowers/plans/2026-09-20-generic-welfare-*.md.
+Status: Complete. Next work is data-driven tuning once a real-site fixture
+is exported (README, "Exporting Site Data for Tuning").
+Last activity: 2026-09-21
 
-Progress: [░░░░░░░░░░] 0% (0/4 v4.0 phases)
+Progress: [██████████] 100% (2/2 parts: pure core, Home Assistant shell)
 
 ## Accumulated Context
 
@@ -65,6 +68,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-07T10:25:23.027Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-09-21T09:30:00.000Z
+Stopped at: Shipped v6.1.1; deferred tuning items listed in the Part 1 and Part 2 outcomes docs
 Resume file: None
