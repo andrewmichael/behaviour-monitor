@@ -1,0 +1,53 @@
+{
+  "site": "Synthetic",
+  "entities": [
+    {
+      "entity_id": "binary_sensor.bed_motion",
+      "category": "motion",
+      "room": "Back Bedroom"
+    },
+    {
+      "entity_id": "binary_sensor.bath_motion",
+      "category": "motion",
+      "room": "Bathroom"
+    },
+    {
+      "entity_id": "binary_sensor.kitchen_motion",
+      "category": "motion",
+      "room": "Kitchen"
+    },
+    {
+      "entity_id": "binary_sensor.lounge_motion",
+      "category": "motion",
+      "room": "Backroom"
+    },
+    {
+      "entity_id": "binary_sensor.side_door",
+      "category": "contact",
+      "room": "Utilityroom"
+    },
+    {
+      "entity_id": "binary_sensor.front_door",
+      "category": "contact",
+      "room": "Hall"
+    },
+    {
+      "entity_id": "sensor.kettle_power",
+      "category": "plug",
+      "room": "Kitchen"
+    },
+    {
+      "entity_id": "sensor.tv_power",
+      "category": "plug",
+      "room": "Backroom"
+    },
+    {
+      "entity_id": "binary_sensor.panic_hall",
+      "category": "panic",
+      "room": "Hall"
+    }
+  ],
+  "options": {
+    "learning_days": 14
+  }
+}

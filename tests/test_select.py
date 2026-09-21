@@ -8,22 +8,24 @@ from unittest.mock import MagicMock, AsyncMock
 import pytest
 
 from custom_components.behaviour_monitor.select import (
+    ATTR_SNOOZE_ACTIVE,
+    ATTR_SNOOZE_UNTIL,
     SnoozeDurationSelect,
     async_setup_entry,
 )
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
 from custom_components.behaviour_monitor.const import (
-    ATTR_SNOOZE_ACTIVE,
-    ATTR_SNOOZE_UNTIL,
     DOMAIN,
+    VERSION,
     SNOOZE_OFF,
-    SNOOZE_1_HOUR,
-    SNOOZE_2_HOURS,
-    SNOOZE_4_HOURS,
-    SNOOZE_1_DAY,
     SNOOZE_LABELS,
     SNOOZE_OPTIONS,
 )
+
+SNOOZE_1_HOUR = "1_hour"
+SNOOZE_2_HOURS = "2_hours"
+SNOOZE_4_HOURS = "4_hours"
+SNOOZE_1_DAY = "1_day"
 
 
 class TestSnoozeDurationSelect:
@@ -33,6 +35,7 @@ class TestSnoozeDurationSelect:
     def mock_coordinator(self) -> MagicMock:
         """Create a mock coordinator."""
         coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
+        coordinator.site_name = "Test House"
         coordinator.is_snoozed.return_value = False
         coordinator.get_snooze_duration_key.return_value = SNOOZE_OFF
         coordinator.snooze_until = None
@@ -69,9 +72,10 @@ class TestSnoozeDurationSelect:
         device_info = select._attr_device_info
         assert device_info is not None
         assert (DOMAIN, "test_entry_123") in device_info["identifiers"]
-        assert device_info["name"] == "Behaviour Monitor"
-        assert device_info["manufacturer"] == "Custom Integration"
-        assert device_info["model"] == "Pattern Analyzer"
+        assert device_info["name"] == "Test House"
+        assert device_info["manufacturer"] == "Behaviour Monitor"
+        assert device_info["model"] == "Welfare core"
+        assert device_info["sw_version"] == VERSION
 
     def test_current_option_when_not_snoozed(
         self, mock_coordinator: MagicMock, mock_config_entry: MagicMock

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -31,6 +31,7 @@ def _setup_ha_mocks():
     # Mock homeassistant.const
     class MockPlatform:
         """Mock Platform enum."""
+
         SENSOR = "sensor"
         SWITCH = "switch"
         SELECT = "select"
@@ -56,7 +57,14 @@ def _setup_ha_mocks():
             # The actual HA implementation modifies the schema to include suggested values
             return data_schema
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
+        def async_show_form(
+            self,
+            step_id,
+            data_schema=None,
+            errors=None,
+            description_placeholders=None,
+            suggested_values=None,
+        ):
             """Mock show form method (not actually async despite the name)."""
             return {
                 "type": "form",
@@ -67,7 +75,9 @@ def _setup_ha_mocks():
                 "suggested_values": suggested_values,
             }
 
-        def async_create_entry(self, title, data, description=None, description_placeholders=None):
+        def async_create_entry(
+            self, title, data, description=None, description_placeholders=None, **kwargs
+        ):
             """Mock create entry method."""
             return {
                 "type": "create_entry",
@@ -75,6 +85,7 @@ def _setup_ha_mocks():
                 "data": data,
                 "description": description,
                 "description_placeholders": description_placeholders,
+                "options": kwargs.get("options", {}),
             }
 
         async def async_set_unique_id(self, unique_id):
@@ -87,6 +98,7 @@ def _setup_ha_mocks():
 
     class MockOptionsFlow:
         """Mock OptionsFlow base class."""
+
         def __init__(self):
             pass
 
@@ -96,7 +108,14 @@ def _setup_ha_mocks():
             # The actual HA implementation modifies the schema to include suggested values
             return data_schema
 
-        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None, suggested_values=None):
+        def async_show_form(
+            self,
+            step_id,
+            data_schema=None,
+            errors=None,
+            description_placeholders=None,
+            suggested_values=None,
+        ):
             """Mock show form method."""
             return {
                 "type": "form",
@@ -107,7 +126,7 @@ def _setup_ha_mocks():
                 "suggested_values": suggested_values,
             }
 
-        def async_create_entry(self, title="", data=None):
+        def async_create_entry(self, title="", data=None, **kwargs):
             """Mock create entry method."""
             return {
                 "type": "create_entry",
@@ -130,27 +149,126 @@ def _setup_ha_mocks():
 
     # Mock Storage with proper async methods
     class MockStore:
-        """Mock Home Assistant storage."""
+        """Mock Home Assistant storage, including the version migration hook."""
+
         def __init__(self, hass, version, key):
             self.hass = hass
             self.version = version
             self.key = key
             self._data = None
+            self._stored_version = version
+
+        async def _async_migrate_func(
+            self, old_major_version, old_minor_version, old_data
+        ):
+            """Match the real Store, which refuses to migrate by default."""
+            raise NotImplementedError
 
         async def async_load(self):
-            """Mock async load."""
+            """Mock async load, migrating when the stored version is older."""
+            if self._data is None:
+                return None
+            if self._stored_version != self.version:
+                return await self._async_migrate_func(
+                    self._stored_version, 0, self._data
+                )
             return self._data
 
         async def async_save(self, data):
             """Mock async save."""
             self._data = data
+            self._stored_version = self.version
+
+        @classmethod
+        def __class_getitem__(cls, item):
+            """Support generic subscripting like Store[dict[str, Any]]."""
+            return cls
 
     mock_ha_helpers.storage = MagicMock()
     mock_ha_helpers.storage.Store = MockStore
 
+    mock_components = MagicMock()
+
+    # Registries: entity, device, area
+    class _Reg:
+        def __init__(self):
+            self.entities = {}
+            self.devices = {}
+            self.areas = {}
+
+        def async_get(self, key):
+            return (
+                self.entities.get(key) or self.devices.get(key) or self.areas.get(key)
+            )
+
+        def async_get_area(self, area_id):
+            return self.areas.get(area_id)
+
+    _registry = _Reg()
+    for mod_name in ("entity_registry", "device_registry", "area_registry"):
+        mod = MagicMock()
+        mod.async_get = lambda hass, _r=_registry: _r
+        setattr(mock_ha_helpers, mod_name, mod)
+        sys.modules[f"homeassistant.helpers.{mod_name}"] = mod
+    mock_ha_helpers.entity_registry.EVENT_ENTITY_REGISTRY_UPDATED = (
+        "entity_registry_updated"
+    )
+    mock_ha_helpers.area_registry.EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
+    mock_ha_helpers.device_registry.EVENT_DEVICE_REGISTRY_UPDATED = (
+        "device_registry_updated"
+    )
+
+    # Issue registry
+    mock_issue = MagicMock()
+    mock_issue.async_create_issue = MagicMock()
+    mock_issue.async_delete_issue = MagicMock()
+    mock_issue.IssueSeverity = MagicMock(WARNING="warning", ERROR="error")
+    mock_ha_helpers.issue_registry = mock_issue
+    sys.modules["homeassistant.helpers.issue_registry"] = mock_issue
+
+    # Button platform
+    mock_button = MagicMock()
+
+    class MockButtonEntity:
+        def __init__(self):
+            self._attr_unique_id = None
+            self._attr_name = None
+            self._attr_device_info = None
+
+        async def async_press(self):
+            pass
+
+    mock_button.ButtonEntity = MockButtonEntity
+    mock_components.button = mock_button
+    sys.modules["homeassistant.components.button"] = mock_button
+    MockPlatform.BUTTON = "button"
+
+    # Recorder (bootstrap is patched in tests; module must import)
+    mock_recorder = MagicMock()
+    mock_recorder.get_instance = lambda hass: None
+    mock_recorder_history = MagicMock()
+    mock_components.recorder = mock_recorder
+    sys.modules["homeassistant.components.recorder"] = mock_recorder
+    sys.modules["homeassistant.components.recorder.history"] = mock_recorder_history
+
+    # Debouncer
+    class MockDebouncer:
+        def __init__(self, hass, logger, cooldown, immediate, function):
+            self._function = function
+            self.async_shutdown = MagicMock()
+
+        async def async_call(self):
+            await self._function()
+
+    mock_debounce = MagicMock()
+    mock_debounce.Debouncer = MockDebouncer
+    mock_ha_helpers.debounce = mock_debounce
+    sys.modules["homeassistant.helpers.debounce"] = mock_debounce
+
     # Mock CoordinatorEntity and DataUpdateCoordinator
     class MockCoordinatorEntity:
         """Mock CoordinatorEntity base class."""
+
         def __init__(self, coordinator):
             self.coordinator = coordinator
             self._attr_unique_id = None
@@ -180,11 +298,15 @@ def _setup_ha_mocks():
 
     class MockDataUpdateCoordinator:
         """Mock DataUpdateCoordinator."""
-        def __init__(self, hass, logger, name, update_interval):
+
+        def __init__(
+            self, hass, logger, name, update_interval, config_entry=None, **kwargs
+        ):
             self.hass = hass
             self.logger = logger
             self.name = name
             self.update_interval = update_interval
+            self.config_entry = config_entry
             self.data = None
             self._listeners = []
 
@@ -199,6 +321,10 @@ def _setup_ha_mocks():
         async def async_refresh(self):
             """Mock refresh."""
             pass
+
+        async def async_shutdown(self):
+            """Mock shutdown; the real one cancels the refresh timer."""
+            self.shutdown_called = True
 
         def async_add_listener(self, listener):
             """Mock add listener."""
@@ -224,6 +350,7 @@ def _setup_ha_mocks():
 
     class MockSensorEntity:
         """Mock SensorEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -257,6 +384,7 @@ def _setup_ha_mocks():
     @real_dataclass(frozen=True)
     class MockSensorEntityDescription:
         """Mock SensorEntityDescription as a frozen dataclass."""
+
         key: str
         name: str = None
         icon: str = None
@@ -276,6 +404,7 @@ def _setup_ha_mocks():
 
     class MockSelectEntity:
         """Mock SelectEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -304,6 +433,7 @@ def _setup_ha_mocks():
 
     class MockSwitchEntity:
         """Mock SwitchEntity base class."""
+
         def __init__(self):
             self._attr_unique_id = None
             self._attr_name = None
@@ -331,15 +461,15 @@ def _setup_ha_mocks():
     mock_switch.SwitchEntity = MockSwitchEntity
 
     # Mock components
-    mock_components = MagicMock()
     mock_components.sensor = mock_sensor
     mock_components.select = mock_select
     mock_components.switch = mock_switch
 
     # Mock dt utilities
     mock_dt_util = MagicMock()
-    mock_dt_util.now = datetime.now
+    mock_dt_util.now = lambda: datetime.now(timezone.utc)
     mock_dt_util.parse_datetime = lambda x: datetime.fromisoformat(x) if x else None
+    mock_dt_util.as_local = lambda dt: dt
     mock_ha_util.dt = mock_dt_util
 
     # Mock voluptuous (used by HA for schema validation)
@@ -352,25 +482,31 @@ def _setup_ha_mocks():
     mock_voluptuous.In = lambda x: lambda v: v
 
     # Install all mocks in sys.modules
-    sys.modules['homeassistant'] = mock_ha
-    sys.modules['homeassistant.core'] = mock_ha_core
-    sys.modules['homeassistant.const'] = mock_ha_const
-    sys.modules['homeassistant.config_entries'] = mock_config_entries
-    sys.modules['homeassistant.helpers'] = mock_ha_helpers
-    sys.modules['homeassistant.helpers.config_validation'] = mock_ha_helpers.config_validation
-    sys.modules['homeassistant.helpers.entity_registry'] = mock_ha_helpers.entity_registry
-    sys.modules['homeassistant.helpers.entity'] = mock_ha_helpers.entity
-    sys.modules['homeassistant.helpers.entity_platform'] = mock_ha_helpers.entity_platform
-    sys.modules['homeassistant.helpers.selector'] = mock_ha_helpers.selector
-    sys.modules['homeassistant.helpers.storage'] = mock_ha_helpers.storage
-    sys.modules['homeassistant.helpers.update_coordinator'] = mock_update_coordinator
-    sys.modules['homeassistant.components'] = mock_components
-    sys.modules['homeassistant.components.sensor'] = mock_sensor
-    sys.modules['homeassistant.components.select'] = mock_select
-    sys.modules['homeassistant.components.switch'] = mock_switch
-    sys.modules['homeassistant.util'] = mock_ha_util
-    sys.modules['homeassistant.util.dt'] = mock_dt_util
-    sys.modules['voluptuous'] = mock_voluptuous
+    sys.modules["homeassistant"] = mock_ha
+    sys.modules["homeassistant.core"] = mock_ha_core
+    sys.modules["homeassistant.const"] = mock_ha_const
+    sys.modules["homeassistant.config_entries"] = mock_config_entries
+    sys.modules["homeassistant.helpers"] = mock_ha_helpers
+    sys.modules["homeassistant.helpers.config_validation"] = (
+        mock_ha_helpers.config_validation
+    )
+    sys.modules["homeassistant.helpers.entity_registry"] = (
+        mock_ha_helpers.entity_registry
+    )
+    sys.modules["homeassistant.helpers.entity"] = mock_ha_helpers.entity
+    sys.modules["homeassistant.helpers.entity_platform"] = (
+        mock_ha_helpers.entity_platform
+    )
+    sys.modules["homeassistant.helpers.selector"] = mock_ha_helpers.selector
+    sys.modules["homeassistant.helpers.storage"] = mock_ha_helpers.storage
+    sys.modules["homeassistant.helpers.update_coordinator"] = mock_update_coordinator
+    sys.modules["homeassistant.components"] = mock_components
+    sys.modules["homeassistant.components.sensor"] = mock_sensor
+    sys.modules["homeassistant.components.select"] = mock_select
+    sys.modules["homeassistant.components.switch"] = mock_switch
+    sys.modules["homeassistant.util"] = mock_ha_util
+    sys.modules["homeassistant.util.dt"] = mock_dt_util
+    sys.modules["voluptuous"] = mock_voluptuous
 
 
 # Set up mocks before pytest collects tests
@@ -399,20 +535,27 @@ def mock_hass() -> MagicMock:
 @pytest.fixture
 def mock_config_entry() -> MagicMock:
     """Create a mock config entry."""
+
     # Use a simple object instead of MagicMock to avoid spec issues
     class MockConfigEntry:
         """Mock config entry object."""
+
         def __init__(self):
             self.entry_id = "test_entry_id"
-            self.version = 4
+            self.version = 11
+            self.title = "Test House"
             self.data = {
-                "monitored_entities": ["sensor.test1", "sensor.test2"],
-                "history_window_days": 28,
-                "inactivity_multiplier": 3.0,
-                "drift_sensitivity": "medium",
-                "enable_notifications": True,
-                "notification_cooldown": 30,
-                "min_notification_severity": "significant",
+                "site_name": "Test House",
+                "notify_service": "notify.mobile_app_phone",
+                "motion_entities": [
+                    "binary_sensor.kitchen_motion",
+                    "binary_sensor.bed_motion",
+                ],
+                "contact_entities": ["binary_sensor.front_door"],
+                "plug_entities": ["sensor.kettle_power"],
+                "panic_entities": ["binary_sensor.panic"],
+                "light_entities": [],
+                "other_entities": [],
             }
             self.options = {}
             self.add_update_listener = MagicMock(return_value=MagicMock())

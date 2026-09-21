@@ -42,23 +42,23 @@ make clean        # Remove cache files
 make clean-all    # Remove venv and all generated files
 ```
 
-## Architecture Decisions
+## Architecture
 
-### Dual Analysis Approach
-- **Statistical Analyzer** (`analyzer.py`): Z-score based anomaly detection using 672 time buckets (7 days × 96 intervals)
-- **ML Analyzer** (`ml_analyzer.py`): Optional streaming ML using River's Half-Space Trees
-- Both analyzers run in parallel, managed by `coordinator.py`
+- `core/` is a pure Python package (stdlib only): `normaliser`, `house_model`,
+  `entity_routine`, `chain_model`, `drift_detector`, `health_tracker`,
+  `alert_router`, wired by `engine.Engine`. Spec:
+  `docs/superpowers/specs/2026-09-20-generic-welfare-core-design.md`.
+- `coordinator.py` is the only module that imports both Home Assistant and
+  `core`. It resolves rooms from areas, feeds state changes to the engine,
+  polls it once a minute and performs the delivery actions it returns.
+- Three alert classes: welfare (push, repeated until acknowledged), device
+  health (repair issues), statistical (sensor attribute and logbook).
+- Learned state persists in `.storage/behaviour_monitor.{entry_id}.json`
+  (store version 11) as `Engine.to_dict()`.
 
-### Testing Strategy
-- Unit tests for each component (analyzer, ml_analyzer, coordinator, config_flow, sensor, init)
-- Mock Home Assistant components to avoid heavy dependencies in tests
-- Total: 6 test files, ~2,449 lines of test code
-- Home Assistant must be installed separately for tests to run
-
-### Persistence
-- Statistical patterns stored in `.storage/behaviour_monitor.{entry_id}.json`
-- ML patterns stored in `.storage/behaviour_monitor_ml.{entry_id}.json`
-- Serialization via `to_dict`/`from_dict` methods on dataclasses
+## Testing Strategy
+- Tests for core and shell live in `tests/core/` and `tests/` respectively.
+- Mock Home Assistant components to avoid heavy dependencies in tests.
 
 ## Project-specific Conventions
 
@@ -72,14 +72,17 @@ make clean-all    # Remove venv and all generated files
 - Type hints on all functions
 - Async/await for HA integration methods
 
-### File Structure
-```
-custom_components/behaviour_monitor/
-├── __init__.py           # Integration entry point (setup/unload)
-├── sensor.py             # 14 sensors via BehaviourMonitorSensor
-├── coordinator.py        # BehaviourMonitorCoordinator (data updates, notifications)
-├── analyzer.py           # PatternAnalyzer (statistical)
-├── ml_analyzer.py        # MLPatternAnalyzer (optional ML)
-├── config_flow.py        # Configuration UI
-└── const.py              # Constants and defaults
-```
+## File structure
+
+    custom_components/behaviour_monitor/
+    ├── __init__.py        # setup, v11 migration, services
+    ├── config_flow.py     # site name, notify service, six category lists, options
+    ├── coordinator.py     # Engine shell
+    ├── sensor.py          # nine sensors on the engine snapshot
+    ├── button.py / switch.py / select.py
+    ├── const.py
+    └── core/              # pure learning and alerting core
+    scripts/replay.py           # replay a fixture, print the alert timeline
+    scripts/export_fixture.py   # export a real site to the fixture format
+    tests/core/                 # core tests and synthetic scenarios
+    tests/fixtures/             # jsonl fixtures with sidecars

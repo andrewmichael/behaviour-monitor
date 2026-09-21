@@ -7,19 +7,20 @@ from typing import Any
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    ATTR_SNOOZE_ACTIVE,
-    ATTR_SNOOZE_UNTIL,
     DOMAIN,
     SNOOZE_LABELS,
     SNOOZE_OFF,
     SNOOZE_OPTIONS,
 )
 from .coordinator import BehaviourMonitorCoordinator
+from .sensor import device_info
+
+ATTR_SNOOZE_ACTIVE = "snooze_active"
+ATTR_SNOOZE_UNTIL = "snooze_until"
 
 
 async def async_setup_entry(
@@ -35,7 +36,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class SnoozeDurationSelect(CoordinatorEntity[BehaviourMonitorCoordinator], SelectEntity):
+class SnoozeDurationSelect(
+    CoordinatorEntity[BehaviourMonitorCoordinator], SelectEntity
+):
     """Select entity for snooze duration."""
 
     _attr_has_entity_name = True
@@ -51,13 +54,7 @@ class SnoozeDurationSelect(CoordinatorEntity[BehaviourMonitorCoordinator], Selec
         self._attr_unique_id = f"{entry.entry_id}_snooze_duration"
         self._attr_name = "Snooze Notifications"
         self._attr_options = [SNOOZE_LABELS[opt] for opt in SNOOZE_OPTIONS]
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Behaviour Monitor",
-            manufacturer="Custom Integration",
-            model="Pattern Analyzer",
-            sw_version="2.6.0",
-        )
+        self._attr_device_info = device_info(entry, coordinator.site_name)
 
     @property
     def current_option(self) -> str:

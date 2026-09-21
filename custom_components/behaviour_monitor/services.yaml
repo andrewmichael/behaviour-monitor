@@ -1,27 +1,17 @@
-# Services for Behaviour Monitor integration
-
 enable_holiday_mode:
-  name: Enable Holiday Mode
-  description: >
-    Enable holiday mode. All tracking, learning, and notifications are paused.
-    Use this when the monitored person is away on vacation to prevent false
-    anomalies and welfare alerts.
+  name: Enable holiday mode
+  description: Pause learning and welfare alerts while the occupant is away. Panic and device health still alert.
 
 disable_holiday_mode:
-  name: Disable Holiday Mode
-  description: >
-    Disable holiday mode and resume normal tracking, learning, and notifications.
+  name: Disable holiday mode
+  description: Resume learning and welfare alerts.
 
 snooze:
-  name: Snooze Notifications
-  description: >
-    Temporarily pause anomaly detection and notifications for a specified duration.
-    State tracking continues but statistical patterns and ML models are not updated.
-    Use this when visitors are present or during unusual but expected activity.
+  name: Snooze
+  description: Suppress welfare and statistical delivery for a while. Panic and device health still alert.
   fields:
     duration:
       name: Duration
-      description: How long to snooze notifications
       required: true
       example: "2_hours"
       selector:
@@ -37,6 +27,24 @@ snooze:
               value: "1_day"
 
 clear_snooze:
-  name: Clear Snooze
-  description: >
-    Clear active snooze and immediately resume anomaly detection and notifications.
+  name: Clear snooze
+  description: Resume delivery immediately.
+
+acknowledge:
+  name: Acknowledge
+  description: Stop repeat pushes for the open welfare alerts. The alert stays open until the house recovers.
+
+reset_learning:
+  name: Reset learning
+  description: Wipe learned patterns for one entity, or for the whole site when no entity is given, then relearn from the recorder.
+  fields:
+    entity_id:
+      name: Entity
+      required: false
+      example: "binary_sensor.kitchen_motion"
+      selector:
+        entity: {}
+
+test_panic:
+  name: Test panic
+  description: Send a panic push through the real delivery path without touching learned state.

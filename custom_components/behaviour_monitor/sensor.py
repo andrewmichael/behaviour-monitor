@@ -1,4 +1,4 @@
-"""Sensor platform for Behaviour Monitor."""
+"""Sensor platform reading the Engine snapshot."""
 
 from __future__ import annotations
 
@@ -19,19 +19,34 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import (
-    ATTR_ANOMALY_DETAILS,
-    ATTR_ENTITY_STATUS,
-    ATTR_EXPECTED_BY_NOW,
-    ATTR_LAST_RETRAIN,
-    ATTR_LEARNING_PROGRESS,
-    ATTR_ML_STATUS,
-    ATTR_MONITORED_ENTITIES,
-    ATTR_TIME_SINCE_ACTIVITY,
-    ATTR_TYPICAL_INTERVAL,
-    DOMAIN,
-)
+from .const import DOMAIN, VERSION
 from .coordinator import BehaviourMonitorCoordinator
+
+
+def device_info(entry: ConfigEntry, site: str) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=site,
+        manufacturer="Behaviour Monitor",
+        model="Welfare core",
+        sw_version=VERSION,
+    )
+
+
+def _disp(data: dict[str, Any], room: str | None) -> str | None:
+    return data.get("display_rooms", {}).get(room, room) if room else room
+
+
+def _render(data: dict[str, Any], text: str) -> str:
+    for full, short in sorted(
+        data.get("display_rooms", {}).items(), key=lambda kv: -len(kv[0])
+    ):
+        text = text.replace(full, short)
+    return text
+
+
+def _ts(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
 
 
 @dataclass(frozen=True)
@@ -39,152 +54,107 @@ class BehaviourMonitorSensorDescription(SensorEntityDescription):
     """Describes a Behaviour Monitor sensor."""
 
     value_fn: Callable[[dict[str, Any]], Any] = None  # type: ignore[assignment]
-    extra_attrs_fn: (
-        Callable[[BehaviourMonitorCoordinator, dict[str, Any]], dict[str, Any]] | None
-    ) = None
+    extra_attrs_fn: Callable[[Any, dict[str, Any]], dict[str, Any]] | None = None
 
 
 SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
     BehaviourMonitorSensorDescription(
+        key="welfare_status",
+        name="Welfare Status",
+        icon="mdi:heart-pulse",
+        value_fn=lambda d: d.get("welfare", {}).get("status", "unknown"),
+        extra_attrs_fn=lambda c, d: {
+            "reasons": [_render(d, r) for r in d.get("welfare", {}).get("reasons", [])],
+            "open_alerts": d.get("welfare", {}).get("open_alerts", []),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="house_activity",
+        name="House Activity",
+        icon="mdi:home-clock",
+        native_unit_of_measurement="s",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: (
+            int(g) if (g := d.get("house", {}).get("gap_s")) is not None else None
+        ),
+        extra_attrs_fn=lambda c, d: {
+            "last_room": _disp(d, d.get("house", {}).get("last_room")),
+            "expected_gap_s": d.get("house", {}).get("expected_s"),
+            "rooms_today": [
+                _disp(d, r) for r in d.get("house", {}).get("rooms_today", [])
+            ],
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="anomaly",
+        name="Anomaly",
+        icon="mdi:chart-bell-curve",
+        value_fn=lambda d: len(d.get("anomalies", [])),
+        extra_attrs_fn=lambda c, d: {"anomalies": d.get("anomalies", [])},
+    ),
+    BehaviourMonitorSensorDescription(
+        key="device_health",
+        name="Device Health",
+        icon="mdi:stethoscope",
+        value_fn=lambda d: (
+            "unavailable"
+            if "unavailable" in (s := d.get("health", {}).get("states", {})).values()
+            else "silent" if "silent" in s.values() else "ok"
+        ),
+        extra_attrs_fn=lambda c, d: {
+            "states": d.get("health", {}).get("states", {}),
+            "dropouts_today": d.get("health", {}).get("dropouts_today", 0),
+            "alerts": d.get("health", {}).get("alerts", []),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="learning",
+        name="Learning",
+        icon="mdi:brain",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get("learning", {}).get("confidence", 0.0),
+        extra_attrs_fn=lambda c, d: {
+            k: v for k, v in d.get("learning", {}).items() if k != "confidence"
+        },
+    ),
+    BehaviourMonitorSensorDescription(
+        key="entity_status",
+        name="Entity Status",
+        icon="mdi:format-list-checks",
+        value_fn=lambda d: (
+            f"{len(e := d.get('entities', {}))} monitored, "
+            f"{sum(1 for v in e.values() if v.get('health') != 'ok')} down"
+        ),
+        extra_attrs_fn=lambda c, d: {
+            "entities": {
+                eid: {**v, "room": _disp(d, v.get("room"))}
+                for eid, v in d.get("entities", {}).items()
+            },
+            "chains": d.get("chains", []),
+        },
+    ),
+    BehaviourMonitorSensorDescription(
         key="last_activity",
         name="Last Activity",
         device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda data: (
-            datetime.fromisoformat(data["last_activity"])
-            if data.get("last_activity")
-            else None
-        ),
-    ),
-    BehaviourMonitorSensorDescription(
-        key="activity_score",
-        name="Activity Score",
-        native_unit_of_measurement="%",
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:chart-line",
-        value_fn=lambda data: round(data.get("activity_score", 0), 1),
-    ),
-    BehaviourMonitorSensorDescription(
-        key="anomaly_detected",
-        name="Anomaly Detected",
-        icon="mdi:alert-circle",
-        value_fn=lambda data: "on" if data.get("anomaly_detected", False) else "off",
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_ANOMALY_DETAILS: data.get("anomalies", []),
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="baseline_confidence",
-        name="Baseline Confidence",
-        native_unit_of_measurement="%",
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:brain",
-        value_fn=lambda data: round(data.get("confidence", 0), 1),
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_LEARNING_PROGRESS: data.get("learning_status", "learning"),
-            ATTR_ML_STATUS: data.get("ml_status", {}),
-            ATTR_LAST_RETRAIN: None,  # No ML retraining in v1.1
-        },
+        value_fn=lambda d: _ts(d.get("house", {}).get("last_activity")),
     ),
     BehaviourMonitorSensorDescription(
         key="daily_activity_count",
         name="Daily Activity Count",
-        state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:counter",
-        value_fn=lambda data: data.get("daily_count", 0),
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_MONITORED_ENTITIES: list(coord.monitored_entities),
-        },
-    ),
-    # Elder Care Sensors
-    BehaviourMonitorSensorDescription(
-        key="welfare_status",
-        name="Welfare Status",
-        icon="mdi:heart-pulse",
-        value_fn=lambda data: data.get("welfare", {}).get("status", "unknown"),
-        extra_attrs_fn=lambda coord, data: {
-            "reasons": data.get("welfare", {}).get("reasons", []),
-            "summary": data.get("welfare", {}).get("summary", ""),
-            "recommendation": data.get("welfare", {}).get("recommendation", ""),
-            "entity_count_by_status": data.get("welfare", {}).get(
-                "entity_count_by_status", {}
-            ),
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="routine_progress",
-        name="Routine Progress",
-        native_unit_of_measurement="%",
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:progress-check",
-        value_fn=lambda data: data.get("routine", {}).get("progress_percent", 0),
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_EXPECTED_BY_NOW: data.get("routine", {}).get("expected_by_now", 0),
-            "actual_today": data.get("routine", {}).get("actual_today", 0),
-            "expected_full_day": data.get("routine", {}).get("expected_full_day", 0),
-            "status": data.get("routine", {}).get("status", "unknown"),
-            "summary": data.get("routine", {}).get("summary", ""),
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="time_since_activity",
-        name="Time Since Activity",
-        icon="mdi:clock-alert-outline",
-        value_fn=lambda data: data.get("activity_context", {}).get(
-            "time_since_formatted", "Unknown"
-        ),
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_TIME_SINCE_ACTIVITY: data.get("activity_context", {}).get(
-                "time_since_seconds"
-            ),
-            ATTR_TYPICAL_INTERVAL: data.get("activity_context", {}).get(
-                "typical_interval_seconds"
-            ),
-            "typical_interval_formatted": data.get("activity_context", {}).get(
-                "typical_interval_formatted", ""
-            ),
-            "concern_level": data.get("activity_context", {}).get("concern_level", 0),
-            "status": data.get("activity_context", {}).get("status", "unknown"),
-            "context": data.get("activity_context", {}).get("context", ""),
-        },
-    ),
-    BehaviourMonitorSensorDescription(
-        key="entity_status_summary",
-        name="Entity Status Summary",
-        icon="mdi:format-list-checks",
-        value_fn=lambda data: (
-            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('normal', 0)} OK, "
-            f"{data.get('welfare', {}).get('entity_count_by_status', {}).get('attention', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('concern', 0) + data.get('welfare', {}).get('entity_count_by_status', {}).get('alert', 0)} Need Attention"
-        ),
-        extra_attrs_fn=lambda coord, data: {
-            ATTR_ENTITY_STATUS: data.get("entity_status", []),
-        },
-    ),
-    # Training Time Remaining Sensors
-    BehaviourMonitorSensorDescription(
-        key="statistical_training_remaining",
-        name="Statistical Training Remaining",
-        icon="mdi:timer-sand",
-        value_fn=lambda data: data.get("stat_training", {}).get("formatted", "Unknown"),
-        extra_attrs_fn=lambda coord, data: {
-            "complete": data.get("stat_training", {}).get("complete", False),
-            "days_remaining": data.get("stat_training", {}).get("days_remaining"),
-            "days_elapsed": data.get("stat_training", {}).get("days_elapsed"),
-            "total_days": data.get("stat_training", {}).get("total_days"),
-            "first_observation": data.get("stat_training", {}).get("first_observation"),
-        },
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda d: d.get("house", {}).get("daily_count", 0),
     ),
     BehaviourMonitorSensorDescription(
         key="last_notification",
         name="Last Notification",
         device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:bell-ring",
-        value_fn=lambda data: (
-            datetime.fromisoformat(data["last_notification"]["timestamp"])
-            if data.get("last_notification", {}).get("timestamp")
-            else None
-        ),
-        extra_attrs_fn=lambda coord, data: {
-            "type": data.get("last_notification", {}).get("type"),
+        value_fn=lambda d: _ts(d.get("last_notification", {}).get("timestamp")),
+        extra_attrs_fn=lambda c, d: {
+            "kind": d.get("last_notification", {}).get("kind")
         },
     ),
 )
@@ -197,13 +167,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up Behaviour Monitor sensors."""
     coordinator: BehaviourMonitorCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    entities = [
-        BehaviourMonitorSensor(coordinator, entry, description)
-        for description in SENSOR_DESCRIPTIONS
-    ]
-
-    async_add_entities(entities)
+    async_add_entities(
+        [BehaviourMonitorSensor(coordinator, entry, d) for d in SENSOR_DESCRIPTIONS]
+    )
 
 
 class BehaviourMonitorSensor(
@@ -224,27 +190,24 @@ class BehaviourMonitorSensor(
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Behaviour Monitor",
-            manufacturer="Custom Integration",
-            model="Pattern Analyzer",
-            sw_version="4.2.1",
-        )
+        self._attr_device_info = device_info(entry, coordinator.site_name)
 
     @property
     def native_value(self) -> Any:
         """Return the sensor value."""
-        if self.coordinator.data is None:
-            return None
-        return self.entity_description.value_fn(self.coordinator.data)
+        return (
+            None
+            if self.coordinator.data is None
+            else self.entity_description.value_fn(self.coordinator.data)
+        )
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
-        if self.entity_description.extra_attrs_fn is None:
-            return None
-        if self.coordinator.data is None:
+        if (
+            self.entity_description.extra_attrs_fn is None
+            or self.coordinator.data is None
+        ):
             return None
         return self.entity_description.extra_attrs_fn(
             self.coordinator, self.coordinator.data

@@ -1,43 +1,42 @@
-"""Data update coordinator for Behaviour Monitor — v1.1 rebuild."""
-# Wires RoutineModel, AcuteDetector, DriftDetector into DataUpdateCoordinator.
+"""Thin Home Assistant shell around core.engine.Engine."""
+
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .acute_detector import AcuteDetector
-from .alert_result import AlertResult, AlertSeverity, AlertType
+from .config_flow import entity_specs_from_data
 from .const import (
-    CONF_ACTIVITY_TIER_OVERRIDE,
-    CONF_ALERT_REPEAT_INTERVAL, CONF_CORRELATION_WINDOW, CONF_DRIFT_SENSITIVITY,
-    CONF_ENABLE_NOTIFICATIONS,
-    CONF_HISTORY_WINDOW_DAYS, CONF_INACTIVITY_MULTIPLIER, CONF_LEARNING_PERIOD,
-    CONF_MAX_INACTIVITY_MULTIPLIER, CONF_MIN_INACTIVITY_MULTIPLIER,
-    CONF_MIN_NOTIFICATION_SEVERITY, CONF_MONITORED_ENTITIES, CONF_NOTIFICATION_COOLDOWN,
-    CONF_NOTIFY_SERVICES, CONF_TRACK_ATTRIBUTES, CONF_TRACK_ATTRIBUTES_EXCLUDE,
-    CONF_TRACK_ATTRIBUTES_INCLUDE,
-    ActivityTier,
-    DEFAULT_ACTIVITY_TIER_OVERRIDE,
-    DEFAULT_ALERT_REPEAT_INTERVAL, DEFAULT_CORRELATION_WINDOW,
-    DEFAULT_ENABLE_NOTIFICATIONS, DEFAULT_HISTORY_WINDOW_DAYS,
-    DEFAULT_INACTIVITY_MULTIPLIER, DEFAULT_LEARNING_PERIOD_DAYS,
-    DEFAULT_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER,
-    DEFAULT_MIN_NOTIFICATION_SEVERITY,
-    DEFAULT_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFY_SERVICES, DEFAULT_TRACK_ATTRIBUTES,
-    DOMAIN, SENSITIVITY_MEDIUM, SNOOZE_DURATIONS, SNOOZE_OFF, STORAGE_KEY, STORAGE_VERSION,
-    UPDATE_INTERVAL, WELFARE_DEBOUNCE_CYCLES,
+    CONF_NOTIFY_SERVICE,
+    CONF_SITE_NAME,
+    DOMAIN,
+    EVENT_LOGBOOK,
+    ISSUE_HEALTH_PREFIX,
+    OPTION_DEFAULTS,
+    SAVE_DEBOUNCE_S,
+    SNOOZE_DURATIONS,
+    SNOOZE_OFF,
+    STORAGE_KEY,
+    STORAGE_VERSION,
+    UPDATE_INTERVAL,
 )
-from .correlation_detector import CorrelationDetector
-from .drift_detector import CUSUMState, DriftDetector
-from .routine_model import RoutineModel, format_duration, is_binary_state
+from .core.alert_router import DeliveryAction
+from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
+from .core.events import UNAVAILABLE_STATES, ActivityEvent, Category, EventKind
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -49,391 +48,469 @@ except ImportError:  # pragma: no cover
     recorder_state_changes_during_period = None  # type: ignore[assignment]
 
 _LOGGER = logging.getLogger(__name__)
-_SEV_ORDER = [AlertSeverity.LOW, AlertSeverity.MEDIUM, AlertSeverity.HIGH]
-_SEV_GATE = {"minor": AlertSeverity.LOW, "moderate": AlertSeverity.LOW, "significant": AlertSeverity.MEDIUM, "critical": AlertSeverity.HIGH}
 
 
-def _parse_dt(ts: str) -> datetime | None:
-    """Parse ISO timestamp; tz-aware when possible; return None on failure."""
-    try:
-        dt = datetime.fromisoformat(ts)
-        if dt.tzinfo is not None:
-            return dt
-        try:
-            return dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-        except (TypeError, AttributeError):
-            return dt
-    except (ValueError, TypeError):
-        return None
+class _EngineStore(Store[dict[str, Any]]):
+    """Store that throws away anything written by an older schema.
+
+    The v4 integration wrote its learned patterns under the same key at store
+    version 10. None of it maps onto the engine's models, so the only honest
+    migration is to discard it and learn again from recorder history.
+    Without this override Home Assistant calls Store._async_migrate_func,
+    which raises NotImplementedError and fails setup on every upgrade.
+    """
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        _LOGGER.info(
+            "Discarding Behaviour Monitor store version %s.%s; learned state from "
+            "before v5 cannot be migrated and will be rebuilt from history",
+            old_major_version,
+            old_minor_version,
+        )
+        return {}
 
 
 class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator wiring RoutineModel + AcuteDetector + DriftDetector."""
+    """Translate Home Assistant into Engine calls and Engine actions into HA."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=UPDATE_INTERVAL))
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            config_entry=entry,
+            update_interval=timedelta(seconds=UPDATE_INTERVAL),
+        )
         self._entry = entry
-        d = entry.data
-        self._monitored_entities: list[str] = list(d.get(CONF_MONITORED_ENTITIES, []))
-        self._history_window_days: int = int(d.get(CONF_HISTORY_WINDOW_DAYS, DEFAULT_HISTORY_WINDOW_DAYS))
-        self._enable_notifications: bool = d.get(CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS)
-        self._notify_services: list[str] = list(d.get(CONF_NOTIFY_SERVICES, DEFAULT_NOTIFY_SERVICES))
-        self._notification_cooldown: int = int(d.get(CONF_NOTIFICATION_COOLDOWN, DEFAULT_NOTIFICATION_COOLDOWN))
-        self._min_notification_severity: str = d.get(CONF_MIN_NOTIFICATION_SEVERITY, DEFAULT_MIN_NOTIFICATION_SEVERITY)
-        self._learning_period_days: int = int(d.get(CONF_LEARNING_PERIOD, DEFAULT_LEARNING_PERIOD_DAYS))
-        self._track_attributes: bool = bool(d.get(CONF_TRACK_ATTRIBUTES, DEFAULT_TRACK_ATTRIBUTES))
-        self._track_attributes_include: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_INCLUDE) or [])
-        self._track_attributes_exclude: frozenset[str] = frozenset(d.get(CONF_TRACK_ATTRIBUTES_EXCLUDE) or [])
-        self._routine_model = RoutineModel(self._learning_period_days)
-        self._acute_detector = AcuteDetector(
-            float(d.get(CONF_INACTIVITY_MULTIPLIER, DEFAULT_INACTIVITY_MULTIPLIER)),
-            min_multiplier=float(d.get(CONF_MIN_INACTIVITY_MULTIPLIER, DEFAULT_MIN_INACTIVITY_MULTIPLIER)),
-            max_multiplier=float(d.get(CONF_MAX_INACTIVITY_MULTIPLIER, DEFAULT_MAX_INACTIVITY_MULTIPLIER)),
+        self._site: str = str(entry.data.get(CONF_SITE_NAME, "Behaviour Monitor"))
+        self._notify_service: str = str(entry.data.get(CONF_NOTIFY_SERVICE, ""))
+        options = {**OPTION_DEFAULTS, **entry.options}
+        self._config = EngineConfig.from_options(options)
+        self._specs, self._area_ids = self._resolve_specs()
+        self._engine = Engine(self._config, self._specs)
+        self._store = _EngineStore(
+            hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
         )
-        self._drift_detector = DriftDetector(d.get(CONF_DRIFT_SENSITIVITY, SENSITIVITY_MEDIUM))
-        self._correlation_detector = CorrelationDetector(
-            co_occurrence_window_seconds=int(
-                d.get(CONF_CORRELATION_WINDOW, DEFAULT_CORRELATION_WINDOW)
-            ),
+        self._pending: list[tuple[DeliveryAction, datetime]] = []
+        self._unsubs: list[Any] = []
+        self._last_notification: dict[str, Any] = {"timestamp": None, "kind": None}
+        self._saver = Debouncer(
+            hass,
+            _LOGGER,
+            cooldown=SAVE_DEBOUNCE_S,
+            immediate=False,
+            function=self._save,
         )
-        self._last_seen: dict[str, datetime] = {}
-        self._notification_cooldowns: dict[str, datetime] = {}
-        self._alert_repeat_interval: int = int(d.get(CONF_ALERT_REPEAT_INTERVAL, DEFAULT_ALERT_REPEAT_INTERVAL))
-        self._activity_tier_override: str = str(d.get(CONF_ACTIVITY_TIER_OVERRIDE, DEFAULT_ACTIVITY_TIER_OVERRIDE))
-        self._alert_suppression: dict[str, datetime] = {}
-        self._holiday_mode = False
-        self._snooze_until: datetime | None = None
-        self._today_count = 0
-        self._today_date: date | None = None
-        self._last_notification_info: dict[str, Any] = {"timestamp": None, "type": None}
-        self._welfare_debounce: dict[str, int] = {}
-        self._current_welfare_status = "ok"
-        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
-        self._unsub_state_changed: Any = None
+
+    # ----------------------------------------------------------- properties
 
     @property
-    def monitored_entities(self) -> list[str]:
-        return self._monitored_entities
+    def site_name(self) -> str:
+        return self._site
+
+    @property
+    def entity_specs(self) -> list[EntitySpec]:
+        return list(self._specs)
 
     @property
     def holiday_mode(self) -> bool:
-        return self._holiday_mode
+        return self._engine.holiday
 
     @property
     def snooze_until(self) -> datetime | None:
-        return self._snooze_until
+        return self._engine.snooze_until
+
+    @property
+    def last_notification(self) -> dict[str, Any]:
+        return dict(self._last_notification)
 
     def is_snoozed(self) -> bool:
-        return self._snooze_until is not None and dt_util.now() < self._snooze_until
+        return self._engine.is_snoozed(dt_util.now())
+
+    def get_snooze_duration_key(self) -> str:
+        until = self._engine.snooze_until
+        if until is None or not self.is_snoozed():
+            return SNOOZE_OFF
+        remaining = (until - dt_util.now()).total_seconds()
+        return min(
+            (k for k in SNOOZE_DURATIONS if k != SNOOZE_OFF),
+            key=lambda k: abs(remaining - SNOOZE_DURATIONS[k]),
+        )
+
+    def display_room(self, room: str) -> str:
+        """Strip a leading site name so "Test House Kitchen" reads as "Kitchen"."""
+        prefix = self._site.strip().lower()
+        low = room.lower()
+        if (
+            prefix
+            and low.startswith(prefix)
+            and len(room) > len(prefix)
+            and room[len(prefix)].isspace()
+        ):
+            return room[len(prefix) :].strip()
+        return room
+
+    # ---------------------------------------------------------------- rooms
+
+    def _resolve_specs(self) -> tuple[list[EntitySpec], dict[str, str | None]]:
+        """Build the entity specs and remember which area each room came from."""
+        ent_reg = er.async_get(self.hass)
+        dev_reg = dr.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
+        specs: list[EntitySpec] = []
+        area_ids: dict[str, str | None] = {}
+        for entity_id, category in entity_specs_from_data(self._entry.data):
+            room, area_id = self._room_for(entity_id, ent_reg, dev_reg, area_reg)
+            specs.append(EntitySpec(entity_id, Category(category), room))
+            area_ids[entity_id] = area_id
+        return specs, area_ids
+
+    def _room_for(
+        self, entity_id: str, ent_reg: Any, dev_reg: Any, area_reg: Any
+    ) -> tuple[str, str | None]:
+        """Resolve a room name, and the area id it came from if it had one."""
+        entry = ent_reg.async_get(entity_id)
+        area_id = getattr(entry, "area_id", None)
+        if not area_id and getattr(entry, "device_id", None):
+            device = dev_reg.async_get(entry.device_id)
+            area_id = getattr(device, "area_id", None)
+        if area_id:
+            area = area_reg.async_get_area(area_id)
+            if area is not None and getattr(area, "name", None):
+                return str(area.name), str(area_id)
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.attributes.get("friendly_name"):
+            return str(state.attributes["friendly_name"]), None
+        return entity_id, None
+
+    async def _async_registry_updated(self, event: Any) -> None:
+        """Re-resolve rooms, telling a renamed area apart from a moved entity.
+
+        Ruling P6: rename_room rewrites every chain and routine keyed on the
+        old room, which is right when an area was renamed and catastrophic
+        when one sensor was moved to another area, because it would merge two
+        rooms' learning. The area id is what distinguishes them: same id and a
+        new name is a rename, a new id is a move.
+        """
+        new_specs, new_area_ids = self._resolve_specs()
+        old_rooms = {s.entity_id: s.room for s in self._specs}
+        for spec in new_specs:
+            entity_id = spec.entity_id
+            if old_rooms.get(entity_id, spec.room) == spec.room:
+                continue
+            old_area = self._area_ids.get(entity_id)
+            if old_area is not None and old_area == new_area_ids.get(entity_id):
+                self._engine.rename_room(old_rooms[entity_id], spec.room)
+            # A move, or a room that never came from an area, changes only this
+            # entity; set_entities below updates its room in place and the
+            # room-keyed chains are left alone.
+        self._specs = new_specs
+        self._area_ids = new_area_ids
+        self._engine.set_entities(self._specs)
+        await self._saver.async_call()
+
+    # ------------------------------------------------------------- lifecycle
 
     async def async_setup(self) -> None:
-        stored = await self._store.async_load()
-        if stored:
-            if "routine_model" in stored:
-                self._routine_model = RoutineModel.from_dict(stored["routine_model"])
-            for eid, sd in stored.get("cusum_states", {}).items():
-                self._drift_detector._states[eid] = CUSUMState.from_dict(sd)
-            if "correlation_state" in stored:
-                self._correlation_detector = CorrelationDetector.from_dict(
-                    stored["correlation_state"]
+        try:
+            stored = await self._store.async_load()
+        except Exception:  # noqa: BLE001
+            # A corrupt or unreadable store must not stop the integration
+            # loading; starting from nothing is always recoverable.
+            _LOGGER.exception("Could not read stored state; starting fresh")
+            stored = None
+        all_ids = [s.entity_id for s in self._specs]
+        if stored and isinstance(stored, dict) and "engine" in stored:
+            # from_dict silently hands back a blank engine on a schema it does
+            # not know. Left to itself that reads as "restored fine", every
+            # entity counts as known, and bootstrap is skipped, so the site
+            # starts from nothing with no history behind it.
+            saved_schema = stored["engine"].get("schema")
+            if saved_schema != SCHEMA_VERSION:
+                _LOGGER.info(
+                    "Stored engine schema %s is not %s; relearning from history",
+                    saved_schema,
+                    SCHEMA_VERSION,
                 )
-                # Purge correlation state for entities no longer monitored
-                monitored_set = set(self._monitored_entities)
-                stale_entities = [
-                    eid for eid in list(self._correlation_detector._entity_event_counts)
-                    if eid not in monitored_set
-                ]
-                for eid in stale_entities:
-                    self._correlation_detector.remove_entity(eid)
-            c = stored.get("coordinator", {})
-            self._holiday_mode = c.get("holiday_mode", False)
-            if (sn := c.get("snooze_until")) and (sdt := _parse_dt(sn)):
-                now = dt_util.now()
-                now = now.replace(tzinfo=sdt.tzinfo) if now.tzinfo is None and sdt.tzinfo is not None else now
-                self._snooze_until = sdt if sdt > now else None
-            self._last_seen = {e: dt for e, ts in c.get("last_seen", {}).items() if (dt := _parse_dt(ts))}
-            self._last_notification_info = c.get("last_notification_info", {"timestamp": None, "type": None})
-            self._notification_cooldowns = {k: dt for k, ts in c.get("notification_cooldowns", {}).items() if (dt := _parse_dt(ts))}
-            self._alert_suppression = {k: dt for k, ts in c.get("alert_suppression", {}).items() if (dt := _parse_dt(ts))}
-        elif not self._routine_model._entities:
-            await self._bootstrap_from_recorder()
-            await self._save_data()
-        self._unsub_state_changed = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
+                stored = None
+        if stored and isinstance(stored, dict) and "engine" in stored:
+            try:
+                self._engine = Engine.from_dict(
+                    stored["engine"], self._config, self._specs
+                )
+                self._last_notification = stored.get(
+                    "last_notification", self._last_notification
+                )
+                known = set(stored.get("entity_ids", []))
+                new_ids = [eid for eid in all_ids if eid not in known]
+            except Exception:  # noqa: BLE001
+                # A store written by a half-finished version, or hand-edited,
+                # must cost us the learning and nothing more.
+                _LOGGER.exception("Stored engine state unusable; starting fresh")
+                self._engine = Engine(self._config, self._specs)
+                new_ids = all_ids
+        else:
+            new_ids = all_ids
+        if new_ids:
+            try:
+                await self._bootstrap_entities(new_ids)
+            except Exception:  # noqa: BLE001
+                # recorder_get_instance raises KeyError when the recorder is
+                # not loaded at all. Running without history is a slower
+                # start, not a failed setup.
+                _LOGGER.exception("Could not replay history; learning from now on")
+            await self._save()
+        self._schedule_flush()
+        self._unsubs.append(
+            self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
+        )
+        self._unsubs.append(
+            self.hass.bus.async_listen(
+                er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_registry_updated
+            )
+        )
+        self._unsubs.append(
+            self.hass.bus.async_listen(
+                ar.EVENT_AREA_REGISTRY_UPDATED, self._async_registry_updated
+            )
+        )
+        # Assigning an area to a device re-rooms every entity on it without
+        # touching the entity registry, so this is the only event that fires.
+        self._unsubs.append(
+            self.hass.bus.async_listen(
+                dr.EVENT_DEVICE_REGISTRY_UPDATED, self._async_registry_updated
+            )
+        )
 
     async def async_shutdown(self) -> None:
-        if self._unsub_state_changed:
-            self._unsub_state_changed()
-            self._unsub_state_changed = None
-        await self._save_data()
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        # Stop both timers before the last save, so nothing can fire against a
+        # coordinator that has already been unloaded.
+        self._saver.async_shutdown()
+        await super().async_shutdown()
+        await self._save()
 
-    async def _save_data(self) -> None:
-        await self._store.async_save({
-            "routine_model": self._routine_model.to_dict(),
-            "cusum_states": {e: s.to_dict() for e, s in self._drift_detector._states.items()},
-            "correlation_state": self._correlation_detector.to_dict(),
-            "coordinator": {
-                "holiday_mode": self._holiday_mode,
-                "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-                "last_seen": {e: dt.isoformat() for e, dt in self._last_seen.items()},
-                "last_notification_info": self._last_notification_info,
-                "notification_cooldowns": {k: v.isoformat() for k, v in self._notification_cooldowns.items()},
-                "alert_suppression": {k: v.isoformat() for k, v in self._alert_suppression.items()},
-            },
-        })
+    async def _save(self) -> None:
+        await self._store.async_save(
+            {
+                "site": self._site,
+                "entity_ids": [s.entity_id for s in self._specs],
+                "engine": self._engine.to_dict(),
+                "last_notification": self._last_notification,
+            }
+        )
 
-    def _tracks_attributes(self, entity_id: str) -> bool:
-        """Return whether attribute-only changes count as activity for this entity.
+    async def _bootstrap_entities(self, entity_ids: list[str]) -> None:
+        if (
+            recorder_get_instance is None
+            or recorder_state_changes_during_period is None
+        ):
+            _LOGGER.warning("Recorder unavailable; skipping bootstrap")
+            return
+        instance = recorder_get_instance(self.hass)
+        if instance is None:
+            return
+        end = dt_util.now()
+        start = end - timedelta(days=self._config.window_days)
+        # state_changes_during_period takes one entity_id string, not a list,
+        # and attributes are never read here.
+        fetch = partial(recorder_state_changes_during_period, no_attributes=True)
+        for entity_id in entity_ids:
+            try:
+                rows = await instance.async_add_executor_job(
+                    fetch,
+                    self.hass,
+                    start,
+                    end,
+                    entity_id,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Could not load recorder history for %s", entity_id)
+                continue
+            prev: str | None = None
+            for state in rows.get(entity_id, []):
+                if state.state in UNAVAILABLE_STATES:
+                    # learn_only does not suppress record_health, so replaying
+                    # these would report outages that ended weeks ago. Drop
+                    # prev too: the next real row is a first sighting, not a
+                    # transition back from a dropout.
+                    prev = None
+                    continue
+                ts = dt_util.as_local(state.last_changed)
+                self._engine.handle_state(
+                    entity_id, prev, state.state, ts, learn_only=True
+                )
+                prev = state.state
+        # The router has already recorded these as opened and pushed, so
+        # dropping them here would lose the alert for good.
+        self._pending.extend((action, end) for action in self._engine.poll(end))
 
-        Per-entity overrides take precedence over the global setting: an entity in
-        the exclude list never tracks attributes, one in the include list always
-        does, and everything else follows the global track_attributes toggle.
-        """
-        if entity_id in self._track_attributes_exclude:
-            return False
-        if entity_id in self._track_attributes_include:
-            return True
-        return self._track_attributes
+    # ----------------------------------------------------------------- events
 
     @callback
     def _handle_state_changed(self, event: Event) -> None:
-        eid: str = event.data.get("entity_id", "")
-        if eid not in self._monitored_entities:
+        entity_id = event.data.get("entity_id", "")
+        if entity_id not in {s.entity_id for s in self._specs}:
             return
-        ns = event.data.get("new_state")
-        if ns is None:
+        new = event.data.get("new_state")
+        if new is None:
             return
-        if not self._tracks_attributes(eid):
-            old_state = event.data.get("old_state")
-            if old_state is not None and old_state.state == ns.state:
-                return
-        now, sv = dt_util.now(), str(ns.state)
-        self._routine_model.record(entity_id=eid, timestamp=now, state_value=sv, is_binary=is_binary_state(sv))
-        self._last_seen[eid] = now
-        self._correlation_detector.record_event(eid, now, self._last_seen)
-        if self._today_date != now.date():
-            self._today_count, self._today_date = 0, now.date()
-        self._today_count += 1
-        self.hass.async_create_task(self.async_request_refresh())
+        old = event.data.get("old_state")
+        now = dt_util.now()
+        actions = self._engine.handle_state(
+            entity_id, old.state if old else None, str(new.state), now
+        )
+        if actions:
+            self._pending.extend((a, now) for a in actions)
+            self.hass.async_create_task(self._flush_actions())
+        self.hass.async_create_task(self._saver.async_call())
+
+    def _schedule_flush(self) -> None:
+        """Deliver anything queued outside the state-change path."""
+        if self._pending:
+            self.hass.async_create_task(self._flush_actions())
+
+    async def _flush_actions(self) -> None:
+        pending, self._pending = self._pending, []
+        for action, when in pending:
+            await self._perform([action], when)
+        await self.async_request_refresh()
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
-        if self._today_date != now.date():
-            self._today_count = 0
-            self._today_date = now.date()
-            for r in self._routine_model._entities.values():
-                r.classify_tier(now)
-            if self._activity_tier_override != "auto":
-                override_tier = ActivityTier(self._activity_tier_override)
-                for r in self._routine_model._entities.values():
-                    r._activity_tier = override_tier
-            self._correlation_detector.recompute()
-        if self._holiday_mode or self.is_snoozed():
-            return self._build_safe_defaults()
         try:
-            alerts = self._run_detection(now)
-            await self._handle_alerts(alerts, now)
-            return self._build_sensor_data(alerts, now)
+            actions = self._engine.poll(now)
+            await self._perform(actions, now)
         except Exception:  # noqa: BLE001
-            _LOGGER.exception("Coordinator update error — returning safe defaults")
-            return self._build_safe_defaults()
-
-    def _run_detection(self, now: datetime) -> list[AlertResult]:
-        alerts: list[AlertResult] = []
-        d = now.date()
-        for eid in self._monitored_entities:
-            if (r := self._routine_model._entities.get(eid)) is None:
-                continue
-            alerts.extend(x for x in (
-                self._acute_detector.check_inactivity(eid, r, now, self._last_seen.get(eid)),
-                self._acute_detector.check_unusual_time(eid, r, now),
-                self._drift_detector.check(eid, r, d, now),
-            ) if x is not None)
-        # Correlation break detection
-        for eid in self._monitored_entities:
-            alerts.extend(
-                self._correlation_detector.check_breaks(eid, now, self._last_seen)
-            )
-        return alerts
-
-    async def _handle_alerts(self, alerts: list[AlertResult], now: datetime) -> None:
-        # Clear suppression entries whose condition has resolved (key not in current alerts)
-        current_keys = {f"{a.entity_id}|{a.alert_type.value}" for a in alerts}
-        for key in list(self._alert_suppression):
-            if key not in current_keys:
-                del self._alert_suppression[key]
-
-        if not self._enable_notifications or not alerts:
-            return
-        gate = _SEV_GATE.get(self._min_notification_severity, AlertSeverity.MEDIUM)
-        def _ok(a: AlertResult) -> bool:
-            key = f"{a.entity_id}|{a.alert_type.value}"
-            last = self._alert_suppression.get(key)
-            sup_ok = last is None or (now - last).total_seconds() / 60 >= self._alert_repeat_interval
-            sev_ok = _SEV_ORDER.index(a.severity) >= _SEV_ORDER.index(gate)
-            return sup_ok and sev_ok
-        notifiable = [a for a in alerts if _ok(a)]
-        drift_ok = [a for a in notifiable if a.alert_type == AlertType.DRIFT]
-        acute_ok = [a for a in notifiable if a.alert_type != AlertType.DRIFT]
-        new_status = self._derive_welfare(alerts)["status"]
-        if new_status != self._current_welfare_status:
-            cnt = self._welfare_debounce.get(new_status, 0) + 1
-            self._welfare_debounce[new_status] = cnt
-            drift_ok = drift_ok if cnt >= WELFARE_DEBOUNCE_CYCLES else []
-            if cnt >= WELFARE_DEBOUNCE_CYCLES:
-                self._welfare_debounce[new_status] = 0
-                self._current_welfare_status = new_status
-        else:
-            self._welfare_debounce = {}
-        to_send = acute_ok + drift_ok
-        if not to_send:
-            return
-        await self._send_notification(to_send)
-        for a in to_send:
-            self._alert_suppression[f"{a.entity_id}|{a.alert_type.value}"] = now
-            self._notification_cooldowns[f"{a.entity_id}|{a.alert_type.value}"] = now
-        self._last_notification_info = {"timestamp": now.isoformat(), "type": to_send[0].alert_type.value}
-
-    async def _send_notification(self, alerts: list[AlertResult]) -> None:
-        title = f"Behaviour Monitor: {len(alerts)} alert(s)"
-        msg = "\n".join(f"- [{a.severity.value.upper()}] {a.explanation}" for a in alerts)
-        await self.hass.services.async_call(
-            "persistent_notification", "create",
-            {"title": title, "message": msg, "notification_id": "behaviour_monitor"},
-        )
-        for svc in self._notify_services:
-            parts = svc.split(".", 1)
-            if len(parts) == 2:
-                await self.hass.services.async_call(parts[0], parts[1], {"title": title, "message": msg})
-
-    def _derive_welfare(self, alerts: list[AlertResult]) -> dict[str, Any]:
-        if not alerts:
-            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
-        # Exclude correlation breaks from welfare escalation (per D-03)
-        welfare_alerts = [a for a in alerts if a.alert_type != AlertType.CORRELATION_BREAK]
-        if not welfare_alerts:
-            return {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}}
-        sevs = [a.severity for a in welfare_alerts]
-        if AlertSeverity.HIGH in sevs:
-            st, rec = "alert", "Immediate welfare check recommended."
-        elif AlertSeverity.MEDIUM in sevs:
-            st, rec = "concern", "Schedule a welfare check soon."
-        else:
-            st, rec = "check_recommended", "Monitor closely."
-        cnt: dict[str, int] = {}
-        for a in welfare_alerts:
-            cnt[a.entity_id] = cnt.get(a.entity_id, 0) + 1
-        return {"status": st, "reasons": [a.explanation for a in welfare_alerts],
-                "summary": f"{len(welfare_alerts)} active alert(s): {st}", "recommendation": rec, "entity_count_by_status": cnt}
-
-    def _build_sensor_data(self, alerts: list[AlertResult], now: datetime) -> dict[str, Any]:
-        last_activity = max(self._last_seen.values()).isoformat() if self._last_seen else None
-        conf = self._routine_model.overall_confidence(now) * 100.0
-        ls = self._routine_model.learning_status(now)
-        today, hrs = now.date(), now.hour + now.minute / 60.0
-        rates = [r.daily_activity_rate(today) for eid in self._monitored_entities if (r := self._routine_model._entities.get(eid))]
-        exp_full, exp_now = sum(rates), sum(int(r * hrs / 24.0) for r in rates)
-        pct = min(100, int(self._today_count / exp_now * 100)) if exp_now else 0
-        rstatus = "on_track" if self._today_count >= exp_now * 0.7 else "below_expected"
-        tsec = typ_sec = concern = 0; ts_fmt = typ_fmt = "Unknown"; ctx_st = "unknown"
-        if self._last_seen:
-            most = max(self._last_seen.values())
-            tsec = int((now - most).total_seconds())
-            ts_fmt = f"{format_duration(tsec)} ago"
-            best_r = self._routine_model._entities.get(max(self._last_seen, key=lambda e: self._last_seen[e]))
-            if best_r and (gap := best_r.expected_gap_seconds(now.hour, now.weekday())):
-                typ_sec = int(gap); typ_fmt = format_duration(typ_sec); concern = min(10, int(tsec / gap))
-            ctx_st = "active" if tsec < 3600 else "inactive"
-        obs_list = [er.first_observation for er in self._routine_model._entities.values() if er.first_observation]
-        first_obs = min(obs_list) if obs_list else None
-        days_el = max(0, int((now - fdt).total_seconds() / 86400)) if first_obs and (fdt := _parse_dt(first_obs)) else None
-        complete = ls == "ready"
-        days_rem = max(0, self._history_window_days - days_el) if days_el is not None else None
-        stat_fmt = "Complete" if complete else (f"{days_rem} day(s) remaining" if days_rem is not None else "Learning...")
-        return {
-            "last_activity": last_activity, "activity_score": round(conf, 1), "anomaly_detected": bool(alerts),
-            "anomalies": [a.to_dict() for a in alerts], "confidence": round(conf, 1), "daily_count": self._today_count,
-            "welfare": self._derive_welfare(alerts),
-            "routine": {"progress_percent": pct, "expected_by_now": exp_now, "actual_today": self._today_count,
-                        "expected_full_day": exp_full, "status": rstatus,
-                        "summary": f"{self._today_count} of ~{exp_full} expected activities"},
-            "activity_context": {"time_since_formatted": ts_fmt, "time_since_seconds": tsec,
-                                 "typical_interval_seconds": typ_sec, "typical_interval_formatted": typ_fmt,
-                                 "concern_level": concern, "status": ctx_st, "context": ts_fmt},
-            "entity_status": [
-                {
-                    "entity_id": e,
-                    "status": "active" if e in self._last_seen else "unknown",
-                    "last_seen": self._last_seen[e].isoformat() if e in self._last_seen else None,
-                    "activity_tier": r.activity_tier.value if (r := self._routine_model._entities.get(e)) and r.activity_tier else None,
-                    "correlated_with": self._correlation_detector.get_correlated_entities(e),
-                }
-                for e in self._monitored_entities
-            ],
-            "stat_training": {"complete": complete, "formatted": stat_fmt, "days_remaining": days_rem,
-                              "days_elapsed": days_el, "total_days": self._history_window_days, "first_observation": first_obs},
-            "ml_status": {"enabled": False}, "cross_sensor_patterns": self._correlation_detector.get_correlation_groups(),
-            "last_notification": self._last_notification_info, "holiday_mode": self._holiday_mode,
-            "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-            "learning_status": ls, "baseline_confidence": round(conf, 1),
+            _LOGGER.exception("Engine poll failed")
+        snapshot = self._engine.snapshot(now)
+        snapshot["site"] = self._site
+        snapshot["last_notification"] = dict(self._last_notification)
+        snapshot["display_rooms"] = {
+            s.room: self.display_room(s.room) for s in self._specs
         }
+        return snapshot
 
-    def _build_safe_defaults(self) -> dict[str, Any]:
-        return {"last_activity": None, "activity_score": 0.0, "anomaly_detected": False, "anomalies": [],
-                "confidence": 0.0, "daily_count": self._today_count, "entity_status": [],
-                "welfare": {"status": "ok", "reasons": [], "summary": "No active alerts", "recommendation": "", "entity_count_by_status": {}},
-                "routine": {"progress_percent": 0, "expected_by_now": 0, "actual_today": 0, "expected_full_day": 0, "status": "unknown", "summary": "Suppressed"},
-                "activity_context": {"time_since_formatted": "Unknown", "time_since_seconds": None, "typical_interval_seconds": None, "typical_interval_formatted": "Unknown", "concern_level": 0, "status": "unknown", "context": ""},
-                "stat_training": {"complete": False, "formatted": "Unknown", "days_remaining": None, "days_elapsed": None, "total_days": self._history_window_days, "first_observation": None},
-                "ml_status": {"enabled": False}, "cross_sensor_patterns": [], "last_notification": self._last_notification_info,
-                "holiday_mode": self._holiday_mode, "snooze_active": self.is_snoozed(), "snooze_until": self._snooze_until.isoformat() if self._snooze_until else None,
-                "learning_status": "inactive", "baseline_confidence": 0.0}
+    # --------------------------------------------------------------- delivery
 
-    async def _save_fire_refresh(self, event: str, data: dict | None = None) -> None:
-        await self._save_data(); self.hass.bus.async_fire(event, data or {}); await self.async_request_refresh()
+    async def _perform(self, actions: list[DeliveryAction], now: datetime) -> None:
+        for act in actions:
+            alert = act.alert
+            text = self._render(alert.explanation)
+            if act.action == "push":
+                await self._push(f"{self._site} welfare", text)
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": f"{self._site} welfare",
+                        "message": text,
+                        "notification_id": self._notification_id(),
+                    },
+                )
+                self._last_notification = {
+                    "timestamp": now.isoformat(),
+                    "kind": alert.kind,
+                }
+            elif act.action == "push_clear":
+                await self._push(f"{self._site} welfare", f"Cleared: {text}")
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "dismiss",
+                    {"notification_id": self._notification_id()},
+                )
+            elif act.action == "repair_create":
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    self._issue_id(alert.key),
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="device_health",
+                    translation_placeholders={"site": self._site, "message": text},
+                )
+            elif act.action == "repair_delete":
+                ir.async_delete_issue(self.hass, DOMAIN, self._issue_id(alert.key))
+            elif act.action == "log":
+                self.hass.bus.async_fire(
+                    EVENT_LOGBOOK,
+                    {"name": self._site, "message": text, "domain": DOMAIN},
+                )
+
+    def _notification_id(self) -> str:
+        return f"{DOMAIN}_{self._entry.entry_id}_welfare"
+
+    def _issue_id(self, key: str) -> str:
+        return f"{ISSUE_HEALTH_PREFIX}{self._entry.entry_id}_{key}"
+
+    def _render(self, text: str) -> str:
+        for spec in sorted(self._specs, key=lambda s: -len(s.room)):
+            display = self.display_room(spec.room)
+            if display != spec.room:
+                text = text.replace(spec.room, display)
+        return text
+
+    async def _push(self, title: str, message: str) -> None:
+        if "." not in self._notify_service:
+            return
+        domain, service = self._notify_service.split(".", 1)
+        await self.hass.services.async_call(
+            domain, service, {"title": title, "message": message}
+        )
+
+    # --------------------------------------------------------------- controls
+
+    async def _after_control(self) -> None:
+        await self._save()
+        await self.async_request_refresh()
 
     async def async_enable_holiday_mode(self) -> None:
-        self._holiday_mode = True; await self._save_fire_refresh(f"{DOMAIN}_holiday_mode_enabled")
+        self._engine.holiday = True
+        await self._after_control()
 
     async def async_disable_holiday_mode(self) -> None:
-        self._holiday_mode = False; await self._save_fire_refresh(f"{DOMAIN}_holiday_mode_disabled")
-
-    def get_snooze_duration_key(self) -> str:
-        if not self.is_snoozed(): return SNOOZE_OFF
-        rem = (self._snooze_until - dt_util.now()).total_seconds()
-        return min((k for k in SNOOZE_DURATIONS if k != SNOOZE_OFF), key=lambda k: abs(rem - SNOOZE_DURATIONS[k]), default=SNOOZE_OFF)
+        self._engine.holiday = False
+        await self._after_control()
 
     async def async_snooze(self, duration_key: str) -> None:
-        secs = SNOOZE_DURATIONS.get(duration_key, 0)
-        self._snooze_until = dt_util.now() + timedelta(seconds=secs) if secs > 0 else None
-        await self._save_fire_refresh(f"{DOMAIN}_snooze_set")
+        seconds = SNOOZE_DURATIONS.get(duration_key, 0)
+        self._engine.snooze_until = (
+            dt_util.now() + timedelta(seconds=seconds) if seconds > 0 else None
+        )
+        await self._after_control()
 
     async def async_clear_snooze(self) -> None:
-        self._snooze_until = None
-        await self._save_fire_refresh(f"{DOMAIN}_snooze_cleared")
+        self._engine.snooze_until = None
+        await self._after_control()
 
-    async def async_routine_reset(self, entity_id: str) -> None:
-        self._drift_detector.reset_entity(entity_id)
-        _LOGGER.warning("Routine reset for %s — CUSUM cleared", entity_id)
-        await self._save_fire_refresh(f"{DOMAIN}_routine_reset", {"entity_id": entity_id})
+    async def async_acknowledge(self) -> None:
+        now = dt_util.now()
+        self._engine.acknowledge(now)
+        await self._perform(self._engine.poll(now), now)
+        await self._after_control()
 
-    async def _bootstrap_from_recorder(self) -> None:
-        if recorder_get_instance is None or recorder_state_changes_during_period is None:
-            _LOGGER.warning("Behaviour Monitor: recorder unavailable, skipping bootstrap")
-            return
-        try:
-            instance = recorder_get_instance(self.hass)
-            if instance is None:
-                return
-            end, start = dt_util.now(), dt_util.now() - timedelta(days=self._history_window_days)
-            for eid in self._monitored_entities:
-                try:
-                    for sl in (await instance.async_add_executor_job(
-                        recorder_state_changes_during_period, self.hass, start, end, [eid], False,
-                    )).values():
-                        for s in sl:
-                            if s.state not in ("unavailable", "unknown"):
-                                self._routine_model.record(eid, s.last_changed, s.state, is_binary_state(s.state))
-                except Exception:  # noqa: BLE001
-                    _LOGGER.warning("Could not load recorder history for %s", eid)
-        except Exception:  # noqa: BLE001
-            _LOGGER.warning("Behaviour Monitor: recorder bootstrap failed", exc_info=True)
+    async def async_reset_learning(self, entity_id: str | None = None) -> None:
+        self._engine.reset(entity_id)
+        ids = [entity_id] if entity_id else [s.entity_id for s in self._specs]
+        await self._bootstrap_entities(ids)
+        self._schedule_flush()
+        await self._after_control()
+
+    async def async_test_panic(self) -> None:
+        now = dt_util.now()
+        spec = next((s for s in self._specs if s.category is Category.PANIC), None)
+        room = spec.room if spec else "test"
+        entity_id = spec.entity_id if spec else "test"
+        event = ActivityEvent(
+            entity_id, Category.PANIC, EventKind.PANIC, room, now, bypass=True
+        )
+        await self._perform(self._engine._router.submit_panic(event, now), now)
+        self._engine.acknowledge(now)
+        await self._after_control()

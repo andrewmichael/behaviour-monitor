@@ -11,7 +11,7 @@ from custom_components.behaviour_monitor.switch import (
     async_setup_entry,
 )
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
-from custom_components.behaviour_monitor.const import DOMAIN
+from custom_components.behaviour_monitor.const import DOMAIN, VERSION
 
 
 class TestHolidayModeSwitch:
@@ -21,6 +21,7 @@ class TestHolidayModeSwitch:
     def mock_coordinator(self) -> MagicMock:
         """Create a mock coordinator."""
         coordinator = MagicMock(spec=BehaviourMonitorCoordinator)
+        coordinator.site_name = "Test House"
         coordinator.holiday_mode = False
         coordinator.async_enable_holiday_mode = AsyncMock()
         coordinator.async_disable_holiday_mode = AsyncMock()
@@ -53,9 +54,10 @@ class TestHolidayModeSwitch:
         device_info = switch._attr_device_info
         assert device_info is not None
         assert (DOMAIN, "test_entry_123") in device_info["identifiers"]
-        assert device_info["name"] == "Behaviour Monitor"
-        assert device_info["manufacturer"] == "Custom Integration"
-        assert device_info["model"] == "Pattern Analyzer"
+        assert device_info["name"] == "Test House"
+        assert device_info["manufacturer"] == "Behaviour Monitor"
+        assert device_info["model"] == "Welfare core"
+        assert device_info["sw_version"] == VERSION
 
     def test_is_on_returns_false_when_disabled(
         self, mock_coordinator: MagicMock, mock_config_entry: MagicMock
