@@ -167,6 +167,10 @@ class Engine:
     def acknowledge(self, now: datetime) -> None:
         self._router.acknowledge(now)
 
+    def submit_test(self, now: datetime) -> list[DeliveryAction]:
+        """Test push: self-acknowledging, never touches other open alerts."""
+        return self._router.submit_test(now)
+
     def reset(self, entity_id: str | None = None) -> None:
         if entity_id is None:
             specs = list(self._specs.values())

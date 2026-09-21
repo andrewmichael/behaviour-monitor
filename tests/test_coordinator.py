@@ -242,6 +242,30 @@ async def test_test_panic_pushes_without_learning(coordinator, mock_hass):
 
 
 @pytest.mark.asyncio
+async def test_test_panic_leaves_a_real_panic_open(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    from custom_components.behaviour_monitor.core.events import (
+        ActivityEvent,
+        Category,
+        EventKind,
+    )
+
+    now = datetime.now(timezone.utc)
+    real = ActivityEvent(
+        "binary_sensor.panic", Category.PANIC, EventKind.PANIC, "Hall", now, bypass=True
+    )
+    await coordinator._perform(coordinator._engine._router.submit_panic(real, now), now)
+    await coordinator.async_test_panic()
+    open_real = [
+        o
+        for o in coordinator._engine._router._open.values()
+        if o.alert.source == "binary_sensor.panic"
+    ]
+    assert len(open_real) == 1 and open_real[0].acknowledged is False
+
+
+@pytest.mark.asyncio
 async def test_registry_update_reresolves_rooms(coordinator, mock_hass):
     """Renaming an area renames the room; moving one sensor must not."""
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):

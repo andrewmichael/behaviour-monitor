@@ -177,6 +177,24 @@ def test_panic_is_immediate_critical_and_survives_submit_until_ack():
     assert _acts(acts, "push_clear") == ["welfare:binary_sensor.p:panic"]
 
 
+def test_test_push_never_touches_a_real_panic():
+    """A test push has its own source and acknowledges only itself, so a real
+    panic that is open at the time keeps repeating and is never cleared."""
+    r = AlertRouter(RouterConfig())
+    ev = ActivityEvent(
+        "binary_sensor.p", Category.PANIC, EventKind.PANIC, "Hall", T0, bypass=True
+    )
+    r.submit_panic(ev, T0)
+    acts = r.submit_test(T0 + timedelta(minutes=1))
+    assert [(a.action, a.alert.severity) for a in acts] == [("push", Severity.CRITICAL)]
+    assert "binary_sensor.p" not in acts[0].alert.source
+    acts = r.submit([], T0 + timedelta(minutes=2))
+    assert _acts(acts, "push_clear") == [acts[0].alert.key]  # only the test clears
+    assert "welfare:binary_sensor.p:panic" in [a.key for a in r.open_alerts]
+    acts = r.submit([], T0 + timedelta(minutes=31))
+    assert _acts(acts, "push") == ["welfare:binary_sensor.p:panic"]  # still repeats
+
+
 def test_snooze_suppresses_delivery_but_keeps_state_and_holiday_drops_alerts():
     r2 = AlertRouter(RouterConfig())
     acts = r2.submit([_house(Severity.HIGH), _health()], T0, snoozed=True)

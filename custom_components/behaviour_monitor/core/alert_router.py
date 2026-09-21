@@ -113,6 +113,26 @@ class AlertRouter:
         self._open[alert.key] = o
         return self._push(o, now, snoozed=False)
 
+    def submit_test(self, now: datetime) -> list[DeliveryAction]:
+        """A test push through the real delivery path.
+
+        The alert has its own source, so it never collides with a real panic,
+        and it is acknowledged on creation, so the next submit closes it with
+        a clear push and nothing else open is touched.
+        """
+        alert = Alert(
+            AlertClass.WELFARE,
+            "test",
+            "panic",
+            Severity.CRITICAL,
+            "Test: panic button pressed",
+            now,
+            {"room": "Test"},
+        )
+        o = _Open(alert, now, panic=True, acknowledged=True)
+        self._open[alert.key] = o
+        return self._push(o, now, snoozed=False)
+
     def acknowledge(self, now: datetime) -> None:
         for o in self._open.values():
             if o.alert.cls is AlertClass.WELFARE:

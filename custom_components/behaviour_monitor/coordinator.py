@@ -36,7 +36,7 @@ from .const import (
 )
 from .core.alert_router import DeliveryAction
 from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
-from .core.events import UNAVAILABLE_STATES, ActivityEvent, Category, EventKind
+from .core.events import UNAVAILABLE_STATES, Category
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -504,13 +504,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._after_control()
 
     async def async_test_panic(self) -> None:
+        """Send a test push. The alert is self-acknowledging and has its own
+        source, so a real panic open at the time is neither replaced nor
+        acknowledged; the next poll clears only the test alert."""
         now = dt_util.now()
-        spec = next((s for s in self._specs if s.category is Category.PANIC), None)
-        room = spec.room if spec else "test"
-        entity_id = spec.entity_id if spec else "test"
-        event = ActivityEvent(
-            entity_id, Category.PANIC, EventKind.PANIC, room, now, bypass=True
-        )
-        await self._perform(self._engine._router.submit_panic(event, now), now)
-        self._engine.acknowledge(now)
+        await self._perform(self._engine.submit_test(now), now)
         await self._after_control()
