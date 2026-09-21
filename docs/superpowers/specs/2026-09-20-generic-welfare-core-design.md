@@ -182,12 +182,16 @@ confidence in [0, 1] equal to distinct days observed over
 ### 6.1 House activity model
 
 State: timestamp of the last activity event from any non-panic entity;
-per slot, a bounded list of observed gaps between consecutive activity
-events, from which median and median absolute deviation are derived.
+per slot, one value per day: the longest silence that started in that
+slot. Within-burst chatter is never stored, so the sample count equals the
+day count.
 
-Evaluate: `gap = now - last_activity`. Let `expected` be the slot median
-for the current slot and `spread` its deviation. Ratio
-`r = gap / max(expected, floor_s)`.
+Evaluate: `gap = now - last_activity`. Let `expected` be the 90th
+percentile of the per-day silences for the slot the current gap started
+in. A slot is trusted once it holds three distinct days; below that the
+model pools the same hour across days of the same type (weekday/weekend),
+then across all seven days, and reports no expectation if even that is
+thin. Ratio `r = gap / max(expected, floor_s)`.
 
 | r | Welfare severity |
 |---|---|
@@ -196,7 +200,7 @@ for the current slot and `spread` its deviation. Ratio
 | 6 to 12 | medium |
 | above 12 | high |
 
-`floor_s` prevents division by tiny medians in busy slots; default 300 s.
+`floor_s` prevents short daytime silences from reaching a ratio; default 1200 s.
 Sustained-evidence rule: a severity must hold for two consecutive polls
 before it is raised, and drops one level only after one poll below the
 threshold, so a single event does not flap the alert.

@@ -2,15 +2,19 @@
 
 168 slots (weekday x hour) hold full weekly structure once the house is learned, but
 early on a slot only fills from occurrences of its own weekday: 14 learning days give
-each slot roughly two samples, far short of MIN_GAPS_PER_SLOT. ``expected_gap`` copes
-by pooling: first the exact slot, then the same hour across every day of the same type
+each slot two days at most, short of MIN_DAYS_PER_SLOT. ``expected_gap`` copes by
+pooling: first the exact slot, then the same hour across every day of the same type
 (weekday/weekend), then that hour across all seven weekdays, so the model still has an
 opinion about "normal" before a full week's worth of weekday recurrences exist.
+
+Each slot keeps one number per day: the longest silence that started in that hour.
+A burst of motion contributes twenty tiny gaps and one real silence, and it is the
+silence a welfare ratio must be judged against, so the chatter is never stored. This
+also makes the sample count equal the day count, which is what the trust check reads.
 """
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -20,9 +24,8 @@ from .alerts import Severity
 from .events import ActivityEvent
 from .slots import SLOTS, confidence, is_weekend, iso_day, slot_index
 
-MIN_GAPS_PER_SLOT = 8
+MIN_DAYS_PER_SLOT = 3
 EXPECTED_GAP_QUANTILE = 0.9
-_GAPS_PER_SLOT = 400
 _WEEKDAY_INDICES = range(0, 5)
 _WEEKEND_INDICES = range(5, 7)
 _ALL_INDICES = range(0, 7)
@@ -35,7 +38,7 @@ class HouseConfig:
     low_ratio: float = 3.0
     medium_ratio: float = 6.0
     high_ratio: float = 12.0
-    floor_s: float = 300.0
+    floor_s: float = 1200.0
     min_live_fraction: float = 0.5
     sustain_polls: int = 2
 
@@ -50,12 +53,23 @@ class HouseAssessment:
     last_room: str | None
 
 
+def _load_slot(raw: Any) -> dict[str, float]:
+    """Read one slot from a store. Current stores hold {day: longest_gap};
+    earlier ones held every gap as [day, gap] pairs, which fold to the same."""
+    out: dict[str, float] = {}
+    pairs = raw.items() if isinstance(raw, dict) else raw
+    for d, g in pairs:
+        day, gap = str(d), float(g)
+        if gap > out.get(day, 0.0):
+            out[day] = gap
+    return out
+
+
 class HouseModel:
     def __init__(self, config: HouseConfig) -> None:
         self._cfg = config
-        self._gaps: list[deque[tuple[str, float]]] = [
-            deque(maxlen=_GAPS_PER_SLOT) for _ in range(SLOTS)
-        ]
+        # Per slot: iso day -> longest gap (seconds) that started in that slot.
+        self._gaps: list[dict[str, float]] = [dict() for _ in range(SLOTS)]
         self._last_activity: datetime | None = None
         self._last_room: str | None = None
         self._days_seen: set[str] = set()
@@ -94,7 +108,10 @@ class HouseModel:
             # in: an hour whose activity is one tight burst followed by quiet
             # must learn the quiet, or its own idle tail looks like an anomaly.
             gap = (event.timestamp - started).total_seconds()
-            self._gaps[slot_index(started)].append((iso_day(started.date()), gap))
+            slot = self._gaps[slot_index(started)]
+            day_started = iso_day(started.date())
+            if gap > slot.get(day_started, 0.0):
+                slot[day_started] = gap
         if self._last_activity is None or event.timestamp >= self._last_activity:
             self._last_activity = event.timestamp
             self._last_room = event.room
@@ -112,30 +129,33 @@ class HouseModel:
 
         Falls back to pooling by hour of day when the exact weekday+hour slot
         is still sparse: same day type (weekday/weekend) first, then all seven
-        weekdays, before giving up.
+        weekdays, before giving up. A rung is trusted once it holds gaps from
+        MIN_DAYS_PER_SLOT distinct days; one busy day never counts as a
+        distribution however many gaps it produced.
         """
-        direct = self._gaps[slot_index(ts)]
-        if len(direct) >= MIN_GAPS_PER_SLOT:
+        direct = list(self._gaps[slot_index(ts)].values())
+        if len(direct) >= MIN_DAYS_PER_SLOT:
             return self._quantile(direct)
         hour = ts.hour
         same_type = _WEEKEND_INDICES if is_weekend(ts.date()) else _WEEKDAY_INDICES
         pooled = self._pool(hour, same_type)
-        if len(pooled) >= MIN_GAPS_PER_SLOT:
+        if len(pooled) >= MIN_DAYS_PER_SLOT:
             return self._quantile(pooled)
         all_days = self._pool(hour, _ALL_INDICES)
-        if len(all_days) >= MIN_GAPS_PER_SLOT:
+        if len(all_days) >= MIN_DAYS_PER_SLOT:
             return self._quantile(all_days)
         return None
 
-    def _pool(self, hour: int, weekdays: Iterable[int]) -> list[tuple[str, float]]:
-        out: list[tuple[str, float]] = []
+    def _pool(self, hour: int, weekdays: Iterable[int]) -> list[float]:
+        """One value per (day, slot) across the given weekdays at ``hour``."""
+        out: list[float] = []
         for wd in weekdays:
-            out.extend(self._gaps[wd * 24 + hour])
+            out.extend(self._gaps[wd * 24 + hour].values())
         return out
 
     @staticmethod
-    def _quantile(gaps: Iterable[tuple[str, float]]) -> float:
-        vals = sorted(g for _, g in gaps)
+    def _quantile(gaps: Iterable[float]) -> float:
+        vals = sorted(gaps)
         return float(vals[min(len(vals) - 1, int(len(vals) * EXPECTED_GAP_QUANTILE))])
 
     def confidence(self, now: datetime) -> float:
@@ -229,9 +249,8 @@ class HouseModel:
     def prune(self, before: date) -> None:
         cutoff = iso_day(before)
         for gaps in self._gaps:
-            kept = [(d, g) for d, g in gaps if d >= cutoff]
-            gaps.clear()
-            gaps.extend(kept)
+            for d in [d for d in gaps if d < cutoff]:
+                del gaps[d]
         self._days_seen = {d for d in self._days_seen if d >= cutoff}
         self._rooms_by_day = {
             d: r for d, r in self._rooms_by_day.items() if d >= cutoff
@@ -241,7 +260,7 @@ class HouseModel:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "gaps": [list(g) for g in self._gaps],
+            "gaps": [dict(g) for g in self._gaps],
             "last_activity": (
                 self._last_activity.isoformat() if self._last_activity else None
             ),
@@ -257,7 +276,7 @@ class HouseModel:
         try:
             gaps = data["gaps"]
             for i in range(min(SLOTS, len(gaps))):
-                m._gaps[i].extend((str(d), float(g)) for d, g in gaps[i])
+                m._gaps[i] = _load_slot(gaps[i])
             la = data.get("last_activity")
             m._last_activity = datetime.fromisoformat(la) if la else None
             m._last_room = data.get("last_room")
