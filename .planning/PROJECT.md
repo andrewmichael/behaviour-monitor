@@ -66,6 +66,7 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - Per-entity sensitivity tuning UI — future milestone
 - Seasonal pattern adjustment — future milestone
 - Long-horizon decline detection — future milestone. Drift CUSUM compares against a rolling 28-day decayed baseline, so a decline spread over months is absorbed as the new normal. Candidate fix: a second, much slower baseline (e.g. 90-day or first-learned-month anchor) held alongside the 28-day one.
+- Household size awareness — future milestone. The core assumes a single occupant: whole-house gaps, routines and chains are learned as one blended pattern, so with two or more residents one person's silence is masked by the other's activity, and interleaved movement corrupts chain learning. Candidate: a configured occupant count (or presence entities per person) that changes what is learned and what counts as a welfare gap.
 - Population-based norms — privacy concern; per-individual learning only
 - Deep learning models — complexity/dependency overhead; pure Python constraint
 
