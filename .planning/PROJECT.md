@@ -65,6 +65,7 @@ Anomaly alerts must be trustworthy — when a notification fires, it should repr
 - Offline mode — real-time monitoring is core value
 - Per-entity sensitivity tuning UI — future milestone
 - Seasonal pattern adjustment — future milestone
+- Long-horizon decline detection — future milestone. Drift CUSUM compares against a rolling 28-day decayed baseline, so a decline spread over months is absorbed as the new normal. Candidate fix: a second, much slower baseline (e.g. 90-day or first-learned-month anchor) held alongside the 28-day one.
 - Population-based norms — privacy concern; per-individual learning only
 - Deep learning models — complexity/dependency overhead; pure Python constraint
 
