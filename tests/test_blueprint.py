@@ -64,6 +64,14 @@ def test_inputs_and_defaults():
     assert (num["min"], num["max"]) == (0, 240)
 
 
+def test_min_version_sits_under_homeassistant():
+    # HA's blueprint schema only accepts min_version under `homeassistant:`;
+    # directly under `blueprint:` the import fails.
+    bp = _load()["blueprint"]
+    assert "min_version" not in bp
+    assert bp["homeassistant"]["min_version"] == "2024.10.0"
+
+
 def test_triggers_and_mode():
     data = _load()
     assert data["mode"] == "parallel"

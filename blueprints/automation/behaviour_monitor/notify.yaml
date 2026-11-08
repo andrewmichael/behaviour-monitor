@@ -5,7 +5,8 @@ blueprint:
     opens, escalates or is reminded, repeats while it stays open, and can send
     a "Cleared" message. A panic gets an "I'm on it" button that clears it.
   domain: automation
-  min_version: 2024.10.0
+  homeassistant:
+    min_version: 2024.10.0
   source_url: https://github.com/andrewmichael/behaviour-monitor/blob/main/blueprints/automation/behaviour_monitor/notify.yaml
   input:
     notify_service:
