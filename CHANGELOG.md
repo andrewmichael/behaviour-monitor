@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-11-08
+
+### Added
+- Home Assistant owns notifications
+
+### Changed
+- drop notify service and push options; migrate config to v12
+- clear panic button and clear_alert service replace acknowledge
+- coordinator fires behaviour_monitor_alert events instead of pushing
+- engine publishes attention and information groups
+- router emits alert events with stable ids and groups
+- Documentation: plan for Home Assistant owned notifications [skip ci]
+- Documentation: design for Home Assistant owned notifications [skip ci]
+- Documentation: handoff of HA review 17 findings (battery monitoring, acknowledge, drift wording) [skip ci]
+- Documentation: flag household size awareness as a future milestone [skip ci]
+- Documentation: flag long-horizon decline detection as a future milestone [skip ci]
+- Documentation: planning state reflects the shipped v6 generic welfare core [skip ci]
+
+### Fixed
+- a real panic's repeats never stop on a sensor miss
+- panic repeats survive a slow sensor update
+- persistent upgrade notice and one clear_alert warning
+- alert ids per opening and no double push after snooze
+- stop blueprint repeats for closed or snoozed alerts
+- no "I'm on it" button on test alerts
+- release held alert events when Home Assistant starts during setup
+- clear prior test alert and skip held alerts in reminders
+
 ## [6.1.1] - 2026-09-21
 
 ### Fixed
