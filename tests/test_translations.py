@@ -15,12 +15,16 @@ def test_translations_cover_every_config_and_option_field():
     t = json.loads((ROOT / "translations" / "en.json").read_text())
     user = t["config"]["step"]["user"]["data"]
     init = t["options"]["step"]["init"]["data"]
-    for key in ("site_name", "notify_service", *CATEGORY_CONF_KEYS.values()):
+    for key in ("site_name", *CATEGORY_CONF_KEYS.values()):
         assert key in user and key in init
     for key in OPTION_DEFAULTS:
         assert key in init
     assert set(t["config"]["error"]) >= {"no_entities", "duplicate_entity"}
-    assert set(t["issues"]) >= {"assign_categories", "device_health"}
+    assert set(t["issues"]) >= {
+        "assign_categories",
+        "device_health",
+        "notifications_moved",
+    }
 
 
 def test_services_yaml_lists_every_service():
@@ -30,7 +34,7 @@ def test_services_yaml_lists_every_service():
         "disable_holiday_mode",
         "snooze",
         "clear_snooze",
-        "acknowledge",
+        "clear_alert",
         "reset_learning",
         "test_panic",
     }

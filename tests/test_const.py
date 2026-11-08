@@ -27,8 +27,7 @@ def test_option_defaults_match_spec():
         "learning_days": 14,
         "window_days": 28,
         "health_grace_s": 900,
-        "push_repeat_s": 1800,
-        "push_min_severity": "medium",
+        "attention_min_severity": "medium",
         "house_low_ratio": 3,
         "chain_window_s": 1800,
         "timing_promote_days": 7,
@@ -37,9 +36,20 @@ def test_option_defaults_match_spec():
 
 
 def test_versions_and_services():
-    assert const.CONFIG_VERSION == 11 and const.STORAGE_VERSION == 11
+    assert const.CONFIG_VERSION == 12 and const.STORAGE_VERSION == 11
     assert const.VERSION == "5.0.0"
-    assert const.SERVICE_ACKNOWLEDGE == "acknowledge"
+    assert const.SERVICE_CLEAR_ALERT == "clear_alert"
     assert const.SERVICE_RESET_LEARNING == "reset_learning"
     assert const.SERVICE_TEST_PANIC == "test_panic"
     assert const.SNOOZE_DURATIONS["1_hour"] == 3600
+
+
+def test_notification_migration_constants():
+    assert const.LEGACY_CONF_NOTIFY_SERVICE == "notify_service"
+    assert const.ISSUE_NOTIFICATIONS_MOVED == "notifications_moved"
+    assert const.BLUEPRINT_URL.startswith(
+        "https://github.com/andrewmichael/behaviour-monitor/"
+    )
+    assert not hasattr(const, "CONF_NOTIFY_SERVICE")
+    assert not hasattr(const, "CONF_PUSH_REPEAT_S")
+    assert not hasattr(const, "CONF_PUSH_MIN_SEVERITY")

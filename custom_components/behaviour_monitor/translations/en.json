@@ -3,10 +3,9 @@
     "step": {
       "user": {
         "title": "Behaviour Monitor site",
-        "description": "Name the site, choose where welfare pushes go, and place each sensor in a category. Rooms come from the Home Assistant area of each entity or its device.",
+        "description": "Name the site and place each sensor in a category. Rooms come from the Home Assistant area of each entity or its device.",
         "data": {
           "site_name": "Site name",
-          "notify_service": "Notify service (for example notify.mobile_app_phone)",
           "motion_entities": "Motion sensors",
           "contact_entities": "Door and window contacts",
           "plug_entities": "Power plugs (power sensors or switches)",
@@ -30,7 +29,6 @@
         "title": "Behaviour Monitor options",
         "data": {
           "site_name": "Site name",
-          "notify_service": "Notify service",
           "motion_entities": "Motion sensors",
           "contact_entities": "Door and window contacts",
           "plug_entities": "Power plugs",
@@ -42,8 +40,7 @@
           "learning_days": "Days before alerts start",
           "window_days": "Days of history kept",
           "health_grace_s": "Unavailable grace period (seconds)",
-          "push_repeat_s": "Welfare push repeat interval (seconds)",
-          "push_min_severity": "Minimum severity to push",
+          "attention_min_severity": "Minimum severity for needs attention",
           "house_low_ratio": "House silence ratio for a low welfare alert",
           "chain_window_s": "Chain step window (seconds)",
           "timing_promote_days": "Days of slower routine before a welfare alert",
@@ -61,6 +58,10 @@
       "title": "Assign categories for {site}",
       "description": "Behaviour Monitor v5 needs each monitored entity placed in a category. Open the integration options and assign: {entities}"
     },
+    "notifications_moved": {
+      "title": "Behaviour Monitor no longer sends notifications",
+      "description": "{site} used to send welfare alerts to {service}. Notifications now come from a Home Assistant automation. Import the Behaviour Monitor notify blueprint (Learn more) and choose {service} to keep receiving them."
+    },
     "device_health": {
       "title": "{site}: sensor problem",
       "description": "{message}"
@@ -75,14 +76,13 @@
       "learning": {"name": "Learning"},
       "entity_status": {"name": "Entity Status"},
       "last_activity": {"name": "Last Activity"},
-      "daily_activity_count": {"name": "Daily Activity Count"},
-      "last_notification": {"name": "Last Notification"}
+      "daily_activity_count": {"name": "Daily Activity Count"}
     },
     "switch": {"holiday_mode": {"name": "Holiday Mode"}},
     "select": {"snooze": {"name": "Snooze Notifications"}},
     "button": {
-      "acknowledge": {"name": "Acknowledge"},
-      "test_notification": {"name": "Test notification"}
+      "acknowledge": {"name": "Clear panic"},
+      "test_notification": {"name": "Test alert"}
     }
   }
 }

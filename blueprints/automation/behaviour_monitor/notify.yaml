@@ -1,0 +1,199 @@
+blueprint:
+  name: Behaviour Monitor notifications
+  description: >
+    Sends Behaviour Monitor alerts to a notify service. Notifies when an alert
+    opens, escalates or is reminded, repeats while it stays open, and can send
+    a "Cleared" message. A panic gets an "I'm on it" button that clears it.
+  domain: automation
+  min_version: 2024.10.0
+  source_url: https://github.com/andrewmichael/behaviour-monitor/blob/main/blueprints/automation/behaviour_monitor/notify.yaml
+  input:
+    notify_service:
+      name: Notify service
+      description: The notify action to call, for example notify.mobile_app_phone.
+      selector:
+        text:
+    groups:
+      name: Alert groups
+      description: >
+        attention is what needs a person, information is the quieter list,
+        health is sensing trouble.
+      default:
+        - attention
+      selector:
+        select:
+          multiple: true
+          options:
+            - attention
+            - information
+            - health
+    repeat_minutes:
+      name: Repeat every (minutes)
+      description: Send again at this interval while the alert is open. 0 for no repeat.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 240
+          mode: box
+          unit_of_measurement: min
+    send_cleared:
+      name: Send a Cleared message
+      default: true
+      selector:
+        boolean:
+    panic_action:
+      name: Add an "I'm on it" button to panic alerts
+      default: true
+      selector:
+        boolean:
+
+mode: parallel
+max: 200
+
+triggers:
+  - trigger: event
+    event_type: behaviour_monitor_alert
+    id: alert
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: action
+
+variables:
+  groups: !input groups
+  repeat_minutes: !input repeat_minutes
+  send_cleared: !input send_cleared
+  panic_action: !input panic_action
+
+actions:
+  - choose:
+      # Tap on "I'm on it": clear the panic named in the action.
+      - conditions:
+          - condition: trigger
+            id: action
+          - condition: template
+            value_template: "{{ (trigger.event.data.action | string).startswith('BM_CLEAR_') }}"
+        sequence:
+          - action: behaviour_monitor.clear_alert
+            data:
+              alert_id: "{{ trigger.event.data.action | string | replace('BM_CLEAR_', '', 1) }}"
+
+      # Opened, escalated or reminded: notify, then repeat while the alert
+      # is still open, until anything else arrives for this id.
+      - conditions:
+          - condition: trigger
+            id: alert
+          - condition: template
+            value_template: "{{ trigger.event.data.type in ['opened', 'escalated', 'reminder'] }}"
+          - condition: template
+            value_template: "{{ trigger.event.data.group in groups }}"
+        sequence:
+          - variables:
+              alert_id: "{{ trigger.event.data.id }}"
+              kind: "{{ trigger.event.data.kind }}"
+              # A real panic is never stopped by the sensor lookup: a late
+              # refresh or an unavailable sensor would read as closed and end
+              # it after one push. Only its cleared event (or a newer run for
+              # the same id) ends it.
+              real_panic: "{{ trigger.event.data.kind == 'panic' and not trigger.event.data.test }}"
+              title: "{{ trigger.event.data.site }} welfare"
+              body: "{{ trigger.event.data.message }}"
+              push_data: >-
+                {{ {'tag': alert_id, 'actions': [{'action': 'BM_CLEAR_' ~ alert_id, 'title': "I'm on it"}]}
+                if panic_action and trigger.event.data.kind == 'panic'
+                and not trigger.event.data.test
+                else {'tag': alert_id} }}
+          - action: !input notify_service
+            data:
+              title: "{{ title }}"
+              message: "{{ body }}"
+              data: "{{ push_data }}"
+          # Health ids are not published on the Welfare Status sensor, so
+          # only attention and information alerts can be checked and repeated.
+          - if:
+              - condition: template
+                value_template: "{{ repeat_minutes | int(0) > 0 }}"
+              - condition: template
+                value_template: "{{ trigger.event.data.group in ['attention', 'information'] }}"
+            then:
+              # The alert may have closed before this run could wait for its
+              # cleared event (a test alert closes within milliseconds), so
+              # look it up on the Welfare Status sensors: closed, snoozed or
+              # open.
+              - variables:
+                  live: &live_status >-
+                    {%- set ns = namespace(status='closed') -%}
+                    {%- for s in states.sensor -%}
+                      {%- for g in ['attention', 'information'] -%}
+                        {%- set items = s.attributes.get(g) -%}
+                        {%- if items is iterable and items is not string
+                          and items is not mapping -%}
+                          {%- for a in items -%}
+                            {%- if a is mapping and a.get('id') == alert_id -%}
+                              {%- set ns.status = 'snoozed'
+                                if s.attributes.get('snoozed') else 'open' -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                    {%- endfor -%}
+                    {{ ns.status }}
+              - if:
+                  - condition: template
+                    value_template: "{{ live == 'closed' and not real_panic | bool }}"
+                then:
+                  - stop: Alert closed
+              - repeat:
+                  sequence:
+                    # Any event for this id ends the wait: a newer run has
+                    # taken over, or the alert cleared.
+                    - wait_for_trigger:
+                        - trigger: event
+                          event_type: behaviour_monitor_alert
+                          event_data:
+                            id: "{{ alert_id }}"
+                      timeout:
+                        minutes: "{{ repeat_minutes | int(30) }}"
+                      continue_on_timeout: true
+                    - if:
+                        - condition: template
+                          value_template: "{{ wait.trigger is none }}"
+                      then:
+                        - variables:
+                            live: *live_status
+                        - if:
+                            - condition: template
+                              value_template: "{{ live == 'closed' and not real_panic | bool }}"
+                          then:
+                            - stop: Alert closed
+                        # While snoozed, keep waiting but only a panic pushes.
+                        - if:
+                            - condition: template
+                              value_template: "{{ live == 'open' or kind == 'panic' }}"
+                          then:
+                            - action: !input notify_service
+                              data:
+                                title: "{{ title }}"
+                                message: "{{ body }}"
+                                data: "{{ push_data }}"
+                  until:
+                    - condition: template
+                      value_template: "{{ wait.trigger is not none }}"
+
+      # Cleared (also arrives for ids this automation never saw open).
+      - conditions:
+          - condition: trigger
+            id: alert
+          - condition: template
+            value_template: "{{ trigger.event.data.type == 'cleared' }}"
+          - condition: template
+            value_template: "{{ trigger.event.data.group in groups }}"
+          - condition: template
+            value_template: "{{ send_cleared }}"
+        sequence:
+          - action: !input notify_service
+            data:
+              title: "{{ trigger.event.data.site }} welfare"
+              message: "Cleared: {{ trigger.event.data.message }}"
+              data:
+                tag: "{{ trigger.event.data.id }}"

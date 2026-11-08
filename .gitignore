@@ -105,7 +105,4 @@ Thumbs.db
 # Project specific
 .claude/
 .claude/settings.local.json
-
-# claude-mem auto-generated context stubs
-.planning/CLAUDE.md
-.planning/**/CLAUDE.md
+exports/

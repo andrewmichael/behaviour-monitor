@@ -74,8 +74,9 @@ class EngineConfig:
             ),
             health=HealthConfig(grace_s=float(o.get("health_grace_s", 900))),
             router=RouterConfig(
-                push_min_severity=Severity(str(o.get("push_min_severity", "medium"))),
-                push_repeat_s=float(o.get("push_repeat_s", 1800)),
+                attention_min_severity=Severity(
+                    str(o.get("attention_min_severity", "medium"))
+                ),
                 timing_promote_days=int(o.get("timing_promote_days", 7)),
             ),
             learning_days=ld,
@@ -164,11 +165,14 @@ class Engine:
     def is_snoozed(self, now: datetime) -> bool:
         return self._snooze_until is not None and now < self._snooze_until
 
-    def acknowledge(self, now: datetime) -> None:
-        self._router.acknowledge(now)
+    def clear_panic(self, alert_id: str | None, now: datetime) -> list[DeliveryAction]:
+        return self._router.clear_panic(alert_id, now)
+
+    def reminders(self, reason: str) -> list[DeliveryAction]:
+        return self._router.reminders(reason)
 
     def submit_test(self, now: datetime) -> list[DeliveryAction]:
-        """Test push: self-acknowledging, never touches other open alerts."""
+        """Test alert: never touches other open alerts."""
         return self._router.submit_test(now)
 
     def reset(self, entity_id: str | None = None) -> None:
@@ -359,7 +363,7 @@ class Engine:
     def snapshot(self, now: datetime) -> dict[str, Any]:
         days = self._days_seen()
         conf = confidence(days, self._cfg.learning_days)
-        sev = self._router.welfare_severity
+        sev = self._router.attention_severity
         if conf < 1.0:
             status = "learning"
         elif self._degraded:
@@ -367,6 +371,9 @@ class Engine:
         else:
             status = sev.value if sev else "ok"
         open_alerts = self._router.open_alerts
+        published = self._router.published()
+        attention = [p for p in published if p["group"] == "attention"]
+        information = [p for p in published if p["group"] == "information"]
         assessment_gap = (
             (now - self._house.last_activity).total_seconds()
             if self._house.last_activity
@@ -375,10 +382,9 @@ class Engine:
         return {
             "welfare": {
                 "status": status,
-                "reasons": [
-                    a.explanation for a in open_alerts if a.cls is AlertClass.WELFARE
-                ],
-                "open_alerts": [a.to_dict() for a in open_alerts],
+                "reasons": [a["explanation"] for a in attention],
+                "attention": attention,
+                "information": information,
             },
             "house": {
                 "last_activity": (
@@ -449,6 +455,7 @@ class Engine:
             "snooze_until": (
                 self._snooze_until.isoformat() if self._snooze_until else None
             ),
+            "snoozed": self.is_snoozed(now),
         }
 
     # ----------------------------------------------------------- persistence

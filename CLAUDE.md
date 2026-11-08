@@ -51,8 +51,11 @@ make clean-all    # Remove venv and all generated files
 - `coordinator.py` is the only module that imports both Home Assistant and
   `core`. It resolves rooms from areas, feeds state changes to the engine,
   polls it once a minute and performs the delivery actions it returns.
-- Three alert classes: welfare (push, repeated until acknowledged), device
-  health (repair issues), statistical (sensor attribute and logbook).
+- Three alert classes: welfare (`behaviour_monitor_alert` events, split into
+  attention and information groups), device health (repair issues),
+  statistical (sensor attribute and logbook). The integration sends no
+  pushes; `blueprints/automation/behaviour_monitor/notify.yaml` does.
+- Config entry version is 12.
 - Learned state persists in `.storage/behaviour_monitor.{entry_id}.json`
   (store version 11) as `Engine.to_dict()`.
 
@@ -85,13 +88,14 @@ make clean-all    # Remove venv and all generated files
 ## File structure
 
     custom_components/behaviour_monitor/
-    ├── __init__.py        # setup, v11 migration, services
-    ├── config_flow.py     # site name, notify service, six category lists, options
+    ├── __init__.py        # setup, v12 migration, services
+    ├── config_flow.py     # site name, six category lists, options
     ├── coordinator.py     # Engine shell
-    ├── sensor.py          # nine sensors on the engine snapshot
+    ├── sensor.py          # eight sensors on the engine snapshot
     ├── button.py / switch.py / select.py
     ├── const.py
     └── core/              # pure learning and alerting core
+    blueprints/automation/behaviour_monitor/notify.yaml  # notify blueprint
     scripts/replay.py           # replay a fixture, print the alert timeline
     scripts/export_fixture.py   # export a real site to the fixture format
     tests/core/                 # core tests and synthetic scenarios

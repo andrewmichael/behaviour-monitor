@@ -15,6 +15,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -45,6 +46,13 @@ def _render(data: dict[str, Any], text: str) -> str:
     return text
 
 
+def _rendered_alerts(data: dict[str, Any], group: str) -> list[dict[str, Any]]:
+    return [
+        {**a, "explanation": _render(data, a.get("explanation", ""))}
+        for a in data.get("welfare", {}).get(group, [])
+    ]
+
+
 def _ts(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
@@ -65,7 +73,9 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         value_fn=lambda d: d.get("welfare", {}).get("status", "unknown"),
         extra_attrs_fn=lambda c, d: {
             "reasons": [_render(d, r) for r in d.get("welfare", {}).get("reasons", [])],
-            "open_alerts": d.get("welfare", {}).get("open_alerts", []),
+            "attention": _rendered_alerts(d, "attention"),
+            "information": _rendered_alerts(d, "information"),
+            "snoozed": bool(d.get("snoozed", False)),
         },
     ),
     BehaviourMonitorSensorDescription(
@@ -147,16 +157,6 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         value_fn=lambda d: d.get("house", {}).get("daily_count", 0),
     ),
-    BehaviourMonitorSensorDescription(
-        key="last_notification",
-        name="Last Notification",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        icon="mdi:bell-ring",
-        value_fn=lambda d: _ts(d.get("last_notification", {}).get("timestamp")),
-        extra_attrs_fn=lambda c, d: {
-            "kind": d.get("last_notification", {}).get("kind")
-        },
-    ),
 )
 
 
@@ -167,6 +167,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up Behaviour Monitor sensors."""
     coordinator: BehaviourMonitorCoordinator = hass.data[DOMAIN][entry.entry_id]
+    registry = er.async_get(hass)
+    if stale := registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}_last_notification"
+    ):
+        registry.async_remove(stale)
     async_add_entities(
         [BehaviourMonitorSensor(coordinator, entry, d) for d in SENSOR_DESCRIPTIONS]
     )

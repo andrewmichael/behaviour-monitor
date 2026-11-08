@@ -104,11 +104,24 @@ def test_daytime_silence_raises_welfare_after_training():
     day = MON + timedelta(days=15)
     _pulse(e, "binary_sensor.kit", day + timedelta(hours=9), learn_only=False)
     quiet = day + timedelta(hours=9, minutes=1)
-    assert all(a.action != "push" for a in e.poll(quiet))
+    assert all(
+        not (
+            a.action == "event"
+            and a.event in ("opened", "escalated", "reminder")
+            and a.group == "attention"
+        )
+        for a in e.poll(quiet)
+    )
     actions = []
     for m in range(5, 260, 5):
         actions += e.poll(quiet + timedelta(minutes=m))
-    pushes = [a for a in actions if a.action == "push"]
+    pushes = [
+        a
+        for a in actions
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ]
     assert pushes and pushes[0].alert.kind == "inactivity"
     snap = e.snapshot(quiet + timedelta(minutes=260))
     assert snap["welfare"]["status"] in ("medium", "high")
@@ -122,17 +135,51 @@ def test_night_silence_is_normal():
     acts = []
     for m in range(0, 180, 10):
         acts += e.poll(night + timedelta(minutes=m))
-    assert [a for a in acts if a.action == "push"] == []
+    assert [
+        a
+        for a in acts
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ] == []
 
 
-def test_panic_pushes_immediately_even_while_learning():
+def test_panic_opens_immediately_even_while_learning():
     e = _engine()
     acts = e.handle_state("binary_sensor.panic", "off", "on", MON)
-    assert [a.action for a in acts] == ["push"] and acts[
-        0
-    ].alert.severity is Severity.CRITICAL
-    e.acknowledge(MON + timedelta(minutes=1))
-    assert [a.action for a in e.poll(MON + timedelta(minutes=2))] == ["push_clear"]
+    assert [(a.action, a.event) for a in acts] == [("event", "opened")]
+    assert acts[0].alert.severity is Severity.CRITICAL
+    assert e.poll(MON + timedelta(minutes=2)) == []
+    cleared = e.clear_panic(None, MON + timedelta(minutes=3))
+    assert [(a.action, a.event) for a in cleared] == [("event", "cleared")]
+    assert e.reminders("manual") == []
+
+
+def test_snapshot_splits_attention_and_information():
+    e = _engine()
+    high = Alert(
+        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "quiet too long", MON
+    )
+    low = Alert(
+        AlertClass.WELFARE,
+        "house",
+        "routine_agreement",
+        Severity.LOW,
+        "routine slightly off",
+        MON,
+    )
+    e._router.submit([high, low], MON)
+    s = e.snapshot(MON)["welfare"]
+    assert [a["group"] for a in s["attention"]] == ["attention"]
+    assert s["information"] and all(
+        a["group"] == "information" for a in s["information"]
+    )
+    assert "open_alerts" not in s and s["reasons"] == [s["attention"][0]["explanation"]]
+
+
+def test_from_options_reads_attention_threshold():
+    cfg = EngineConfig.from_options({"attention_min_severity": "high"})
+    assert cfg.router.attention_min_severity is Severity.HIGH
 
 
 def test_rollover_feeds_drift_and_recomputes_chains():
@@ -171,7 +218,13 @@ def test_holiday_pauses_the_ladder_and_ends_cleanly():
     for h in range(72):
         last_holiday_poll = holiday_start + timedelta(hours=h)
         acts += e.poll(last_holiday_poll)
-    assert [a for a in acts if a.action == "push"] == []
+    assert [
+        a
+        for a in acts
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ] == []
     assert e.snapshot(last_holiday_poll)["welfare"]["status"] != "degraded"
 
     day18_noon = MON + timedelta(days=18, hours=12)
@@ -179,10 +232,22 @@ def test_holiday_pauses_the_ladder_and_ends_cleanly():
     post_holiday_acts = []
     acts = e.poll(day18_noon + timedelta(minutes=1))
     post_holiday_acts += acts
-    assert [a for a in acts if a.action == "push"] == []
+    assert [
+        a
+        for a in acts
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ] == []
     acts = e.poll(day18_noon + timedelta(minutes=5))
     post_holiday_acts += acts
-    assert [a for a in acts if a.action == "push"] == []
+    assert [
+        a
+        for a in acts
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ] == []
 
     pushes = []
     t = day18_noon + timedelta(minutes=5)
@@ -190,7 +255,13 @@ def test_holiday_pauses_the_ladder_and_ends_cleanly():
     while t <= end:
         acts = e.poll(t)
         post_holiday_acts += acts
-        pushes += [a for a in acts if a.action == "push"]
+        pushes += [
+            a
+            for a in acts
+            if a.action == "event"
+            and a.event in ("opened", "escalated", "reminder")
+            and a.group == "attention"
+        ]
         t += timedelta(minutes=10)
     assert pushes
     assert pushes[0].alert.kind == "inactivity"
@@ -280,3 +351,11 @@ def test_reset_preserves_holiday_and_snooze():
     # A single-entity reset never touched either field; confirm it still does not.
     e.reset("binary_sensor.bed")
     assert e.holiday is True and e.snooze_until == until
+
+
+def test_snapshot_reports_whether_snooze_is_active():
+    e = _engine()
+    assert e.snapshot(MON)["snoozed"] is False
+    e.snooze_until = MON + timedelta(hours=1)
+    assert e.snapshot(MON)["snoozed"] is True
+    assert e.snapshot(MON + timedelta(hours=2))["snoozed"] is False
