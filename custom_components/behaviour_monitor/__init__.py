@@ -21,7 +21,7 @@ from .const import (
     ISSUE_ASSIGN_CATEGORIES,
     LEGACY_CONF_MONITORED_ENTITIES,
     OPTION_DEFAULTS,
-    SERVICE_ACKNOWLEDGE,
+    SERVICE_CLEAR_ALERT,
     SERVICE_CLEAR_SNOOZE,
     SERVICE_DISABLE_HOLIDAY_MODE,
     SERVICE_ENABLE_HOLIDAY_MODE,
@@ -127,9 +127,13 @@ def _register_services(hass: HomeAssistant) -> None:
         for c in _coordinators(hass):
             await c.async_clear_snooze()
 
-    async def acknowledge(call: ServiceCall) -> None:
+    async def clear_alert(call: ServiceCall) -> None:
+        alert_id = call.data.get("alert_id")
+        cleared = False
         for c in _coordinators(hass):
-            await c.async_acknowledge()
+            cleared = await c.async_clear_alert(alert_id) or cleared
+        if alert_id and not cleared:
+            _LOGGER.warning("No open panic with id %s", alert_id)
 
     async def reset_learning(call: ServiceCall) -> None:
         for c in _coordinators(hass):
@@ -148,7 +152,12 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema({vol.Required("duration"): vol.In(list(SNOOZE_DURATIONS))}),
     )
     hass.services.async_register(DOMAIN, SERVICE_CLEAR_SNOOZE, clear_snooze)
-    hass.services.async_register(DOMAIN, SERVICE_ACKNOWLEDGE, acknowledge)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_ALERT,
+        clear_alert,
+        schema=vol.Schema({vol.Optional("alert_id"): str}),
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_LEARNING,
@@ -171,7 +180,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_DISABLE_HOLIDAY_MODE,
                 SERVICE_SNOOZE,
                 SERVICE_CLEAR_SNOOZE,
-                SERVICE_ACKNOWLEDGE,
+                SERVICE_CLEAR_ALERT,
                 SERVICE_RESET_LEARNING,
                 SERVICE_TEST_PANIC,
             ):

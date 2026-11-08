@@ -30,9 +30,16 @@ clear_snooze:
   name: Clear snooze
   description: Resume delivery immediately.
 
-acknowledge:
-  name: Acknowledge
-  description: Stop repeat pushes for the open welfare alerts. The alert stays open until the house recovers.
+clear_alert:
+  name: Clear alert
+  description: Clear open panic alerts. Clears every open panic when no alert id is given.
+  fields:
+    alert_id:
+      name: Alert ID
+      required: false
+      example: "welfare:house:panic@binary_sensor.panic"
+      selector:
+        text: {}
 
 reset_learning:
   name: Reset learning
@@ -47,4 +54,4 @@ reset_learning:
 
 test_panic:
   name: Test panic
-  description: Send a panic push through the real delivery path without touching learned state.
+  description: Open a test panic alert through the real event path without touching learned state.

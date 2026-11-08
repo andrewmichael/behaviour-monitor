@@ -30,7 +30,7 @@ def test_services_yaml_lists_every_service():
         "disable_holiday_mode",
         "snooze",
         "clear_snooze",
-        "acknowledge",
+        "clear_alert",
         "reset_learning",
         "test_panic",
     }

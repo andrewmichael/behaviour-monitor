@@ -87,7 +87,7 @@ SERVICE_ENABLE_HOLIDAY_MODE: Final = "enable_holiday_mode"
 SERVICE_DISABLE_HOLIDAY_MODE: Final = "disable_holiday_mode"
 SERVICE_SNOOZE: Final = "snooze"
 SERVICE_CLEAR_SNOOZE: Final = "clear_snooze"
-SERVICE_ACKNOWLEDGE: Final = "acknowledge"
+SERVICE_CLEAR_ALERT: Final = "clear_alert"
 SERVICE_RESET_LEARNING: Final = "reset_learning"
 SERVICE_TEST_PANIC: Final = "test_panic"
 

@@ -39,7 +39,7 @@ def test_option_defaults_match_spec():
 def test_versions_and_services():
     assert const.CONFIG_VERSION == 11 and const.STORAGE_VERSION == 11
     assert const.VERSION == "5.0.0"
-    assert const.SERVICE_ACKNOWLEDGE == "acknowledge"
+    assert const.SERVICE_CLEAR_ALERT == "clear_alert"
     assert const.SERVICE_RESET_LEARNING == "reset_learning"
     assert const.SERVICE_TEST_PANIC == "test_panic"
     assert const.SNOOZE_DURATIONS["1_hour"] == 3600

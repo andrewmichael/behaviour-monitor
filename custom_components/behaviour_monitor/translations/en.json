@@ -75,14 +75,13 @@
       "learning": {"name": "Learning"},
       "entity_status": {"name": "Entity Status"},
       "last_activity": {"name": "Last Activity"},
-      "daily_activity_count": {"name": "Daily Activity Count"},
-      "last_notification": {"name": "Last Notification"}
+      "daily_activity_count": {"name": "Daily Activity Count"}
     },
     "switch": {"holiday_mode": {"name": "Holiday Mode"}},
     "select": {"snooze": {"name": "Snooze Notifications"}},
     "button": {
-      "acknowledge": {"name": "Acknowledge"},
-      "test_notification": {"name": "Test notification"}
+      "acknowledge": {"name": "Clear panic"},
+      "test_notification": {"name": "Test alert"}
     }
   }
 }

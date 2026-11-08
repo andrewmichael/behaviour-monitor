@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.behaviour_monitor import (
+    _register_services,
     async_migrate_entry,
     async_setup_entry,
     async_unload_entry,
@@ -17,7 +18,7 @@ from custom_components.behaviour_monitor.const import (
     DOMAIN,
     ISSUE_ASSIGN_CATEGORIES,
     OPTION_DEFAULTS,
-    SERVICE_ACKNOWLEDGE,
+    SERVICE_CLEAR_ALERT,
     SERVICE_RESET_LEARNING,
     SERVICE_TEST_PANIC,
 )
@@ -79,7 +80,7 @@ async def test_setup_registers_platforms_and_services(mock_hass, mock_config_ent
         coord = MagicMock()
         coord.async_setup = AsyncMock()
         coord.async_config_entry_first_refresh = AsyncMock()
-        coord.async_acknowledge = AsyncMock()
+        coord.async_clear_alert = AsyncMock(return_value=True)
         coord.async_reset_learning = AsyncMock()
         coord.async_test_panic = AsyncMock()
         cls.return_value = coord
@@ -92,7 +93,7 @@ async def test_setup_registers_platforms_and_services(mock_hass, mock_config_ent
         c.args[1]: c.args[2] for c in mock_hass.services.async_register.call_args_list
     }
     assert {
-        SERVICE_ACKNOWLEDGE,
+        SERVICE_CLEAR_ALERT,
         SERVICE_RESET_LEARNING,
         SERVICE_TEST_PANIC,
         "snooze",
@@ -106,6 +107,9 @@ async def test_setup_registers_platforms_and_services(mock_hass, mock_config_ent
     coord.async_reset_learning.assert_awaited_once_with("binary_sensor.kitchen_motion")
     await registered[SERVICE_TEST_PANIC](MagicMock(data={}))
     coord.async_test_panic.assert_awaited_once()
+    assert "acknowledge" not in set(registered)
+    await registered[SERVICE_CLEAR_ALERT](MagicMock(data={"alert_id": "x@y"}))
+    coord.async_clear_alert.assert_awaited_once_with("x@y")
 
 
 @pytest.mark.asyncio
@@ -116,3 +120,25 @@ async def test_unload_shuts_down_and_removes(mock_hass, mock_config_entry):
     assert await async_unload_entry(mock_hass, mock_config_entry) is True
     coord.async_shutdown.assert_awaited_once()
     assert mock_config_entry.entry_id not in mock_hass.data[DOMAIN]
+
+
+@pytest.mark.asyncio
+async def test_clear_alert_service_warns_when_no_site_owns_the_id(
+    mock_hass, mock_config_entry, caplog
+):
+    coords = [MagicMock(), MagicMock()]
+    for c in coords:
+        c.async_clear_alert = AsyncMock(return_value=False)
+    mock_hass.data = {DOMAIN: {"a": coords[0], "b": coords[1]}}
+    _register_services(mock_hass)
+    handler = {
+        c.args[1]: c.args[2] for c in mock_hass.services.async_register.call_args_list
+    }[SERVICE_CLEAR_ALERT]
+    with caplog.at_level("WARNING"):
+        await handler(MagicMock(data={"alert_id": "x@y"}))
+        assert "No open panic with id x@y" in caplog.text
+        caplog.clear()
+        await handler(MagicMock(data={}))
+        assert "No open panic" not in caplog.text
+    for c in coords:
+        assert c.async_clear_alert.await_count == 2
