@@ -212,6 +212,46 @@ async def test_events_held_until_started_then_restart_reminders(coordinator, moc
 
 
 @pytest.mark.asyncio
+async def test_started_during_setup_releases_held_events(coordinator, mock_hass):
+    """homeassistant_started can fire while setup is awaiting; nothing may stay held."""
+    from homeassistant.core import CoreState
+
+    from custom_components.behaviour_monitor.core.events import (
+        ActivityEvent,
+        EventKind,
+    )
+
+    mock_hass.state = CoreState.starting
+    _store_router(coordinator, [_inactivity()])
+    coordinator._store._data["entity_ids"].remove("binary_sensor.panic")
+
+    async def boot(_ids):
+        # A panic raised while starting is held; then HA finishes starting
+        # before setup has registered for homeassistant_started.
+        panic = ActivityEvent(
+            "binary_sensor.panic",
+            Category.PANIC,
+            EventKind.PANIC,
+            "Hall",
+            NOW,
+            bypass=True,
+        )
+        await coordinator._perform(
+            coordinator._engine._router.submit_panic(panic, NOW), NOW
+        )
+        assert _fired(mock_hass) == []
+        mock_hass.state = CoreState.running
+
+    with patch.object(coordinator, "_bootstrap_entities", side_effect=boot):
+        await coordinator.async_setup()
+    mock_hass.bus.async_listen_once.assert_not_called()
+    types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
+    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    await coordinator.async_test_panic()
+    assert _fired(mock_hass)[-1]["test"] is True
+
+
+@pytest.mark.asyncio
 async def test_reload_while_running_sends_one_reminder_per_attention_alert(
     coordinator, mock_hass
 ):

@@ -216,6 +216,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------- lifecycle
 
     async def async_setup(self) -> None:
+        # Hold events while the stores and history load; whether Home
+        # Assistant has started is decided again at the end of setup.
         self._started = self.hass.state is CoreState.running
         try:
             stored = await self._store.async_load()
@@ -283,20 +285,26 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 dr.EVENT_DEVICE_REGISTRY_UPDATED, self._async_registry_updated
             )
         )
-        if self._started:
-            # An integration reload: Home Assistant is already up, so remind
-            # straight away for anything an automation may have lost track of.
-            self._fire_restart_reminders(set())
+        # No await between reading the state and acting on it: if
+        # homeassistant_started fired during the awaits above, a listener
+        # registered now would never run and events would be held for good.
+        if self.hass.state is CoreState.running:
+            # Already up (a reload, or it started while we loaded): release
+            # anything held and remind for what automations may have lost.
+            self._on_started()
         else:
             self._started_unsub = self.hass.bus.async_listen_once(
                 EVENT_HOMEASSISTANT_STARTED, self._async_ha_started
             )
 
     async def _async_ha_started(self, _event: Any) -> None:
-        """Fire the events held during startup, then the restart reminders."""
         # A listen_once listener is gone once it has fired; unsubscribing it
         # again at shutdown would make Home Assistant log an error.
         self._started_unsub = None
+        self._on_started()
+
+    def _on_started(self) -> None:
+        """Fire the events held during startup, then the restart reminders."""
         self._started = True
         held, self._held_events = self._held_events, []
         for payload in held:
