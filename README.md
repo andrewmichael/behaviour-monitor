@@ -69,7 +69,7 @@ in one category's list.
 
 | Sensor | Description |
 |--------|-------------|
-| `sensor.<site>_welfare_status` | Overall welfare status: `ok`, `degraded`, `low`, `medium`, `high`, or `critical`, with `reasons` (needs-attention explanations only) and the `attention` and `information` alert lists |
+| `sensor.<site>_welfare_status` | Overall welfare status: `ok`, `degraded`, `low`, `medium`, `high`, or `critical`, with `reasons` (needs-attention explanations only), the `attention` and `information` alert lists, and `snoozed` (true while a snooze is active) |
 | `sensor.<site>_house_activity` | Seconds since the last whole-house activity event, with the expected gap, ratio, last room, and rooms visited today |
 | `sensor.<site>_anomaly` | Count of open statistical alerts, listed in an attribute |
 | `sensor.<site>_device_health` | `ok` or the worst open health condition, with per-entity state |
@@ -85,7 +85,7 @@ in one category's list.
 | `switch.<site>_holiday_mode` | Pauses learning and suppresses welfare and statistical alerts while the occupant is away. Panic and device health still alert |
 | `select.<site>_snooze` | Suppresses welfare and statistical delivery for a chosen duration (1 hour, 2 hours, 4 hours, or 1 day). Panic and device health still alert; needs-attention events are held back and a `reminder` follows when the snooze ends |
 | `button.<site>_clear_panic` (`_acknowledge` on existing installs) | **Clear panic**: clears every open panic. Other alerts close on their own |
-| `button.<site>_test_notification` | **Test alert**: opens a test panic and fires a `behaviour_monitor_alert` event with `test: true`, then clears it on the next press. Learned state is untouched |
+| `button.<site>_test_alert` (`_test_notification` on existing installs) | **Test alert**: opens a test panic and fires a `behaviour_monitor_alert` event with `test: true`. The next refresh clears it, so its `cleared` event follows almost at once. Learned state is untouched |
 
 ## Services
 
@@ -133,7 +133,10 @@ Home Assistant decides who is told, how and how often.
 The blueprint takes a notify service, the groups to notify (default
 attention), a repeat interval while an alert is open (default 30 minutes,
 0 for none), whether to send a "Cleared" message, and whether a panic gets an
-"I'm on it" button that clears it.
+"I'm on it" button that clears it. Repeats apply to attention and information
+alerts: before each repeat the blueprint checks the alert is still listed on a
+Welfare Status sensor and stops if it is not, and while that sensor is
+`snoozed` only a panic repeats.
 
 ### The `behaviour_monitor_alert` event
 

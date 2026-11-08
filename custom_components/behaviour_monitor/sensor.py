@@ -75,6 +75,7 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "reasons": [_render(d, r) for r in d.get("welfare", {}).get("reasons", [])],
             "attention": _rendered_alerts(d, "attention"),
             "information": _rendered_alerts(d, "information"),
+            "snoozed": bool(d.get("snoozed", False)),
         },
     ),
     BehaviourMonitorSensorDescription(

@@ -67,7 +67,7 @@ def test_inputs_and_defaults():
 def test_triggers_and_mode():
     data = _load()
     assert data["mode"] == "parallel"
-    assert data["max"] == 20
+    assert data["max"] == 200
     triggers = data["triggers"]
     types = {t.get("event_type") for t in triggers if t.get("trigger") == "event"}
     assert "behaviour_monitor_alert" in types
@@ -107,3 +107,47 @@ def test_panic_button_skips_test_alerts():
     ]
     assert variables
     assert "trigger.event.data.test" in variables[0]
+
+
+def _repeat_branch() -> list:
+    choose = _load()["actions"][0]["choose"]
+    return next(
+        c["sequence"]
+        for c in choose
+        if any("'opened'" in str(x.get("value_template", "")) for x in c["conditions"])
+    )
+
+
+def test_repeat_only_for_published_groups_and_int_interval():
+    gate = next(n for n in _repeat_branch() if isinstance(n, dict) and "if" in n)
+    templates = [c["value_template"] for c in gate["if"]]
+    assert "{{ repeat_minutes | int(0) > 0 }}" in templates
+    assert any("['attention', 'information']" in t for t in templates)
+    assert "float" not in str(_load()["actions"])
+    waits = [
+        n
+        for n in _walk(_load()["actions"])
+        if isinstance(n, dict) and "wait_for_trigger" in n
+    ]
+    assert all("| int(" in w["timeout"]["minutes"] for w in waits)
+
+
+def test_open_check_before_the_wait_and_before_every_repeat_push():
+    gate = next(n for n in _repeat_branch() if isinstance(n, dict) and "if" in n)
+    then = gate["then"]
+    # Look the alert up first, and stop if it already closed.
+    live = then[0]["variables"]["live"]
+    assert "states.sensor" in live and "alert_id" in live and "snoozed" in live
+    assert "'attention', 'information'" in live
+    assert then[1]["if"][0]["value_template"] == "{{ live == 'closed' }}"
+    assert then[1]["then"] == [{"stop": "Alert closed"}]
+    loop = then[2]["repeat"]["sequence"]
+    assert "wait_for_trigger" in loop[0]
+    after_wait = loop[1]["then"]
+    # The same lookup runs again before every repeat push.
+    assert after_wait[0]["variables"]["live"] == live
+    assert after_wait[1]["then"] == [{"stop": "Alert closed"}]
+    push = after_wait[2]
+    # While snoozed only a panic repeats.
+    assert push["if"][0]["value_template"] == "{{ live == 'open' or kind == 'panic' }}"
+    assert isinstance(push["then"][0]["action"], _Input)

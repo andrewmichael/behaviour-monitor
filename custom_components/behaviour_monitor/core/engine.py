@@ -455,6 +455,7 @@ class Engine:
             "snooze_until": (
                 self._snooze_until.isoformat() if self._snooze_until else None
             ),
+            "snoozed": self.is_snoozed(now),
         }
 
     # ----------------------------------------------------------- persistence

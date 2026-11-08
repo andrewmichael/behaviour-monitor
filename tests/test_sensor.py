@@ -67,6 +67,7 @@ SNAP = {
     },
     "chains": [{"name": "A → B", "rooms": ["A", "B"], "hop_median_s": [240.0]}],
     "display_rooms": {"Test House Kitchen": "Kitchen"},
+    "snoozed": True,
 }
 
 
@@ -91,7 +92,8 @@ def test_welfare_and_house_values_and_display_rooms():
     assert _desc("welfare_status").value_fn(SNAP) == "medium"
     attrs = _desc("welfare_status").extra_attrs_fn(MagicMock(), SNAP)
     assert attrs["reasons"] == ["No activity in Kitchen"]
-    assert set(attrs) >= {"reasons", "attention", "information"}
+    assert set(attrs) >= {"reasons", "attention", "information", "snoozed"}
+    assert attrs["snoozed"] is True
     assert "open_alerts" not in attrs
     assert attrs["attention"][0]["explanation"] == "Quiet in Kitchen"
     assert attrs["information"][0]["explanation"] == "Kitchen busy"
@@ -102,6 +104,12 @@ def test_welfare_and_house_values_and_display_rooms():
         and h["rooms_today"] == ["Kitchen"]
         and h["expected_gap_s"] == 600.0
     )
+
+
+def test_welfare_status_snoozed_defaults_to_false():
+    snap = {k: v for k, v in SNAP.items() if k != "snoozed"}
+    attrs = _desc("welfare_status").extra_attrs_fn(MagicMock(), snap)
+    assert attrs["snoozed"] is False
 
 
 def test_anomaly_health_learning_entity_status():

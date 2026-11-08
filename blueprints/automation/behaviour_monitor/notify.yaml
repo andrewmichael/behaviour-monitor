@@ -49,7 +49,7 @@ blueprint:
         boolean:
 
 mode: parallel
-max: 20
+max: 200
 
 triggers:
   - trigger: event
@@ -78,8 +78,8 @@ actions:
             data:
               alert_id: "{{ trigger.event.data.action | string | replace('BM_CLEAR_', '', 1) }}"
 
-      # Opened, escalated or reminded: notify, then repeat until anything
-      # else arrives for this id.
+      # Opened, escalated or reminded: notify, then repeat while the alert
+      # is still open, until anything else arrives for this id.
       - conditions:
           - condition: trigger
             id: alert
@@ -90,6 +90,7 @@ actions:
         sequence:
           - variables:
               alert_id: "{{ trigger.event.data.id }}"
+              kind: "{{ trigger.event.data.kind }}"
               title: "{{ trigger.event.data.site }} welfare"
               body: "{{ trigger.event.data.message }}"
               push_data: >-
@@ -102,10 +103,41 @@ actions:
               title: "{{ title }}"
               message: "{{ body }}"
               data: "{{ push_data }}"
+          # Health ids are not published on the Welfare Status sensor, so
+          # only attention and information alerts can be checked and repeated.
           - if:
               - condition: template
-                value_template: "{{ repeat_minutes | float(0) > 0 }}"
+                value_template: "{{ repeat_minutes | int(0) > 0 }}"
+              - condition: template
+                value_template: "{{ trigger.event.data.group in ['attention', 'information'] }}"
             then:
+              # The alert may have closed before this run could wait for its
+              # cleared event (a test alert closes within milliseconds), so
+              # look it up on the Welfare Status sensors: closed, snoozed or
+              # open.
+              - variables:
+                  live: &live_status >-
+                    {%- set ns = namespace(status='closed') -%}
+                    {%- for s in states.sensor -%}
+                      {%- for g in ['attention', 'information'] -%}
+                        {%- set items = s.attributes.get(g) -%}
+                        {%- if items is iterable and items is not string
+                          and items is not mapping -%}
+                          {%- for a in items -%}
+                            {%- if a is mapping and a.get('id') == alert_id -%}
+                              {%- set ns.status = 'snoozed'
+                                if s.attributes.get('snoozed') else 'open' -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                    {%- endfor -%}
+                    {{ ns.status }}
+              - if:
+                  - condition: template
+                    value_template: "{{ live == 'closed' }}"
+                then:
+                  - stop: Alert closed
               - repeat:
                   sequence:
                     # Any event for this id ends the wait: a newer run has
@@ -122,11 +154,23 @@ actions:
                         - condition: template
                           value_template: "{{ wait.trigger is none }}"
                       then:
-                        - action: !input notify_service
-                          data:
-                            title: "{{ title }}"
-                            message: "{{ body }}"
-                            data: "{{ push_data }}"
+                        - variables:
+                            live: *live_status
+                        - if:
+                            - condition: template
+                              value_template: "{{ live == 'closed' }}"
+                          then:
+                            - stop: Alert closed
+                        # While snoozed, keep waiting but only a panic pushes.
+                        - if:
+                            - condition: template
+                              value_template: "{{ live == 'open' or kind == 'panic' }}"
+                          then:
+                            - action: !input notify_service
+                              data:
+                                title: "{{ title }}"
+                                message: "{{ body }}"
+                                data: "{{ push_data }}"
                   until:
                     - condition: template
                       value_template: "{{ wait.trigger is not none }}"

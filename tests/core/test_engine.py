@@ -351,3 +351,11 @@ def test_reset_preserves_holiday_and_snooze():
     # A single-entity reset never touched either field; confirm it still does not.
     e.reset("binary_sensor.bed")
     assert e.holiday is True and e.snooze_until == until
+
+
+def test_snapshot_reports_whether_snooze_is_active():
+    e = _engine()
+    assert e.snapshot(MON)["snoozed"] is False
+    e.snooze_until = MON + timedelta(hours=1)
+    assert e.snapshot(MON)["snoozed"] is True
+    assert e.snapshot(MON + timedelta(hours=2))["snoozed"] is False
