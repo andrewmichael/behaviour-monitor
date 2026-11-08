@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.1] - 2026-11-08
+
+### Fixed
+- drift alerts settle, say where today is, and size their severity
+- blueprint min_version sits under homeassistant
+
 ## [7.0.0] - 2026-11-08
 
 ### Added
