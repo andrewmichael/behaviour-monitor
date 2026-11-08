@@ -206,7 +206,7 @@ def test_snooze_holds_attention_then_reminds_but_never_holds_panic():
     assert r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=6)) == []
 
 
-def test_cleared_fires_during_snooze_and_holiday():
+def test_cleared_fires_during_holiday_without_log_clear():
     r = AlertRouter(RouterConfig())
     r.submit([_house(Severity.HIGH), _note()], T0)
     acts = r.submit([], T0 + timedelta(minutes=1), holiday=True)
@@ -215,6 +215,44 @@ def test_cleared_fires_during_snooze_and_holiday():
         ("cleared", "welfare:house:inactivity"),
     ]
     assert [a for a in acts if a.action == "log_clear"] == []
+
+
+def test_held_attention_alert_closing_during_snooze_fires_cleared():
+    r = AlertRouter(RouterConfig())
+    assert _ev(r.submit([_house(Severity.HIGH)], T0, snoozed=True)) == []
+    acts = r.submit([], T0 + timedelta(minutes=1), snoozed=True)
+    assert _ev(acts) == [("cleared", "welfare:house:inactivity")]
+    # closed, so no snooze_ended reminder when the snooze ends
+    assert r.submit([], T0 + timedelta(minutes=2)) == []
+
+
+def test_statistical_closing_during_snooze_fires_cleared_without_log_clear():
+    r = AlertRouter(RouterConfig())
+    r.submit([_note()], T0)
+    acts = r.submit([], T0 + timedelta(minutes=1), snoozed=True)
+    assert _ev(acts) == [("cleared", "statistical:sensor.kettle:routine_missed")]
+    assert [a for a in acts if a.action == "log_clear"] == []
+
+
+def test_escalation_after_snooze_ends_does_not_also_remind():
+    r = AlertRouter(RouterConfig())
+    r.submit([_house(Severity.HIGH)], T0, snoozed=True)
+    acts = r.submit([_house(Severity.CRITICAL)], T0 + timedelta(minutes=1))
+    assert [(a.event, a.reason) for a in acts if a.action == "event"] == [
+        ("escalated", None)
+    ]
+    assert r.submit([_house(Severity.CRITICAL)], T0 + timedelta(minutes=2)) == []
+
+
+def test_id_uses_opening_time_not_a_cached_raised_at():
+    cached = T0 - timedelta(hours=1)
+    r = AlertRouter(RouterConfig())
+    first = r.submit([_house(Severity.MEDIUM, cached)], T0)[0].alert_id
+    assert first == f"welfare:house:inactivity@{T0.isoformat()}"
+    r.submit([], T0 + timedelta(minutes=1))
+    t2 = T0 + timedelta(minutes=2)
+    second = r.submit([_house(Severity.MEDIUM, cached)], t2)[0].alert_id
+    assert second == f"welfare:house:inactivity@{t2.isoformat()}"
 
 
 def test_panic_stays_until_cleared_by_user():
@@ -280,7 +318,8 @@ def test_loads_v11_router_state():
         }
 
     def panic_alert(src: str) -> Alert:
-        return Alert(AlertClass.WELFARE, src, "panic", Severity.CRITICAL, src, T0)
+        raised = T0 - timedelta(minutes=5)
+        return Alert(AlertClass.WELFARE, src, "panic", Severity.CRITICAL, src, raised)
 
     old = {
         "open": {

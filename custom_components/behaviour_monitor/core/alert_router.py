@@ -44,7 +44,7 @@ class _Open:
 
     @property
     def id(self) -> str:
-        return f"{self.alert.key}@{self.alert.raised_at.isoformat()}"
+        return f"{self.alert.key}@{self.opened_at.isoformat()}"
 
 
 class AlertRouter:
@@ -309,6 +309,8 @@ class AlertRouter:
             o.group = self._group(o.alert, o.panic)
         actions: list[DeliveryAction] = []
         if not self._held(o, snoozed):
+            # This push supersedes a pending snooze_ended reminder.
+            o.held = False
             actions.append(self._event(o, "escalated"))
         if o.alert.cls is AlertClass.STATISTICAL and not snoozed:
             actions.append(DeliveryAction("log", o.alert))

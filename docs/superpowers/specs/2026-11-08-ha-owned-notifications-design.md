@@ -82,10 +82,11 @@ re-submits the same alert key, the router updates severity, explanation and
 details but keeps `raised_at`. This is the handoff's fix for 287, minus the
 acknowledgement part.
 
-The stable id published to Home Assistant is the alert `key` plus the
-`raised_at` of its opening, so that the same key closing and reopening later
-gives a new id. Format is the builder's call; it must be a string that is
-unique per opening and stable while open.
+The stable id published to Home Assistant is the alert `key` plus the time
+the router opened it, `f"{key}@{opened_at.isoformat()}"`, so that the same key
+closing and reopening later gives a new id even when the detector hands back
+a cached `raised_at`. It is a string that is unique per opening and stable
+while open.
 
 ### Needs attention and for information
 
