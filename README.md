@@ -117,6 +117,11 @@ Every alert belongs to exactly one of three classes:
 - **Statistical** — unusual but not a welfare concern on its own (routine
   notes, chain stalls, drift). Appended to the anomaly sensor's attributes
   and logged to the logbook. They sit in the `information` group.
+  A drift alert's `details` carry `direction` (the way it drifted), `days`,
+  `baseline`, `today`, `current` (`above`, `below` or `near` usual today) and
+  `settled` (true once today is no longer on the drift's side). A drift
+  closes by itself after three days back near or past usual; its severity
+  follows how far it moved, not how long it has lasted.
 
 **Panic always bypasses snooze and holiday mode.** A panic press fires its
 events immediately regardless of any suppression in effect, and is never

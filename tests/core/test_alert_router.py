@@ -363,3 +363,18 @@ def test_reminders_skip_held_alerts_until_snooze_ends():
     assert r.reminders("restart") == []
     acts = r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=1))
     assert [a.reason for a in acts] == ["snooze_ended"]
+
+
+def test_settled_chain_drift_is_not_promoted():
+    r = AlertRouter(RouterConfig(timing_promote_days=7))
+    settled = Alert(
+        AlertClass.STATISTICAL,
+        "chain:Bed → Bath",
+        "drift",
+        Severity.LOW,
+        "settled",
+        T0,
+        {"days": 9, "direction": "increase", "settled": True},
+    )
+    r.submit([settled], T0)
+    assert "welfare:chain:Bed → Bath:timing_drift" not in [a.key for a in r.open_alerts]

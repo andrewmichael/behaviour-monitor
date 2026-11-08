@@ -244,6 +244,7 @@ class AlertRouter:
                 and a.kind == "drift"
                 and a.source.startswith("chain:")
                 and a.details.get("direction") == "increase"
+                and not a.details.get("settled")
                 and int(a.details.get("days", 0)) >= self._cfg.timing_promote_days
             ):
                 out.append(

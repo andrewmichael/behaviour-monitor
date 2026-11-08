@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -348,7 +349,23 @@ class Engine:
             )
         # Always reassign: a day with nothing to say must clear yesterday's
         # alerts rather than leave them being resubmitted every poll.
-        self._last_stat = self._drift.check(day, now)
+        self._last_stat = self._drift.check(day, now, names=self.drift_names())
+
+    def drift_names(self) -> dict[str, str]:
+        """Readable names for drift explanations: room plus sensor type.
+
+        Two sensors of one type in one room fall back to their entity id,
+        tidied ("binary_sensor.back_door_door" reads as "Back door").
+        """
+        base = {
+            eid: f"{s.room} {_NOUNS.get(s.category, 'sensor')}"
+            for eid, s in self._specs.items()
+        }
+        taken = Counter(base.values())
+        return {
+            eid: name if taken[name] == 1 else _tidy_entity_id(eid)
+            for eid, name in base.items()
+        }
 
     # ------------------------------------------------------------ snapshot
 
@@ -546,3 +563,21 @@ class Engine:
             e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
         return e
+
+
+_NOUNS: dict[Category, str] = {
+    Category.MOTION: "motion",
+    Category.CONTACT: "door",
+    Category.PLUG: "plug",
+    Category.PANIC: "panic button",
+    Category.LIGHT: "light",
+    Category.OTHER: "sensor",
+}
+
+
+def _tidy_entity_id(entity_id: str) -> str:
+    words: list[str] = []
+    for w in entity_id.split(".", 1)[-1].split("_"):
+        if w and (not words or words[-1] != w):
+            words.append(w)
+    return " ".join(words).capitalize()

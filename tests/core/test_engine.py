@@ -359,3 +359,19 @@ def test_snapshot_reports_whether_snooze_is_active():
     e.snooze_until = MON + timedelta(hours=1)
     assert e.snapshot(MON)["snoozed"] is True
     assert e.snapshot(MON + timedelta(hours=2))["snoozed"] is False
+
+
+def test_drift_names_use_room_and_type_and_disambiguate():
+    e = Engine(
+        EngineConfig(),
+        ENTS
+        + [
+            EntitySpec("binary_sensor.back_door_door", Category.CONTACT, "Utility"),
+            EntitySpec("binary_sensor.side_door_door", Category.CONTACT, "Utility"),
+        ],
+    )
+    names = e.drift_names()
+    assert names["binary_sensor.bed"] == "Bedroom motion"
+    assert names["sensor.kettle"] == "Kitchen plug"
+    assert names["binary_sensor.back_door_door"] == "Back door"
+    assert names["binary_sensor.side_door_door"] == "Side door"
