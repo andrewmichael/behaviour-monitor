@@ -264,6 +264,26 @@ The recorder keeps 10 days of history by default, so an export covers at most
 that. The models learn over a 28-day window; set `purge_keep_days: 35` under
 `recorder:` in `configuration.yaml` now to have a full window available later.
 
+### Long-term history from InfluxDB
+
+For months of history, record the monitored sensors to InfluxDB 1.8 with
+Home Assistant's `influxdb` integration (`measurement_attr: entity_id`, so
+each entity is its own measurement with `state` and `value` fields), then
+export with `scripts/export_influx.py`. It reads credentials from
+`~/.influx_bm` (`host`, `port`, `database`, `username`, `password` lines),
+takes the monitored entities from a fixture sidecar, writes rows in local
+time, and can merge into an existing fixture so one file keeps growing:
+
+```bash
+python scripts/export_influx.py --sidecar site.sidecar.json \
+  --start 2026-11-08T23:36:00+00:00 --merge site.jsonl --out site.jsonl \
+  --context site.context.jsonl
+```
+
+`--context` also writes everything else recorded (batteries, `sensor.uptime`
+restarts, Behaviour Monitor's own sensors) to a separate file. These exports
+are not anonymised; keep them out of git.
+
 ## Development
 
 See [README-DEV.md](README-DEV.md) for complete development setup
