@@ -300,3 +300,27 @@ def test_loads_v11_router_state():
     assert pub["welfare:binary_sensor.p:panic"]["id"] == pid
     assert pub["welfare:binary_sensor.p:panic"]["group"] == "attention"
     assert pub["welfare:house:inactivity"]["group"] == "information"
+
+
+def test_repeated_test_alert_clears_the_previous_one():
+    r = AlertRouter(RouterConfig())
+    m1 = T0 + timedelta(minutes=1)
+    first = r.submit_test(T0)
+    second = r.submit_test(m1)
+    acts = first + second
+    assert [(a.event, a.test) for a in acts] == [
+        ("opened", True),
+        ("cleared", True),
+        ("opened", True),
+    ]
+    assert acts[1].alert_id == acts[0].alert_id != acts[2].alert_id
+    done = r.submit([], T0 + timedelta(minutes=2))
+    assert [(a.event, a.alert_id) for a in done] == [("cleared", acts[2].alert_id)]
+
+
+def test_reminders_skip_held_alerts_until_snooze_ends():
+    r = AlertRouter(RouterConfig())
+    r.submit([_house(Severity.HIGH)], T0, snoozed=True)
+    assert r.reminders("restart") == []
+    acts = r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=1))
+    assert [a.reason for a in acts] == ["snooze_ended"]

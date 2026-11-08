@@ -149,9 +149,14 @@ class AlertRouter:
             now,
             {"room": "Test"},
         )
+        actions: list[DeliveryAction] = []
+        prior = self._open.get(alert.key)
+        if prior is not None:
+            actions.append(self._event(prior, "cleared"))
         o = _Open(alert, now, ATTENTION, panic=True, test=True)
         self._open[alert.key] = o
-        return [self._event(o, "opened")]
+        actions.append(self._event(o, "opened"))
+        return actions
 
     def clear_panic(self, alert_id: str | None, now: datetime) -> list[DeliveryAction]:
         actions: list[DeliveryAction] = []
@@ -167,7 +172,7 @@ class AlertRouter:
         return [
             self._event(o, "reminder", reason=reason)
             for o in self._open.values()
-            if o.group == ATTENTION and not o.test
+            if o.group == ATTENTION and not o.test and not o.held
         ]
 
     # ------------------------------------------------------------ combining
