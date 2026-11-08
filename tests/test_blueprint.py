@@ -97,3 +97,13 @@ def test_wait_matches_id_and_any_type():
         assert "id" in trig["event_data"]
         # Any same-id event ends the wait (a newer run took over, or cleared)
         assert "type" not in trig["event_data"]
+
+
+def test_panic_button_skips_test_alerts():
+    variables = [
+        n["push_data"]
+        for n in _walk(_load()["actions"])
+        if isinstance(n, dict) and "push_data" in n
+    ]
+    assert variables
+    assert "trigger.event.data.test" in variables[0]

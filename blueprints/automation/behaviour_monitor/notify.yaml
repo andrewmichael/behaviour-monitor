@@ -95,6 +95,7 @@ actions:
               push_data: >-
                 {{ {'tag': alert_id, 'actions': [{'action': 'BM_CLEAR_' ~ alert_id, 'title': "I'm on it"}]}
                 if panic_action and trigger.event.data.kind == 'panic'
+                and not trigger.event.data.test
                 else {'tag': alert_id} }}
           - action: !input notify_service
             data:
