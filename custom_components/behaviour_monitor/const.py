@@ -97,3 +97,4 @@ ISSUE_HEALTH_PREFIX: Final = "health_"
 
 # Events
 EVENT_LOGBOOK: Final = "logbook_entry"
+EVENT_ALERT: Final = "behaviour_monitor_alert"

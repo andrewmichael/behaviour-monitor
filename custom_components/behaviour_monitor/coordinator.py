@@ -8,8 +8,8 @@ from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_STATE_CHANGED
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
+from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -21,9 +21,9 @@ from homeassistant.util import dt as dt_util
 
 from .config_flow import entity_specs_from_data
 from .const import (
-    CONF_NOTIFY_SERVICE,
     CONF_SITE_NAME,
     DOMAIN,
+    EVENT_ALERT,
     EVENT_LOGBOOK,
     ISSUE_HEALTH_PREFIX,
     OPTION_DEFAULTS,
@@ -88,7 +88,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._entry = entry
         self._site: str = str(entry.data.get(CONF_SITE_NAME, "Behaviour Monitor"))
-        self._notify_service: str = str(entry.data.get(CONF_NOTIFY_SERVICE, ""))
         options = {**OPTION_DEFAULTS, **entry.options}
         self._config = EngineConfig.from_options(options)
         self._specs, self._area_ids = self._resolve_specs()
@@ -98,7 +97,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._pending: list[tuple[DeliveryAction, datetime]] = []
         self._unsubs: list[Any] = []
-        self._last_notification: dict[str, Any] = {"timestamp": None, "kind": None}
+        # Until Home Assistant has started, alert events are held here and
+        # fired in order once it has, so automations are listening for them.
+        self._started = True
+        self._held_events: list[dict[str, Any]] = []
+        self._started_unsub: Any = None
         self._saver = Debouncer(
             hass,
             _LOGGER,
@@ -124,10 +127,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def snooze_until(self) -> datetime | None:
         return self._engine.snooze_until
-
-    @property
-    def last_notification(self) -> dict[str, Any]:
-        return dict(self._last_notification)
 
     def is_snoozed(self) -> bool:
         return self._engine.is_snoozed(dt_util.now())
@@ -217,6 +216,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------- lifecycle
 
     async def async_setup(self) -> None:
+        self._started = self.hass.state is CoreState.running
         try:
             stored = await self._store.async_load()
         except Exception:  # noqa: BLE001
@@ -242,9 +242,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 self._engine = Engine.from_dict(
                     stored["engine"], self._config, self._specs
-                )
-                self._last_notification = stored.get(
-                    "last_notification", self._last_notification
                 )
                 known = set(stored.get("entity_ids", []))
                 new_ids = [eid for eid in all_ids if eid not in known]
@@ -286,11 +283,47 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 dr.EVENT_DEVICE_REGISTRY_UPDATED, self._async_registry_updated
             )
         )
+        if self._started:
+            # An integration reload: Home Assistant is already up, so remind
+            # straight away for anything an automation may have lost track of.
+            self._fire_restart_reminders(set())
+        else:
+            self._started_unsub = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._async_ha_started
+            )
+
+    async def _async_ha_started(self, _event: Any) -> None:
+        """Fire the events held during startup, then the restart reminders."""
+        # A listen_once listener is gone once it has fired; unsubscribing it
+        # again at shutdown would make Home Assistant log an error.
+        self._started_unsub = None
+        self._started = True
+        held, self._held_events = self._held_events, []
+        for payload in held:
+            self.hass.bus.async_fire(EVENT_ALERT, payload)
+        self._fire_restart_reminders({p["id"] for p in held})
+
+    def _fire_restart_reminders(self, announced: set[str]) -> None:
+        """One reminder per open attention alert not already announced.
+
+        An alert queued for delivery but not yet performed will be announced
+        as opened shortly, so it is skipped too.
+        """
+        skip = set(announced)
+        skip.update(
+            a.alert_id for a, _ in self._pending if a.action == "event" and a.alert_id
+        )
+        for act in self._engine.reminders("restart"):
+            if act.alert_id not in skip:
+                self.hass.bus.async_fire(EVENT_ALERT, self._event_payload(act))
 
     async def async_shutdown(self) -> None:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if self._started_unsub is not None:
+            self._started_unsub()
+            self._started_unsub = None
         # Stop both timers before the last save, so nothing can fire against a
         # coordinator that has already been unloaded.
         self._saver.async_shutdown()
@@ -303,7 +336,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "site": self._site,
                 "entity_ids": [s.entity_id for s in self._specs],
                 "engine": self._engine.to_dict(),
-                "last_notification": self._last_notification,
             }
         )
 
@@ -348,8 +380,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     entity_id, prev, state.state, ts, learn_only=True
                 )
                 prev = state.state
-        # The router has already recorded these as opened and pushed, so
-        # dropping them here would lose the alert for good.
+        # The router has already recorded these as opened, so dropping them
+        # here would lose their events for good.
         self._pending.extend((action, end) for action in self._engine.poll(end))
 
     # ----------------------------------------------------------------- events
@@ -392,7 +424,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.exception("Engine poll failed")
         snapshot = self._engine.snapshot(now)
         snapshot["site"] = self._site
-        snapshot["last_notification"] = dict(self._last_notification)
         snapshot["display_rooms"] = {
             s.room: self.display_room(s.room) for s in self._specs
         }
@@ -403,29 +434,12 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _perform(self, actions: list[DeliveryAction], now: datetime) -> None:
         for act in actions:
             alert = act.alert
-            text = self._render(alert.explanation)
-            if act.action == "push":
-                await self._push(f"{self._site} welfare", text)
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": f"{self._site} welfare",
-                        "message": text,
-                        "notification_id": self._notification_id(),
-                    },
-                )
-                self._last_notification = {
-                    "timestamp": now.isoformat(),
-                    "kind": alert.kind,
-                }
-            elif act.action == "push_clear":
-                await self._push(f"{self._site} welfare", f"Cleared: {text}")
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "dismiss",
-                    {"notification_id": self._notification_id()},
-                )
+            if act.action == "event":
+                payload = self._event_payload(act)
+                if self._started:
+                    self.hass.bus.async_fire(EVENT_ALERT, payload)
+                else:
+                    self._held_events.append(payload)
             elif act.action == "repair_create":
                 ir.async_create_issue(
                     self.hass,
@@ -434,18 +448,45 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     is_fixable=False,
                     severity=ir.IssueSeverity.WARNING,
                     translation_key="device_health",
-                    translation_placeholders={"site": self._site, "message": text},
+                    translation_placeholders={
+                        "site": self._site,
+                        "message": self._render(alert.explanation),
+                    },
                 )
             elif act.action == "repair_delete":
                 ir.async_delete_issue(self.hass, DOMAIN, self._issue_id(alert.key))
             elif act.action == "log":
                 self.hass.bus.async_fire(
                     EVENT_LOGBOOK,
-                    {"name": self._site, "message": text, "domain": DOMAIN},
+                    {
+                        "name": self._site,
+                        "message": self._render(alert.explanation),
+                        "domain": DOMAIN,
+                    },
                 )
 
-    def _notification_id(self) -> str:
-        return f"{DOMAIN}_{self._entry.entry_id}_welfare"
+    def _event_payload(self, act: DeliveryAction) -> dict[str, Any]:
+        alert = act.alert
+        payload: dict[str, Any] = {
+            "entry_id": self._entry.entry_id,
+            "site": self._site,
+            "type": act.event,
+            "id": act.alert_id,
+            "group": act.group,
+            "class": alert.cls.value,
+            "kind": alert.kind,
+            "severity": alert.severity.value,
+            "source": alert.source,
+            "room": alert.details.get("room"),
+            "message": self._render(alert.explanation),
+            "raised_at": alert.raised_at.isoformat(),
+            "test": act.test,
+        }
+        if act.event == "reminder":
+            payload["reason"] = act.reason
+        if act.cleared_by is not None:
+            payload["cleared_by"] = act.cleared_by
+        return payload
 
     def _issue_id(self, key: str) -> str:
         return f"{ISSUE_HEALTH_PREFIX}{self._entry.entry_id}_{key}"
@@ -456,14 +497,6 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if display != spec.room:
                 text = text.replace(spec.room, display)
         return text
-
-    async def _push(self, title: str, message: str) -> None:
-        if "." not in self._notify_service:
-            return
-        domain, service = self._notify_service.split(".", 1)
-        await self.hass.services.async_call(
-            domain, service, {"title": title, "message": message}
-        )
 
     # --------------------------------------------------------------- controls
 
@@ -490,11 +523,21 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._engine.snooze_until = None
         await self._after_control()
 
-    async def async_acknowledge(self) -> None:
+    async def async_clear_alert(self, alert_id: str | None) -> bool:
+        """Clear one open panic by id, or every open panic without one.
+
+        Returns True when anything was cleared. Other welfare alerts close on
+        their own, so an id that is not an open panic clears nothing.
+        """
         now = dt_util.now()
-        self._engine.acknowledge(now)
-        await self._perform(self._engine.poll(now), now)
+        actions = self._engine.clear_panic(alert_id, now)
+        if not actions:
+            if alert_id is not None:
+                _LOGGER.warning("No open panic with id %s to clear", alert_id)
+            return False
+        await self._perform(actions, now)
         await self._after_control()
+        return True
 
     async def async_reset_learning(self, entity_id: str | None = None) -> None:
         self._engine.reset(entity_id)
@@ -504,9 +547,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._after_control()
 
     async def async_test_panic(self) -> None:
-        """Send a test push. The alert is self-acknowledging and has its own
-        source, so a real panic open at the time is neither replaced nor
-        acknowledged; the next poll clears only the test alert."""
+        """Open a test alert and fire its event. It has its own source, so a
+        real panic open at the time is untouched; the next poll clears only
+        the test alert."""
         now = dt_util.now()
         await self._perform(self._engine.submit_test(now), now)
         await self._after_control()

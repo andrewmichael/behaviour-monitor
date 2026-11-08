@@ -9,11 +9,58 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from custom_components.behaviour_monitor.coordinator import BehaviourMonitorCoordinator
-from custom_components.behaviour_monitor.core.alert_router import DeliveryAction
+from custom_components.behaviour_monitor.core.alert_router import (
+    AlertRouter,
+    DeliveryAction,
+)
 from custom_components.behaviour_monitor.core.alerts import Alert, AlertClass, Severity
 from custom_components.behaviour_monitor.core.events import Category
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+EVENT = "behaviour_monitor_alert"
+
+
+def _fired(mock_hass) -> list[dict]:
+    return [
+        c.args[1] for c in mock_hass.bus.async_fire.call_args_list if c.args[0] == EVENT
+    ]
+
+
+def _press_panic(coordinator) -> None:
+    coordinator._handle_state_changed(
+        SimpleNamespace(
+            data={
+                "entity_id": "binary_sensor.panic",
+                "old_state": _state("binary_sensor.panic", "off"),
+                "new_state": _state("binary_sensor.panic", "on"),
+            }
+        )
+    )
+
+
+def _store_router(coordinator, alerts: list[Alert]) -> None:
+    """Store an engine whose router holds these alerts open, built the real way."""
+    router = AlertRouter(coordinator._config.router)
+    router.submit(alerts, NOW)
+    engine = coordinator._engine.to_dict()
+    engine["router"] = router.to_dict()
+    coordinator._store._data = {
+        "site": "Test House",
+        "entity_ids": [s.entity_id for s in coordinator.entity_specs],
+        "engine": engine,
+    }
+    coordinator._store._stored_version = coordinator._store.version
+
+
+def _inactivity() -> Alert:
+    return Alert(
+        AlertClass.WELFARE,
+        "house",
+        "inactivity",
+        Severity.HIGH,
+        "No activity",
+        NOW - timedelta(hours=1),
+    )
 
 
 def _state(entity_id: str, state: str, name: str | None = None):
@@ -95,24 +142,35 @@ async def test_setup_bootstraps_from_recorder_and_subscribes(coordinator, mock_h
 
 
 @pytest.mark.asyncio
-async def test_state_change_feeds_engine_and_panic_pushes(coordinator, mock_hass):
+async def test_panic_fires_opened_event_and_no_notify(coordinator, mock_hass):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
     with patch(
         "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
     ):
-        event = SimpleNamespace(
-            data={
-                "entity_id": "binary_sensor.panic",
-                "old_state": _state("binary_sensor.panic", "off"),
-                "new_state": _state("binary_sensor.panic", "on"),
-            }
-        )
-        coordinator._handle_state_changed(event)
+        _press_panic(coordinator)
         await coordinator._flush_actions()
-    calls = [c.args[:2] for c in mock_hass.services.async_call.await_args_list]
-    assert ("notify", "mobile_app_phone") in calls
-    assert ("persistent_notification", "create") in calls
+    fired = _fired(mock_hass)
+    assert len(fired) == 1
+    d = fired[0]
+    assert (d["type"], d["group"], d["kind"], d["severity"], d["site"]) == (
+        "opened",
+        "attention",
+        "panic",
+        "critical",
+        "Test House",
+    )
+    assert d["id"].startswith("welfare:binary_sensor.panic:panic@")
+    assert d["test"] is False
+    assert d["entry_id"] == "test_entry_id"
+    assert d["class"] == "welfare" and d["source"] == "binary_sensor.panic"
+    assert d["raised_at"] == NOW.isoformat()
+    assert "reason" not in d and "cleared_by" not in d
+    assert not [
+        c
+        for c in mock_hass.services.async_call.await_args_list
+        if c.args[0] in ("notify", "persistent_notification")
+    ]
     with patch(
         "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
     ):
@@ -121,19 +179,94 @@ async def test_state_change_feeds_engine_and_panic_pushes(coordinator, mock_hass
     # while the models are still learning.
     assert data["welfare"]["status"] == "learning"
     assert any("panic" in reason for reason in data["welfare"]["reasons"])
-    assert [a["kind"] for a in data["welfare"]["open_alerts"]] == ["panic"]
+    assert [a["kind"] for a in data["welfare"]["attention"]] == ["panic"]
+    assert "last_notification" not in data
 
 
 @pytest.mark.asyncio
-async def test_delivery_actions_map_to_services_issues_and_logbook(
+async def test_events_held_until_started_then_restart_reminders(coordinator, mock_hass):
+    from homeassistant.core import CoreState
+
+    mock_hass.state = CoreState.starting
+    _store_router(coordinator, [_inactivity()])
+    await coordinator.async_setup()
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    assert _fired(mock_hass) == []
+    listens = [
+        c.args
+        for c in mock_hass.bus.async_listen_once.call_args_list
+        if c.args[0] == "homeassistant_started"
+    ]
+    assert len(listens) == 1
+    started_listener = listens[0][1]
+    await started_listener(None)
+    types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
+    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    # Once started, events go straight out.
+    await coordinator.async_test_panic()
+    assert _fired(mock_hass)[-1]["test"] is True
+
+
+@pytest.mark.asyncio
+async def test_reload_while_running_sends_one_reminder_per_attention_alert(
+    coordinator, mock_hass
+):
+    stat = Alert(
+        AlertClass.STATISTICAL,
+        "sensor.kettle_power",
+        "routine_missed",
+        Severity.LOW,
+        "missed",
+        NOW - timedelta(hours=1),
+    )
+    _store_router(coordinator, [_inactivity(), stat])
+    await coordinator.async_setup()
+    mock_hass.bus.async_listen_once.assert_not_called()
+    reminders = [d for d in _fired(mock_hass) if d["type"] == "reminder"]
+    assert [(r["reason"], r["kind"]) for r in reminders] == [("restart", "inactivity")]
+    await coordinator._async_update_data()
+    assert len([d for d in _fired(mock_hass) if d["type"] == "reminder"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_alert_clears_panic_and_reports(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    pid = _fired(mock_hass)[0]["id"]
+    assert await coordinator.async_clear_alert("nope@x") is False
+    assert await coordinator.async_clear_alert(pid) is True
+    last = mock_hass.bus.async_fire.call_args_list[-1].args[1]
+    assert (last["type"], last["cleared_by"], last["id"]) == ("cleared", "user", pid)
+    assert coordinator._engine.snapshot(NOW)["welfare"]["attention"] == []
+    assert await coordinator.async_clear_alert(None) is False
+
+
+@pytest.mark.asyncio
+async def test_delivery_actions_map_to_events_issues_and_logbook(
     coordinator, mock_hass
 ):
     from homeassistant.helpers import issue_registry as ir
 
     ir.async_create_issue.reset_mock()
     ir.async_delete_issue.reset_mock()
+    coordinator._started = True
     welfare = Alert(
-        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
+        AlertClass.WELFARE,
+        "house",
+        "inactivity",
+        Severity.HIGH,
+        "No activity in Test House Kitchen",
+        NOW,
+        {"room": "Test House Kitchen"},
     )
     health = Alert(
         AlertClass.HEALTH,
@@ -153,21 +286,31 @@ async def test_delivery_actions_map_to_services_issues_and_logbook(
     )
     await coordinator._perform(
         [
-            DeliveryAction("push", welfare),
+            DeliveryAction(
+                "event", welfare, event="opened", alert_id="w1", group="attention"
+            ),
             DeliveryAction("repair_create", health),
             DeliveryAction("log", stat),
         ],
         NOW,
     )
-    notify = [
-        c
-        for c in mock_hass.services.async_call.await_args_list
-        if c.args[:2] == ("notify", "mobile_app_phone")
-    ]
-    assert (
-        notify
-        and notify[0].args[2]["title"] == "Test House welfare"
-        and notify[0].args[2]["message"] == "No activity"
+    mock_hass.bus.async_fire.assert_any_call(
+        EVENT,
+        {
+            "entry_id": "test_entry_id",
+            "site": "Test House",
+            "type": "opened",
+            "id": "w1",
+            "group": "attention",
+            "class": "welfare",
+            "kind": "inactivity",
+            "severity": "high",
+            "source": "house",
+            "room": "Test House Kitchen",
+            "message": "No activity in Kitchen",
+            "raised_at": NOW.isoformat(),
+            "test": False,
+        },
     )
     ir.async_create_issue.assert_called_once()
     assert (
@@ -178,21 +321,33 @@ async def test_delivery_actions_map_to_services_issues_and_logbook(
         "logbook_entry",
         {"name": "Test House", "message": "missed", "domain": "behaviour_monitor"},
     )
-    assert coordinator.last_notification == {
-        "timestamp": NOW.isoformat(),
-        "kind": "inactivity",
-    }
     await coordinator._perform(
         [
-            DeliveryAction("push_clear", welfare),
+            DeliveryAction(
+                "event",
+                welfare,
+                event="reminder",
+                reason="snooze_ended",
+                alert_id="w1",
+                group="attention",
+            ),
+            DeliveryAction(
+                "event", health, event="cleared", alert_id="h1", group="health"
+            ),
             DeliveryAction("repair_delete", health),
         ],
         NOW,
     )
     ir.async_delete_issue.assert_called_once()
-    assert ("persistent_notification", "dismiss") in [
-        c.args[:2] for c in mock_hass.services.async_call.await_args_list
-    ]
+    reminder, cleared = _fired(mock_hass)[-2:]
+    assert (reminder["type"], reminder["reason"]) == ("reminder", "snooze_ended")
+    assert (cleared["type"], cleared["group"], cleared["room"]) == (
+        "cleared",
+        "health",
+        None,
+    )
+    assert "cleared_by" not in cleared
+    assert not mock_hass.services.async_call.await_args_list
 
 
 @pytest.mark.asyncio
@@ -209,7 +364,7 @@ async def test_update_data_returns_snapshot_with_site(coordinator):
 
 
 @pytest.mark.asyncio
-async def test_holiday_snooze_ack_reset_roundtrip(coordinator):
+async def test_holiday_snooze_reset_roundtrip(coordinator):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
     await coordinator.async_enable_holiday_mode()
@@ -224,7 +379,6 @@ async def test_holiday_snooze_ack_reset_roundtrip(coordinator):
     assert not coordinator.is_snoozed()
     await coordinator.async_reset_learning("binary_sensor.kitchen_motion")
     await coordinator.async_reset_learning()
-    await coordinator.async_acknowledge()
     saved = coordinator._store._data
     assert saved["engine"]["schema"] == 2 and saved["site"] == "Test House"
 
@@ -235,9 +389,9 @@ async def test_test_panic_pushes_without_learning(coordinator, mock_hass):
         await coordinator.async_setup()
     before = coordinator._engine.to_dict()["house"]
     await coordinator.async_test_panic()
-    assert ("notify", "mobile_app_phone") in [
-        c.args[:2] for c in mock_hass.services.async_call.await_args_list
-    ]
+    fired = _fired(mock_hass)
+    assert [(d["type"], d["test"]) for d in fired] == [("opened", True)]
+    assert not mock_hass.services.async_call.await_args_list
     assert coordinator._engine.to_dict()["house"] == before
 
 
@@ -262,7 +416,12 @@ async def test_test_panic_leaves_a_real_panic_open(coordinator, mock_hass):
         for o in coordinator._engine._router._open.values()
         if o.alert.source == "binary_sensor.panic"
     ]
-    assert len(open_real) == 1 and open_real[0].acknowledged is False
+    assert len(open_real) == 1
+    fired = _fired(mock_hass)
+    assert [(d["type"], d["test"], d["source"]) for d in fired] == [
+        ("opened", False, "binary_sensor.panic"),
+        ("opened", True, "test"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -405,7 +564,7 @@ async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
     alert = Alert(
         AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
     )
-    action = DeliveryAction("push", alert)
+    action = DeliveryAction("event", alert, event="opened", alert_id="a1")
     instance = _recorder_instance({})
     with patch(
         "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
@@ -422,7 +581,6 @@ async def test_stale_engine_schema_triggers_full_bootstrap(coordinator):
         "site": "Test House",
         "entity_ids": [s.entity_id for s in coordinator.entity_specs],
         "engine": {"schema": 1, "house": {}},
-        "last_notification": {"timestamp": None, "kind": None},
     }
     coordinator._store._stored_version = coordinator._store.version
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()) as boot:

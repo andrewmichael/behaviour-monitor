@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,6 +29,18 @@ def _setup_ha_mocks():
     mock_ha_core.ServiceCall = MagicMock
     mock_ha_core.callback = lambda func: func
 
+    class MockCoreState(enum.Enum):
+        """Mock CoreState enum."""
+
+        not_running = "NOT_RUNNING"
+        starting = "STARTING"
+        running = "RUNNING"
+        stopping = "STOPPING"
+        final_write = "FINAL_WRITE"
+        stopped = "STOPPED"
+
+    mock_ha_core.CoreState = MockCoreState
+
     # Mock homeassistant.const
     class MockPlatform:
         """Mock Platform enum."""
@@ -39,6 +52,7 @@ def _setup_ha_mocks():
 
     mock_ha_const.Platform = MockPlatform
     mock_ha_const.EVENT_STATE_CHANGED = "state_changed"
+    mock_ha_const.EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"
     mock_ha_const.CONF_NAME = "name"
 
     # Mock homeassistant.config_entries
@@ -522,6 +536,8 @@ def mock_hass() -> MagicMock:
     hass.states.async_all = MagicMock(return_value=[])
     hass.bus = MagicMock()
     hass.bus.async_listen = MagicMock(return_value=MagicMock())
+    hass.bus.async_listen_once = MagicMock(return_value=MagicMock())
+    hass.state = sys.modules["homeassistant.core"].CoreState.running
     hass.services = MagicMock()
     hass.services.async_call = AsyncMock()
     hass.async_create_task = MagicMock()
@@ -542,11 +558,10 @@ def mock_config_entry() -> MagicMock:
 
         def __init__(self):
             self.entry_id = "test_entry_id"
-            self.version = 11
+            self.version = 12
             self.title = "Test House"
             self.data = {
                 "site_name": "Test House",
-                "notify_service": "notify.mobile_app_phone",
                 "motion_entities": [
                     "binary_sensor.kitchen_motion",
                     "binary_sensor.bed_motion",
