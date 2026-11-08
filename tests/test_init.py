@@ -14,9 +14,11 @@ from custom_components.behaviour_monitor import (
 )
 from custom_components.behaviour_monitor.const import (
     CONF_MOTION_ENTITIES,
+    BLUEPRINT_URL,
     CONF_SITE_NAME,
     DOMAIN,
     ISSUE_ASSIGN_CATEGORIES,
+    ISSUE_NOTIFICATIONS_MOVED,
     OPTION_DEFAULTS,
     SERVICE_CLEAR_ALERT,
     SERVICE_RESET_LEARNING,
@@ -45,7 +47,8 @@ async def test_migrate_v10_moves_entities_aside_and_raises_issue(mock_hass):
     entry = _legacy_entry()
     assert await async_migrate_entry(mock_hass, entry) is True
     kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kwargs["version"] == 11
+    assert kwargs["version"] == 12
+    assert "notify_service" not in kwargs["data"]
     assert kwargs["data"]["legacy_unassigned"] == ["binary_sensor.a", "sensor.b"]
     assert kwargs["data"][CONF_SITE_NAME] == "Behaviour Monitor"
     assert kwargs["data"][CONF_MOTION_ENTITIES] == []
@@ -56,7 +59,70 @@ async def test_migrate_v10_moves_entities_aside_and_raises_issue(mock_hass):
 
 
 @pytest.mark.asyncio
-async def test_migrate_v11_is_noop(mock_hass, mock_config_entry):
+async def test_migrate_v10_with_notify_service_lands_on_v12_with_notice(mock_hass):
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_create_issue.reset_mock()
+    entry = _legacy_entry()
+    entry.data = {**entry.data, "notify_service": "notify.phone"}
+    assert await async_migrate_entry(mock_hass, entry) is True
+    kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
+    assert kwargs["version"] == 12
+    assert "notify_service" not in kwargs["data"]
+    assert kwargs["options"] == OPTION_DEFAULTS
+    ids = [c.args[2] for c in ir.async_create_issue.call_args_list]
+    assert f"{ISSUE_NOTIFICATIONS_MOVED}_old" in ids
+
+
+@pytest.mark.asyncio
+async def test_migrate_v11_to_v12_moves_options_and_raises_notice(
+    mock_hass, mock_config_entry
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_create_issue.reset_mock()
+    mock_config_entry.version = 11
+    mock_config_entry.data = {
+        **mock_config_entry.data,
+        "notify_service": "notify.mobile_app_phone",
+    }
+    mock_config_entry.options = {
+        "push_min_severity": "high",
+        "push_repeat_s": 900,
+        "learning_days": 10,
+    }
+    assert await async_migrate_entry(mock_hass, mock_config_entry) is True
+    kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
+    assert "notify_service" not in kw["data"] and kw["version"] == 12
+    assert kw["options"] == {"attention_min_severity": "high", "learning_days": 10}
+    call = ir.async_create_issue.call_args
+    assert call.args[2] == "notifications_moved_test_entry_id"
+    assert call.kwargs["is_fixable"] is False
+    assert call.kwargs["translation_key"] == "notifications_moved"
+    assert call.kwargs["learn_more_url"] == BLUEPRINT_URL
+    placeholders = call.kwargs["translation_placeholders"]
+    assert placeholders["service"] == "notify.mobile_app_phone"
+    assert "site" in placeholders
+
+
+@pytest.mark.asyncio
+async def test_migrate_v11_without_notify_service_raises_no_notice(
+    mock_hass, mock_config_entry
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_create_issue.reset_mock()
+    mock_config_entry.version = 11
+    mock_config_entry.options = {"learning_days": 10}
+    assert await async_migrate_entry(mock_hass, mock_config_entry) is True
+    kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
+    assert kw["version"] == 12
+    assert kw["options"] == {"attention_min_severity": "medium", "learning_days": 10}
+    ir.async_create_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_migrate_v12_is_noop(mock_hass, mock_config_entry):
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     mock_hass.config_entries.async_update_entry.assert_not_called()
 
@@ -66,7 +132,7 @@ async def test_setup_unconfigured_entry_only_raises_issue(mock_hass, mock_config
     from homeassistant.helpers import issue_registry as ir
 
     ir.async_create_issue.reset_mock()
-    mock_config_entry.data = {CONF_SITE_NAME: "X", "notify_service": "notify.n"}
+    mock_config_entry.data = {CONF_SITE_NAME: "X"}
     assert await async_setup_entry(mock_hass, mock_config_entry) is True
     ir.async_create_issue.assert_called_once()
     mock_hass.config_entries.async_forward_entry_setups.assert_not_awaited()

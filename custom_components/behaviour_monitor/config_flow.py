@@ -29,11 +29,9 @@ from .const import (
     CONF_HEALTH_GRACE_S,
     CONF_HOUSE_LOW_RATIO,
     CONF_LEARNING_DAYS,
+    CONF_ATTENTION_MIN_SEVERITY,
     CONF_MOTION_DEBOUNCE_S,
-    CONF_NOTIFY_SERVICE,
     CONF_PLUG_MARGIN_W,
-    CONF_PUSH_MIN_SEVERITY,
-    CONF_PUSH_REPEAT_S,
     CONF_SITE_NAME,
     CONF_TIMING_PROMOTE_DAYS,
     CONF_WINDOW_DAYS,
@@ -101,9 +99,6 @@ def _setup_schema(defaults: dict[str, Any]) -> vol.Schema:
         vol.Required(
             CONF_SITE_NAME, default=defaults.get(CONF_SITE_NAME, "")
         ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-        vol.Required(
-            CONF_NOTIFY_SERVICE, default=defaults.get(CONF_NOTIFY_SERVICE, "")
-        ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
     }
     for category, key in CATEGORY_CONF_KEYS.items():
         domains = _CATEGORY_DOMAINS[category]
@@ -139,11 +134,8 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_HEALTH_GRACE_S, default=d(CONF_HEALTH_GRACE_S)): _number(
                 CONF_HEALTH_GRACE_S, 60, 7200, 30, "s"
             ),
-            vol.Required(CONF_PUSH_REPEAT_S, default=d(CONF_PUSH_REPEAT_S)): _number(
-                CONF_PUSH_REPEAT_S, 300, 14400, 60, "s"
-            ),
             vol.Required(
-                CONF_PUSH_MIN_SEVERITY, default=d(CONF_PUSH_MIN_SEVERITY)
+                CONF_ATTENTION_MIN_SEVERITY, default=d(CONF_ATTENTION_MIN_SEVERITY)
             ): SelectSelector(
                 SelectSelectorConfig(
                     options=SEVERITY_OPTIONS, mode=SelectSelectorMode.DROPDOWN

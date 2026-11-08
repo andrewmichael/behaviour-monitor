@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "behaviour_monitor"
 VERSION: Final = "5.0.0"
-CONFIG_VERSION: Final = 11
+CONFIG_VERSION: Final = 12
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 11
 UPDATE_INTERVAL: Final = 60  # seconds
@@ -14,7 +14,6 @@ SAVE_DEBOUNCE_S: Final = 30
 
 # Setup-step config keys
 CONF_SITE_NAME: Final = "site_name"
-CONF_NOTIFY_SERVICE: Final = "notify_service"
 CONF_MOTION_ENTITIES: Final = "motion_entities"
 CONF_CONTACT_ENTITIES: Final = "contact_entities"
 CONF_PLUG_ENTITIES: Final = "plug_entities"
@@ -37,8 +36,7 @@ CONF_PLUG_MARGIN_W: Final = "plug_margin_w"
 CONF_LEARNING_DAYS: Final = "learning_days"
 CONF_WINDOW_DAYS: Final = "window_days"
 CONF_HEALTH_GRACE_S: Final = "health_grace_s"
-CONF_PUSH_REPEAT_S: Final = "push_repeat_s"
-CONF_PUSH_MIN_SEVERITY: Final = "push_min_severity"
+CONF_ATTENTION_MIN_SEVERITY: Final = "attention_min_severity"
 CONF_HOUSE_LOW_RATIO: Final = "house_low_ratio"
 CONF_CHAIN_WINDOW_S: Final = "chain_window_s"
 CONF_TIMING_PROMOTE_DAYS: Final = "timing_promote_days"
@@ -50,8 +48,7 @@ OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_LEARNING_DAYS: 14,
     CONF_WINDOW_DAYS: 28,
     CONF_HEALTH_GRACE_S: 900,
-    CONF_PUSH_REPEAT_S: 1800,
-    CONF_PUSH_MIN_SEVERITY: "medium",
+    CONF_ATTENTION_MIN_SEVERITY: "medium",
     CONF_HOUSE_LOW_RATIO: 3,
     CONF_CHAIN_WINDOW_S: 1800,
     CONF_TIMING_PROMOTE_DAYS: 7,
@@ -63,6 +60,14 @@ SENSITIVITY_OPTIONS: Final = ["low", "medium", "high"]
 
 # Legacy (v10) key kept only for migration
 LEGACY_CONF_MONITORED_ENTITIES: Final = "monitored_entities"
+# Legacy (v11) key kept only for migration
+LEGACY_CONF_NOTIFY_SERVICE: Final = "notify_service"
+LEGACY_CONF_PUSH_MIN_SEVERITY: Final = "push_min_severity"
+LEGACY_CONF_PUSH_REPEAT_S: Final = "push_repeat_s"
+BLUEPRINT_URL: Final = (
+    "https://github.com/andrewmichael/behaviour-monitor/blob/main/"
+    "blueprints/automation/behaviour_monitor/notify.yaml"
+)
 
 # Snooze
 SNOOZE_OFF: Final = "off"
@@ -93,6 +98,7 @@ SERVICE_TEST_PANIC: Final = "test_panic"
 
 # Repair issue ids
 ISSUE_ASSIGN_CATEGORIES: Final = "assign_categories"
+ISSUE_NOTIFICATIONS_MOVED: Final = "notifications_moved"
 ISSUE_HEALTH_PREFIX: Final = "health_"
 
 # Events

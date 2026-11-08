@@ -17,7 +17,6 @@ from custom_components.behaviour_monitor.const import (
     CONF_LEARNING_DAYS,
     CONF_MOTION_DEBOUNCE_S,
     CONF_MOTION_ENTITIES,
-    CONF_NOTIFY_SERVICE,
     CONF_PANIC_ENTITIES,
     CONF_SITE_NAME,
     OPTION_DEFAULTS,
@@ -25,7 +24,6 @@ from custom_components.behaviour_monitor.const import (
 
 GOOD = {
     CONF_SITE_NAME: "Biddulph Road",
-    CONF_NOTIFY_SERVICE: "notify.mobile_app_phone",
     CONF_MOTION_ENTITIES: ["binary_sensor.k"],
     CONF_CONTACT_ENTITIES: ["binary_sensor.d"],
     CONF_PANIC_ENTITIES: ["binary_sensor.p"],
@@ -57,7 +55,7 @@ async def test_user_step_shows_form_then_creates_entry():
     assert result["type"] == "create_entry"
     assert result["title"] == "Biddulph Road"
     assert result["data"][CONF_MOTION_ENTITIES] == ["binary_sensor.k"]
-    assert flow.VERSION == 11
+    assert flow.VERSION == 12
 
 
 @pytest.mark.asyncio
@@ -68,9 +66,7 @@ async def test_user_step_rejects_duplicates_and_empty():
         {**GOOD, CONF_CONTACT_ENTITIES: ["binary_sensor.k"]}
     )
     assert result["type"] == "form" and result["errors"]["base"] == "duplicate_entity"
-    result = await flow.async_step_user(
-        {CONF_SITE_NAME: "x", CONF_NOTIFY_SERVICE: "notify.n"}
-    )
+    result = await flow.async_step_user({CONF_SITE_NAME: "x"})
     assert result["errors"]["base"] == "no_entities"
 
 
@@ -113,7 +109,6 @@ async def test_options_flow_clearing_a_category_persists_empty_list():
     flow.hass = MagicMock()
     submitted = {
         CONF_SITE_NAME: GOOD[CONF_SITE_NAME],
-        CONF_NOTIFY_SERVICE: GOOD[CONF_NOTIFY_SERVICE],
         CONF_MOTION_ENTITIES: GOOD[CONF_MOTION_ENTITIES],
     }
     result = await flow.async_step_init(submitted)
@@ -129,3 +124,22 @@ def test_number_config_omits_unit_when_none():
     pass None. Passing None makes every options form fail to build (400)."""
     assert "unit_of_measurement" not in _number_config(1.5, 10, 0.5, None)
     assert _number_config(10, 600, 5, "s")["unit_of_measurement"] == "s"
+
+
+def _field_names(schema) -> set[str]:
+    fields = schema.schema if hasattr(schema, "schema") else schema
+    return {str(k) for k in fields}
+
+
+def test_setup_form_has_no_notify_service():
+    from custom_components.behaviour_monitor.config_flow import _setup_schema
+
+    assert "notify_service" not in _field_names(_setup_schema({}))
+
+
+def test_options_form_has_attention_severity_and_no_push_options():
+    from custom_components.behaviour_monitor.config_flow import _options_schema
+
+    names = _field_names(_options_schema({}))
+    assert "attention_min_severity" in names
+    assert not {"push_repeat_s", "push_min_severity", "notify_service"} & names

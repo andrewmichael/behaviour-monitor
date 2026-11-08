@@ -13,13 +13,18 @@ from homeassistant.helpers import issue_registry as ir
 
 from .config_flow import entity_specs_from_data
 from .const import (
+    BLUEPRINT_URL,
     CATEGORY_CONF_KEYS,
-    CONF_NOTIFY_SERVICE,
+    CONF_ATTENTION_MIN_SEVERITY,
     CONF_SITE_NAME,
     CONFIG_VERSION,
     DOMAIN,
     ISSUE_ASSIGN_CATEGORIES,
+    ISSUE_NOTIFICATIONS_MOVED,
     LEGACY_CONF_MONITORED_ENTITIES,
+    LEGACY_CONF_NOTIFY_SERVICE,
+    LEGACY_CONF_PUSH_MIN_SEVERITY,
+    LEGACY_CONF_PUSH_REPEAT_S,
     OPTION_DEFAULTS,
     SERVICE_CLEAR_ALERT,
     SERVICE_CLEAR_SNOOZE,
@@ -59,32 +64,55 @@ def _raise_assign_issue(
     )
 
 
+def _raise_notifications_moved_issue(
+    hass: HomeAssistant, entry: ConfigEntry, site: str, service: str
+) -> None:
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"{ISSUE_NOTIFICATIONS_MOVED}_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_NOTIFICATIONS_MOVED,
+        learn_more_url=BLUEPRINT_URL,
+        translation_placeholders={"site": site, "service": service},
+    )
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.version >= CONFIG_VERSION:
         return True
     data = dict(entry.data)
-    legacy = list(data.pop(LEGACY_CONF_MONITORED_ENTITIES, []))
-    for key in list(data):
-        if key not in (
-            CONF_SITE_NAME,
-            CONF_NOTIFY_SERVICE,
-            *CATEGORY_CONF_KEYS.values(),
-        ):
-            data.pop(key)
-    data.setdefault(CONF_SITE_NAME, entry.title)
-    data.setdefault(CONF_NOTIFY_SERVICE, "")
-    for key in CATEGORY_CONF_KEYS.values():
-        data.setdefault(key, [])
-    data[LEGACY_UNASSIGNED] = legacy
+    options = dict(entry.options)
+    old_service = str(data.pop(LEGACY_CONF_NOTIFY_SERVICE, "") or "")
+    from_legacy = entry.version < 11
+    if from_legacy:
+        legacy = list(data.pop(LEGACY_CONF_MONITORED_ENTITIES, []))
+        for key in list(data):
+            if key not in (CONF_SITE_NAME, *CATEGORY_CONF_KEYS.values()):
+                data.pop(key)
+        data.setdefault(CONF_SITE_NAME, entry.title)
+        for key in CATEGORY_CONF_KEYS.values():
+            data.setdefault(key, [])
+        data[LEGACY_UNASSIGNED] = legacy
+        options = dict(OPTION_DEFAULTS)
+    else:
+        legacy = []
+        options[CONF_ATTENTION_MIN_SEVERITY] = options.pop(
+            LEGACY_CONF_PUSH_MIN_SEVERITY, OPTION_DEFAULTS[CONF_ATTENTION_MIN_SEVERITY]
+        )
+        options.pop(LEGACY_CONF_PUSH_REPEAT_S, None)
     hass.config_entries.async_update_entry(
-        entry, data=data, options=dict(OPTION_DEFAULTS), version=CONFIG_VERSION
+        entry, data=data, options=options, version=CONFIG_VERSION
     )
-    if not entity_specs_from_data(data):
+    if from_legacy and not entity_specs_from_data(data):
         _raise_assign_issue(hass, entry, legacy)
+    if old_service:
+        _raise_notifications_moved_issue(
+            hass, entry, str(data.get(CONF_SITE_NAME, entry.title)), old_service
+        )
     _LOGGER.info(
-        "Behaviour Monitor: migrated %s to v%d; categories need assigning",
-        entry.entry_id,
-        CONFIG_VERSION,
+        "Behaviour Monitor: migrated %s to v%d", entry.entry_id, CONFIG_VERSION
     )
     return True
 
