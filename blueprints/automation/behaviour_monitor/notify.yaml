@@ -1,0 +1,149 @@
+blueprint:
+  name: Behaviour Monitor notifications
+  description: >
+    Sends Behaviour Monitor alerts to a notify service. Notifies when an alert
+    opens, escalates or is reminded, repeats while it stays open, and can send
+    a "Cleared" message. A panic gets an "I'm on it" button that clears it.
+  domain: automation
+  min_version: 2024.10.0
+  source_url: https://github.com/andrewmichael/behaviour-monitor/blob/main/blueprints/automation/behaviour_monitor/notify.yaml
+  input:
+    notify_service:
+      name: Notify service
+      description: The notify action to call, for example notify.mobile_app_phone.
+      selector:
+        text:
+    groups:
+      name: Alert groups
+      description: >
+        attention is what needs a person, information is the quieter list,
+        health is sensing trouble.
+      default:
+        - attention
+      selector:
+        select:
+          multiple: true
+          options:
+            - attention
+            - information
+            - health
+    repeat_minutes:
+      name: Repeat every (minutes)
+      description: Send again at this interval while the alert is open. 0 for no repeat.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 240
+          mode: box
+          unit_of_measurement: min
+    send_cleared:
+      name: Send a Cleared message
+      default: true
+      selector:
+        boolean:
+    panic_action:
+      name: Add an "I'm on it" button to panic alerts
+      default: true
+      selector:
+        boolean:
+
+mode: parallel
+max: 20
+
+triggers:
+  - trigger: event
+    event_type: behaviour_monitor_alert
+    id: alert
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: action
+
+variables:
+  groups: !input groups
+  repeat_minutes: !input repeat_minutes
+  send_cleared: !input send_cleared
+  panic_action: !input panic_action
+
+actions:
+  - choose:
+      # Tap on "I'm on it": clear the panic named in the action.
+      - conditions:
+          - condition: trigger
+            id: action
+          - condition: template
+            value_template: "{{ (trigger.event.data.action | string).startswith('BM_CLEAR_') }}"
+        sequence:
+          - action: behaviour_monitor.clear_alert
+            data:
+              alert_id: "{{ trigger.event.data.action | string | replace('BM_CLEAR_', '', 1) }}"
+
+      # Opened, escalated or reminded: notify, then repeat until anything
+      # else arrives for this id.
+      - conditions:
+          - condition: trigger
+            id: alert
+          - condition: template
+            value_template: "{{ trigger.event.data.type in ['opened', 'escalated', 'reminder'] }}"
+          - condition: template
+            value_template: "{{ trigger.event.data.group in groups }}"
+        sequence:
+          - variables:
+              alert_id: "{{ trigger.event.data.id }}"
+              title: "{{ trigger.event.data.site }} welfare"
+              body: "{{ trigger.event.data.message }}"
+              push_data: >-
+                {{ {'tag': alert_id, 'actions': [{'action': 'BM_CLEAR_' ~ alert_id, 'title': "I'm on it"}]}
+                if panic_action and trigger.event.data.kind == 'panic'
+                else {'tag': alert_id} }}
+          - action: !input notify_service
+            data:
+              title: "{{ title }}"
+              message: "{{ body }}"
+              data: "{{ push_data }}"
+          - if:
+              - condition: template
+                value_template: "{{ repeat_minutes | float(0) > 0 }}"
+            then:
+              - repeat:
+                  sequence:
+                    # Any event for this id ends the wait: a newer run has
+                    # taken over, or the alert cleared.
+                    - wait_for_trigger:
+                        - trigger: event
+                          event_type: behaviour_monitor_alert
+                          event_data:
+                            id: "{{ alert_id }}"
+                      timeout:
+                        minutes: "{{ repeat_minutes | int(30) }}"
+                      continue_on_timeout: true
+                    - if:
+                        - condition: template
+                          value_template: "{{ wait.trigger is none }}"
+                      then:
+                        - action: !input notify_service
+                          data:
+                            title: "{{ title }}"
+                            message: "{{ body }}"
+                            data: "{{ push_data }}"
+                  until:
+                    - condition: template
+                      value_template: "{{ wait.trigger is not none }}"
+
+      # Cleared (also arrives for ids this automation never saw open).
+      - conditions:
+          - condition: trigger
+            id: alert
+          - condition: template
+            value_template: "{{ trigger.event.data.type == 'cleared' }}"
+          - condition: template
+            value_template: "{{ trigger.event.data.group in groups }}"
+          - condition: template
+            value_template: "{{ send_cleared }}"
+        sequence:
+          - action: !input notify_service
+            data:
+              title: "{{ trigger.event.data.site }} welfare"
+              message: "Cleared: {{ trigger.event.data.message }}"
+              data:
+                tag: "{{ trigger.event.data.id }}"
