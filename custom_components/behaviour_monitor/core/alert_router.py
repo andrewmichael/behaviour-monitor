@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -10,10 +10,14 @@ from .alerts import Alert, AlertClass, Severity
 from .events import ActivityEvent
 
 
+ATTENTION = "attention"
+INFORMATION = "information"
+HEALTH = "health"
+
+
 @dataclass(frozen=True)
 class RouterConfig:
-    push_min_severity: Severity = Severity.MEDIUM
-    push_repeat_s: float = 1800.0
+    attention_min_severity: Severity = Severity.MEDIUM
     timing_promote_days: int = 7
 
 
@@ -21,15 +25,26 @@ class RouterConfig:
 class DeliveryAction:
     action: str
     alert: Alert
+    event: str | None = None
+    reason: str | None = None
+    alert_id: str | None = None
+    group: str | None = None
+    cleared_by: str | None = None
+    test: bool = False
 
 
 @dataclass
 class _Open:
     alert: Alert
     opened_at: datetime
-    last_push: datetime | None = None
-    acknowledged: bool = False
+    group: str
     panic: bool = False
+    test: bool = False
+    held: bool = False
+
+    @property
+    def id(self) -> str:
+        return f"{self.alert.key}@{self.alert.raised_at.isoformat()}"
 
 
 class AlertRouter:
@@ -52,6 +67,17 @@ class AlertRouter:
         ]
         return max(sevs) if sevs else None
 
+    @property
+    def attention_severity(self) -> Severity | None:
+        sevs = [o.alert.severity for o in self._open.values() if o.group == ATTENTION]
+        return max(sevs) if sevs else None
+
+    def published(self) -> list[dict[str, Any]]:
+        return [
+            {**o.alert.to_dict(), "id": o.id, "group": o.group}
+            for o in self._open.values()
+        ]
+
     # --------------------------------------------------------------- submit
 
     def submit(
@@ -70,33 +96,25 @@ class AlertRouter:
             seen.add(alert.key)
             cur = self._open.get(alert.key)
             if cur is None:
-                self._open[alert.key] = _Open(alert, now)
-                actions.extend(self._on_open(alert, now, snoozed))
+                o = _Open(alert, now, self._group(alert, False))
+                self._open[alert.key] = o
+                actions.extend(self._on_open(o, snoozed))
             else:
                 rose = alert.severity > cur.alert.severity
-                cur.alert = alert
-                if rose and alert.cls is AlertClass.WELFARE:
-                    cur.acknowledged = False
-                    actions.extend(self._push(cur, now, snoozed))
-                elif rose and alert.cls is AlertClass.STATISTICAL and not snoozed:
-                    actions.append(DeliveryAction("log", alert))
+                cur.alert = replace(alert, raised_at=cur.alert.raised_at)
+                if rose:
+                    actions.extend(self._on_rise(cur, snoozed))
         for key in list(self._open):
             o = self._open[key]
-            if key in seen or (o.panic and not o.acknowledged):
+            if key in seen or (o.panic and not o.test):
                 continue
             del self._open[key]
             actions.extend(self._on_clear(o, snoozed or holiday))
-        for o in self._open.values():
-            if (
-                o.alert.cls is AlertClass.WELFARE
-                and not o.acknowledged
-                and o.alert.severity.at_least(self._cfg.push_min_severity)
-            ):
-                if (
-                    o.last_push is not None
-                    and (now - o.last_push).total_seconds() >= self._cfg.push_repeat_s
-                ):
-                    actions.extend(self._push(o, now, snoozed))
+        if not snoozed:
+            for o in self._open.values():
+                if o.held:
+                    o.held = False
+                    actions.append(self._event(o, "reminder", reason="snooze_ended"))
         return actions
 
     def submit_panic(self, event: ActivityEvent, now: datetime) -> list[DeliveryAction]:
@@ -109,16 +127,18 @@ class AlertRouter:
             now,
             {"room": event.room},
         )
-        o = _Open(alert, now, panic=True)
+        cur = self._open.get(alert.key)
+        if cur is not None and cur.panic and not cur.test:
+            return [self._event(cur, "reminder", reason="pressed_again")]
+        o = _Open(alert, now, ATTENTION, panic=True)
         self._open[alert.key] = o
-        return self._push(o, now, snoozed=False)
+        return [self._event(o, "opened")]
 
     def submit_test(self, now: datetime) -> list[DeliveryAction]:
-        """A test push through the real delivery path.
+        """A test alert through the real delivery path.
 
         The alert has its own source, so it never collides with a real panic,
-        and it is acknowledged on creation, so the next submit closes it with
-        a clear push and nothing else open is touched.
+        and the next submit closes it with a cleared event.
         """
         alert = Alert(
             AlertClass.WELFARE,
@@ -129,14 +149,26 @@ class AlertRouter:
             now,
             {"room": "Test"},
         )
-        o = _Open(alert, now, panic=True, acknowledged=True)
+        o = _Open(alert, now, ATTENTION, panic=True, test=True)
         self._open[alert.key] = o
-        return self._push(o, now, snoozed=False)
+        return [self._event(o, "opened")]
 
-    def acknowledge(self, now: datetime) -> None:
-        for o in self._open.values():
-            if o.alert.cls is AlertClass.WELFARE:
-                o.acknowledged = True
+    def clear_panic(self, alert_id: str | None, now: datetime) -> list[DeliveryAction]:
+        actions: list[DeliveryAction] = []
+        for key in list(self._open):
+            o = self._open[key]
+            if not o.panic or o.test or (alert_id is not None and o.id != alert_id):
+                continue
+            del self._open[key]
+            actions.append(self._event(o, "cleared", cleared_by="user"))
+        return actions
+
+    def reminders(self, reason: str) -> list[DeliveryAction]:
+        return [
+            self._event(o, "reminder", reason=reason)
+            for o in self._open.values()
+            if o.group == ATTENTION and not o.test
+        ]
 
     # ------------------------------------------------------------ combining
 
@@ -224,32 +256,66 @@ class AlertRouter:
 
     # ------------------------------------------------------------- delivery
 
-    def _on_open(
-        self, alert: Alert, now: datetime, snoozed: bool
-    ) -> list[DeliveryAction]:
-        if alert.cls is AlertClass.WELFARE:
-            return self._push(self._open[alert.key], now, snoozed)
+    def _group(self, alert: Alert, panic: bool) -> str:
         if alert.cls is AlertClass.HEALTH:
-            return [DeliveryAction("repair_create", alert)]
-        return [] if snoozed else [DeliveryAction("log", alert)]
+            return HEALTH
+        if alert.cls is AlertClass.WELFARE and (
+            panic or alert.severity.at_least(self._cfg.attention_min_severity)
+        ):
+            return ATTENTION
+        return INFORMATION
+
+    def _event(
+        self,
+        o: _Open,
+        event: str,
+        reason: str | None = None,
+        cleared_by: str | None = None,
+    ) -> DeliveryAction:
+        return DeliveryAction(
+            "event",
+            o.alert,
+            event=event,
+            reason=reason,
+            alert_id=o.id,
+            group=o.group,
+            cleared_by=cleared_by,
+            test=o.test,
+        )
+
+    def _held(self, o: _Open, snoozed: bool) -> bool:
+        if snoozed and o.group == ATTENTION and not o.panic:
+            o.held = True
+            return True
+        return False
+
+    def _on_open(self, o: _Open, snoozed: bool) -> list[DeliveryAction]:
+        actions: list[DeliveryAction] = []
+        if not self._held(o, snoozed):
+            actions.append(self._event(o, "opened"))
+        if o.alert.cls is AlertClass.HEALTH:
+            actions.append(DeliveryAction("repair_create", o.alert))
+        elif o.alert.cls is AlertClass.STATISTICAL and not snoozed:
+            actions.append(DeliveryAction("log", o.alert))
+        return actions
+
+    def _on_rise(self, o: _Open, snoozed: bool) -> list[DeliveryAction]:
+        if o.group == INFORMATION and o.alert.cls is AlertClass.WELFARE:
+            o.group = self._group(o.alert, o.panic)
+        actions: list[DeliveryAction] = []
+        if not self._held(o, snoozed):
+            actions.append(self._event(o, "escalated"))
+        if o.alert.cls is AlertClass.STATISTICAL and not snoozed:
+            actions.append(DeliveryAction("log", o.alert))
+        return actions
 
     def _on_clear(self, o: _Open, suppress: bool) -> list[DeliveryAction]:
-        alert = o.alert
-        if alert.cls is AlertClass.WELFARE:
-            return (
-                []
-                if suppress or o.last_push is None
-                else [DeliveryAction("push_clear", alert)]
-            )
-        if alert.cls is AlertClass.HEALTH:
-            return [DeliveryAction("repair_delete", alert)]
-        return [] if suppress else [DeliveryAction("log_clear", alert)]
-
-    def _push(self, o: _Open, now: datetime, snoozed: bool) -> list[DeliveryAction]:
-        if not o.alert.severity.at_least(self._cfg.push_min_severity):
-            return []
-        o.last_push = now
-        return [] if snoozed and not o.panic else [DeliveryAction("push", o.alert)]
+        actions = [self._event(o, "cleared")]
+        if o.alert.cls is AlertClass.HEALTH:
+            actions.append(DeliveryAction("repair_delete", o.alert))
+        elif o.alert.cls is AlertClass.STATISTICAL and not suppress:
+            actions.append(DeliveryAction("log_clear", o.alert))
+        return actions
 
     # ----------------------------------------------------------- persistence
 
@@ -259,9 +325,10 @@ class AlertRouter:
                 k: {
                     "alert": o.alert.to_dict(),
                     "opened_at": o.opened_at.isoformat(),
-                    "last_push": o.last_push.isoformat() if o.last_push else None,
-                    "acknowledged": o.acknowledged,
+                    "group": o.group,
                     "panic": o.panic,
+                    "test": o.test,
+                    "held": o.held,
                 }
                 for k, o in self._open.items()
             },
@@ -269,19 +336,21 @@ class AlertRouter:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], config: RouterConfig) -> "AlertRouter":
+        """Read the current shape and the v11 one (last_push, acknowledged)."""
         r = cls(config)
         try:
             for k, o in data.get("open", {}).items():
+                panic = bool(o.get("panic", False))
+                if panic and o.get("acknowledged", False):
+                    continue
+                alert = Alert.from_dict(o["alert"])
                 r._open[k] = _Open(
-                    Alert.from_dict(o["alert"]),
+                    alert,
                     datetime.fromisoformat(o["opened_at"]),
-                    (
-                        datetime.fromisoformat(o["last_push"])
-                        if o.get("last_push")
-                        else None
-                    ),
-                    bool(o.get("acknowledged", False)),
-                    bool(o.get("panic", False)),
+                    o.get("group") or r._group(alert, panic),
+                    panic,
+                    bool(o.get("test", False)),
+                    bool(o.get("held", False)),
                 )
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
