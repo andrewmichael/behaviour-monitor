@@ -97,13 +97,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(
                 json.dumps(
-                    {"t": ts.isoformat(), "action": a.action, **a.alert.to_dict()}
+                    {
+                        "t": ts.isoformat(),
+                        "action": a.event or a.action,
+                        "reason": a.reason,
+                        **a.alert.to_dict(),
+                    }
                 )
             )
         else:
             al = a.alert
+            what = a.event or a.action
+            why = f" [{a.reason}]" if a.reason else ""
             print(
-                f"{ts:%Y-%m-%d %H:%M} {a.action:13} {al.cls.value:11} {al.severity.value:8} {al.key} :: {al.explanation}"
+                f"{ts:%Y-%m-%d %H:%M} {what:13} {al.cls.value:11} "
+                f"{al.severity.value:8} {al.key}{why} :: {al.explanation}"
             )
     return 0
 

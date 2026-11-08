@@ -23,7 +23,13 @@ def _run(tmp_path: Path, events, name: str = "fx"):
 
 
 def _pushes(tl):
-    return [(t, a.alert) for t, a in tl if a.action == "push"]
+    return [
+        (t, a.alert)
+        for t, a in tl
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ]
 
 
 def test_normal_days_raise_no_welfare_push(tmp_path):
@@ -31,12 +37,16 @@ def test_normal_days_raise_no_welfare_push(tmp_path):
     assert [a.kind for _, a in _pushes(tl) if a.cls.value == "welfare"] == []
 
 
-def test_panic_press_pushes_critical_once_then_repeats(tmp_path):
+def test_panic_press_opens_once_and_stays_open(tmp_path):
     tl = _run(tmp_path, synth.panic_press())
-    p = [(t, a) for t, a in _pushes(tl) if a.kind == "panic"]
-    assert p and p[0][1].severity.value == "critical"
-    assert p[0][0] == synth.START + timedelta(days=21, hours=14)
-    assert len(p) >= 2  # repeats until acknowledged
+    opened = [
+        (t, a.alert)
+        for t, a in tl
+        if a.action == "event" and a.event == "opened" and a.alert.kind == "panic"
+    ]
+    assert len(opened) == 1 and opened[0][1].severity.value == "critical"
+    assert opened[0][0] == synth.START + timedelta(days=21, hours=14)
+    assert not [a for _, a in tl if a.action == "event" and a.event == "cleared"]
 
 
 def test_silent_kitchen_is_device_health_not_welfare(tmp_path):
@@ -101,7 +111,8 @@ def test_gradual_lengthening_reports_drift_within_two_weeks(tmp_path):
     assert drifts
     first_day = (drifts[0][0].date() - synth.START.date()).days
     assert 24 <= first_day <= 35
-    open_keys = [a["key"] for a in engine.snapshot(last_poll)["welfare"]["open_alerts"]]
+    welfare = engine.snapshot(last_poll)["welfare"]
+    open_keys = [a["key"] for a in welfare["attention"] + welfare["information"]]
     assert any(
         k.startswith("welfare:chain:") and k.endswith(":timing_drift")
         for k in open_keys
@@ -134,4 +145,4 @@ def test_replay_cli_runs(tmp_path, builder, capsys):
     assert main([str(path)]) == 0
     out = capsys.readouterr().out
     if builder is synth.panic_press:
-        assert "push" in out and "panic" in out
+        assert "opened" in out and "panic" in out
