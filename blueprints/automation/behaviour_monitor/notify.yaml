@@ -91,6 +91,11 @@ actions:
           - variables:
               alert_id: "{{ trigger.event.data.id }}"
               kind: "{{ trigger.event.data.kind }}"
+              # A real panic is never stopped by the sensor lookup: a late
+              # refresh or an unavailable sensor would read as closed and end
+              # it after one push. Only its cleared event (or a newer run for
+              # the same id) ends it.
+              real_panic: "{{ trigger.event.data.kind == 'panic' and not trigger.event.data.test }}"
               title: "{{ trigger.event.data.site }} welfare"
               body: "{{ trigger.event.data.message }}"
               push_data: >-
@@ -135,7 +140,7 @@ actions:
                     {{ ns.status }}
               - if:
                   - condition: template
-                    value_template: "{{ live == 'closed' }}"
+                    value_template: "{{ live == 'closed' and not real_panic | bool }}"
                 then:
                   - stop: Alert closed
               - repeat:
@@ -158,7 +163,7 @@ actions:
                             live: *live_status
                         - if:
                             - condition: template
-                              value_template: "{{ live == 'closed' }}"
+                              value_template: "{{ live == 'closed' and not real_panic | bool }}"
                           then:
                             - stop: Alert closed
                         # While snoozed, keep waiting but only a panic pushes.

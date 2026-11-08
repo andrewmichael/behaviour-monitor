@@ -139,7 +139,9 @@ def test_open_check_before_the_wait_and_before_every_repeat_push():
     live = then[0]["variables"]["live"]
     assert "states.sensor" in live and "alert_id" in live and "snoozed" in live
     assert "'attention', 'information'" in live
-    assert then[1]["if"][0]["value_template"] == "{{ live == 'closed' }}"
+    assert then[1]["if"][0]["value_template"] == (
+        "{{ live == 'closed' and not real_panic | bool }}"
+    )
     assert then[1]["then"] == [{"stop": "Alert closed"}]
     loop = then[2]["repeat"]["sequence"]
     assert "wait_for_trigger" in loop[0]
@@ -151,3 +153,30 @@ def test_open_check_before_the_wait_and_before_every_repeat_push():
     # While snoozed only a panic repeats.
     assert push["if"][0]["value_template"] == "{{ live == 'open' or kind == 'panic' }}"
     assert isinstance(push["then"][0]["action"], _Input)
+
+
+def test_a_real_panic_is_never_stopped_by_a_sensor_miss():
+    """A late or unavailable sensor must not end a real panic after one push.
+
+    Only a same-id event (cleared, or a newer run) ends a real panic's run;
+    the closed check still applies to test alerts and every other kind.
+    """
+    seq = _repeat_branch()
+    variables = next(n["variables"] for n in seq if "variables" in n)
+    real = variables["real_panic"]
+    assert "kind == 'panic'" in real and "not trigger.event.data.test" in real
+    gate = next(n for n in seq if isinstance(n, dict) and "if" in n)
+    then = gate["then"]
+    stop_checks = [then[1]] + [
+        n
+        for n in then[2]["repeat"]["sequence"][1]["then"]
+        if isinstance(n, dict) and n.get("then") == [{"stop": "Alert closed"}]
+    ]
+    assert len(stop_checks) == 2
+    for check in stop_checks:
+        assert check["if"][0]["value_template"] == (
+            "{{ live == 'closed' and not real_panic | bool }}"
+        )
+    # Snooze still never silences a panic.
+    push = then[2]["repeat"]["sequence"][1]["then"][-1]
+    assert push["if"][0]["value_template"] == "{{ live == 'open' or kind == 'panic' }}"
