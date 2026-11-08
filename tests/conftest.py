@@ -336,6 +336,12 @@ def _setup_ha_mocks():
             """Mock refresh."""
             pass
 
+        def async_set_updated_data(self, data):
+            """Mock push: store the data and notify listeners, as HA does."""
+            self.data = data
+            for listener in list(self._listeners):
+                listener()
+
         async def async_shutdown(self):
             """Mock shutdown; the real one cancels the refresh timer."""
             self.shutdown_called = True

@@ -632,3 +632,120 @@ async def test_stale_engine_schema_triggers_full_bootstrap(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
+
+
+def _record_data_at_fire(coordinator, mock_hass) -> list[tuple[dict, object]]:
+    """Capture what the entities hold at the moment each alert event is fired."""
+    seen: list[tuple[dict, object]] = []
+
+    def fire(event_type, data=None, *args, **kwargs):
+        if event_type == EVENT:
+            seen.append((data, coordinator.data))
+
+    mock_hass.bus.async_fire.side_effect = fire
+    return seen
+
+
+def _attention_ids(data) -> list[str]:
+    if not isinstance(data, dict):
+        return []
+    return [a["id"] for a in data["welfare"]["attention"]]
+
+
+@pytest.mark.asyncio
+async def test_panic_is_published_before_its_event_fires(coordinator, mock_hass):
+    """The blueprint looks the id up on the sensor as soon as the event lands.
+
+    A refresh requested through the debouncer can be up to 10 s late, so the
+    snapshot must already be on the entities when the opened event fires.
+    """
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    seen = _record_data_at_fire(coordinator, mock_hass)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ), patch.object(coordinator, "async_request_refresh", new=AsyncMock()):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    assert [p["type"] for p, _ in seen] == ["opened"]
+    payload, data_at_fire = seen[0]
+    assert payload["id"] in _attention_ids(data_at_fire)
+    assert data_at_fire["site"] == "Test House"
+    assert "display_rooms" in data_at_fire
+
+
+@pytest.mark.asyncio
+async def test_test_panic_is_published_before_its_event_fires(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    seen = _record_data_at_fire(coordinator, mock_hass)
+    with patch.object(coordinator, "async_request_refresh", new=AsyncMock()):
+        await coordinator.async_test_panic()
+    assert [(p["type"], p["test"]) for p, _ in seen] == [("opened", True)]
+    payload, data_at_fire = seen[0]
+    assert payload["id"] in _attention_ids(data_at_fire)
+
+
+@pytest.mark.asyncio
+async def test_clear_alert_is_published_before_its_event_fires(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    pid = _fired(mock_hass)[0]["id"]
+    seen = _record_data_at_fire(coordinator, mock_hass)
+    with patch.object(coordinator, "async_request_refresh", new=AsyncMock()):
+        assert await coordinator.async_clear_alert(pid) is True
+    assert [p["type"] for p, _ in seen] == ["cleared"]
+    assert seen[0][1] is not None
+    assert pid not in _attention_ids(seen[0][1])
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_never_blocks_the_event(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ), patch.object(coordinator._engine, "snapshot", side_effect=RuntimeError("boom")):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    assert [d["type"] for d in _fired(mock_hass)] == ["opened"]
+
+
+@pytest.mark.asyncio
+async def test_poll_path_does_not_publish_twice(coordinator, mock_hass):
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    with patch.object(coordinator, "async_set_updated_data") as publish:
+        await coordinator._async_update_data()
+    publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_held_panic_is_published_before_release(coordinator, mock_hass):
+    from homeassistant.core import CoreState
+
+    mock_hass.state = CoreState.starting
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        _press_panic(coordinator)
+        await coordinator._flush_actions()
+    seen = _record_data_at_fire(coordinator, mock_hass)
+    started = next(
+        c.args[1]
+        for c in mock_hass.bus.async_listen_once.call_args_list
+        if c.args[0] == "homeassistant_started"
+    )
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ):
+        await started(None)
+    assert [p["type"] for p, _ in seen] == ["opened"]
+    assert seen[0][0]["id"] in _attention_ids(seen[0][1])

@@ -307,6 +307,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fire the events held during startup, then the restart reminders."""
         self._started = True
         held, self._held_events = self._held_events, []
+        # Held alerts and restart reminders are looked up on the sensor too.
+        self._publish(dt_util.now())
         for payload in held:
             self.hass.bus.async_fire(EVENT_ALERT, payload)
         self._fire_restart_reminders({p["id"] for p in held})
@@ -419,17 +421,24 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _flush_actions(self) -> None:
         pending, self._pending = self._pending, []
+        if self._started and any(a.action == "event" for a, _ in pending):
+            self._publish(dt_util.now())
         for action, when in pending:
-            await self._perform([action], when)
+            await self._perform([action], when, publish=False)
         await self.async_request_refresh()
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = dt_util.now()
         try:
             actions = self._engine.poll(now)
-            await self._perform(actions, now)
+            # The snapshot returned below is written to the entities before
+            # Home Assistant runs any automation these events trigger.
+            await self._perform(actions, now, publish=False)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Engine poll failed")
+        return self._build_snapshot(now)
+
+    def _build_snapshot(self, now: datetime) -> dict[str, Any]:
         snapshot = self._engine.snapshot(now)
         snapshot["site"] = self._site
         snapshot["display_rooms"] = {
@@ -437,9 +446,27 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         return snapshot
 
+    def _publish(self, now: datetime) -> None:
+        """Put the current snapshot on the entities straight away.
+
+        Called before an alert event is fired outside the poll: the blueprint
+        looks the id up on the Welfare Status sensor as soon as the event
+        arrives, and async_request_refresh can be held up to 10 s by its
+        debouncer. A failure here must never stop the event going out.
+        """
+        try:
+            self.async_set_updated_data(self._build_snapshot(now))
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Could not publish the snapshot before an alert")
+
     # --------------------------------------------------------------- delivery
 
-    async def _perform(self, actions: list[DeliveryAction], now: datetime) -> None:
+    async def _perform(
+        self, actions: list[DeliveryAction], now: datetime, publish: bool = True
+    ) -> None:
+        """Deliver actions. Outside the poll, publish first if any is an event."""
+        if publish and self._started and any(a.action == "event" for a in actions):
+            self._publish(now)
         for act in actions:
             alert = act.alert
             if act.action == "event":
