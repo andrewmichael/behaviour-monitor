@@ -37,7 +37,7 @@ clear_alert:
     alert_id:
       name: Alert ID
       required: false
-      example: "welfare:house:panic@binary_sensor.panic"
+      example: "welfare:binary_sensor.panic_button_hall:panic@2026-11-08T14:03:00+00:00"
       selector:
         text: {}
 

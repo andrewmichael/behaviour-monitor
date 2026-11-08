@@ -72,6 +72,7 @@ def _raise_notifications_moved_issue(
         DOMAIN,
         f"{ISSUE_NOTIFICATIONS_MOVED}_{entry.entry_id}",
         is_fixable=False,
+        is_persistent=True,
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_NOTIFICATIONS_MOVED,
         learn_more_url=BLUEPRINT_URL,

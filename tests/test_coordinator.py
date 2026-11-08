@@ -273,7 +273,7 @@ async def test_reload_while_running_sends_one_reminder_per_attention_alert(
 
 
 @pytest.mark.asyncio
-async def test_clear_alert_clears_panic_and_reports(coordinator, mock_hass):
+async def test_clear_alert_clears_panic_and_reports(coordinator, mock_hass, caplog):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
     with patch(
@@ -282,7 +282,9 @@ async def test_clear_alert_clears_panic_and_reports(coordinator, mock_hass):
         _press_panic(coordinator)
         await coordinator._flush_actions()
     pid = _fired(mock_hass)[0]["id"]
-    assert await coordinator.async_clear_alert("nope@x") is False
+    with caplog.at_level("WARNING"):
+        assert await coordinator.async_clear_alert("nope@x") is False
+    assert "nope@x" not in caplog.text
     assert await coordinator.async_clear_alert(pid) is True
     last = mock_hass.bus.async_fire.call_args_list[-1].args[1]
     assert (last["type"], last["cleared_by"], last["id"]) == ("cleared", "user", pid)

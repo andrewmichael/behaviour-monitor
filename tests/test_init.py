@@ -98,6 +98,7 @@ async def test_migrate_v11_to_v12_moves_options_and_raises_notice(
     call = ir.async_create_issue.call_args
     assert call.args[2] == "notifications_moved_test_entry_id"
     assert call.kwargs["is_fixable"] is False
+    assert call.kwargs["is_persistent"] is True
     assert call.kwargs["translation_key"] == "notifications_moved"
     assert call.kwargs["learn_more_url"] == BLUEPRINT_URL
     placeholders = call.kwargs["translation_placeholders"]
@@ -186,6 +187,8 @@ async def test_unload_shuts_down_and_removes(mock_hass, mock_config_entry):
     assert await async_unload_entry(mock_hass, mock_config_entry) is True
     coord.async_shutdown.assert_awaited_once()
     assert mock_config_entry.entry_id not in mock_hass.data[DOMAIN]
+    removed = {c.args[1] for c in mock_hass.services.async_remove.call_args_list}
+    assert SERVICE_CLEAR_ALERT in removed
 
 
 @pytest.mark.asyncio

@@ -535,13 +535,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Clear one open panic by id, or every open panic without one.
 
         Returns True when anything was cleared. Other welfare alerts close on
-        their own, so an id that is not an open panic clears nothing.
+        their own, so an id that is not an open panic clears nothing. The
+        service warns when no site owns the id, so this stays quiet: with
+        several sites, every site but one is expected to miss.
         """
         now = dt_util.now()
         actions = self._engine.clear_panic(alert_id, now)
         if not actions:
-            if alert_id is not None:
-                _LOGGER.warning("No open panic with id %s to clear", alert_id)
             return False
         await self._perform(actions, now)
         await self._after_control()
