@@ -113,6 +113,16 @@ closing are not activity.
   runs until the next activity. The state, room and TV flag are fixed when
   the interval *starts* (from the activity that started it), and the alert
   deadline for that interval is fixed then too.
+- **Burst ends.** A motion sensor re-triggered inside its debounce sends no
+  new `PRESENCE`, so the end of a burst (`BURST_END`, at its last "off") is
+  activity too. A burst end later than the current interval's start begins a
+  new interval at that time in the burst's room, same room or not, so
+  stillness counts from the end of the movement. It is not a waking. A burst
+  end at or before the interval start is ignored, and so is any burst end
+  during an outside-door interval (pending or `out`): sensors hold "on" for a
+  minute or more, so a burst ending after the door opened is no evidence
+  anyone is home. Sleep onset and the "back to bed" rule count from the
+  presence that began a run of same-room intervals split only by burst ends.
 - **TV flag.** True when a sitting appliance in the room where she was last
   seen is on at the start of the interval. A TV turning off later neither
   resets stillness nor shortens the allowance.

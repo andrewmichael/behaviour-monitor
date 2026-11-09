@@ -485,7 +485,8 @@ def test_snapshot_has_whereabouts_block():
     w = e.snapshot(now)["whereabouts"]
     assert set(w) == {"where", "where_since", "last_room", "limit_min"}
     assert w["where"] == "home" and w["last_room"] == "Kitchen"
-    assert w["where_since"] == (day + timedelta(hours=10)).isoformat()
+    # The pulse's burst ended at 10:01: stillness counts from there.
+    assert w["where_since"] == (day + timedelta(hours=10, minutes=1)).isoformat()
     assert w["limit_min"] == 45.0
     assert _engine().snapshot(MON)["whereabouts"] == {
         "where": None,
@@ -530,7 +531,7 @@ def test_poll_gap_after_noon_keeps_an_open_not_up():
     snap = e.snapshot(day + timedelta(days=1, hours=12, minutes=21))
     assert (
         snap["whereabouts"]["where_since"]
-        == (day + timedelta(hours=22, minutes=30)).isoformat()
+        == (day + timedelta(hours=22, minutes=31)).isoformat()  # burst end
     )
 
 
@@ -568,3 +569,54 @@ def test_rename_room_renames_whereabouts_rooms():
     assert w["door_room"] == "Scullery"
     assert w["tvs_on"] == {"sensor.tv": "Scullery"}
     assert w["interval"]["room"] == "Scullery"
+
+
+def test_back_room_burst_end_reaches_whereabouts_through_the_normaliser():
+    """9 Nov: kitchen presence inside a back room burst with the TV on."""
+    back = EntitySpec("binary_sensor.back", Category.MOTION, "Back room")
+    tv = EntitySpec("sensor.tv", Category.PLUG, "Back room")
+    ents = ENTS + [DOOR, back, tv]
+    e = Engine(
+        EngineConfig.from_options(
+            {
+                "learning_days": 14,
+                "outside_doors": ["binary_sensor.side_door"],
+                "sitting_appliances": ["sensor.tv"],
+            }
+        ),
+        ents,
+    )
+    _train(e, days=15)
+    day = MON + timedelta(days=15)
+
+    def at(h: int, m: int, s: int = 0) -> datetime:
+        return day + timedelta(hours=h, minutes=m, seconds=s)
+
+    e.handle_state("sensor.tv", None, "0", at(16, 30))
+    e.handle_state("sensor.tv", "0", "82", at(16, 40))
+    feed = [
+        ("binary_sensor.back", "off", "on", at(16, 53, 1)),
+        ("binary_sensor.back", "on", "off", at(16, 53, 30)),
+        ("binary_sensor.kit", "off", "on", at(16, 53, 49)),
+        ("binary_sensor.back", "off", "on", at(16, 54, 18)),
+        ("binary_sensor.kit", "on", "off", at(16, 54, 53)),
+        ("binary_sensor.back", "on", "off", at(16, 55, 20)),
+    ]
+    t = at(16, 40)
+    acts: list = []
+    first = None
+    while t <= at(18, 30):
+        while feed and feed[0][3] <= t:
+            eid, old, new, ts = feed.pop(0)
+            acts += e.handle_state(eid, old, new, ts, learn_only=False)
+        acts += e.poll(t)
+        if t == at(17, 40):
+            w = e.snapshot(t)["whereabouts"]
+            assert w["where"] == "home_tv" and w["last_room"] == "Back room"
+            assert w["where_since"] == at(16, 55, 20).isoformat()
+            assert _open_where(e) == []
+        if first is None and _open_where(e):
+            first = t
+        t += timedelta(minutes=1)
+    assert [a.kind for a in _open_where(e)] == ["still_tv"]
+    assert first == at(18, 26)  # 16:55:20 plus 90 minutes, polled each minute

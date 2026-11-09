@@ -11,6 +11,13 @@ out depends on what happens in the next ten minutes, so that interval reads as
 ``HOME`` until it has been quiet that long and ``OUT`` afterwards. An outside
 door during a door interval, pending or out, is her return: an ordinary
 interval in the door's room.
+
+A motion burst's end is activity too: a sensor re-triggered inside its
+debounce emits no new presence, so the room still moving after another room's
+presence would otherwise be lost. A burst end newer than the interval starts a
+new one in the burst's room. During a door interval it is ignored: sensors
+hold "on" for a minute or more, so a burst ending after the door opened is not
+evidence anyone is home.
 """
 
 from __future__ import annotations
@@ -103,6 +110,10 @@ class Interval:
     room: str | None
     tv: bool
     door: str | None = None
+    # Set when the interval began at a burst end in the room it was already
+    # in: the start of that run, so bedtime and "back to bed" lengths count
+    # from the presence, not from the end of the burst.
+    run_start: datetime | None = None
 
 
 def _quantile(xs: list[float], p: float) -> float:
@@ -248,6 +259,7 @@ class Whereabouts:
             iv.door is not None and length >= cfg.out_after_min
         )
         day = iso_day(iv.start.date())
+        begun = iv.run_start or iv.start
         if out:
             if length < cfg.max_outing_min:
                 self._outs.setdefault(day, []).append(length)
@@ -255,20 +267,20 @@ class Whereabouts:
         if iv.where is Where.HOME:
             hours = self._home.setdefault(day, {})
             hours.setdefault(iv.start.hour, []).append(length)
-        minute = iv.start.hour * 60 + iv.start.minute
+        minute = begun.hour * 60 + begun.minute
         if (
             self.is_bedroom(iv.room)
             and _in_window(minute, *cfg.sleep_window)
-            and length >= cfg.sleep_min_min
+            and (end - begun).total_seconds() / 60 >= cfg.sleep_min_min
         ):
             # A night split by a bathroom trip keeps its first onset and
             # stretches to the end of its last sleep interval.
-            night = iv.start.date()
-            if iv.start.hour < 12:
+            night = begun.date()
+            if begun.hour < 12:
                 night -= timedelta(days=1)
             key = iso_day(night)
             known = self._sleeps.get(key)
-            onset = iv.start if known is None else min(known[0], iv.start)
+            onset = begun if known is None else min(known[0], begun)
             ends = (
                 [end]
                 if known is None
@@ -298,7 +310,7 @@ class Whereabouts:
         if keep_anchored and iv.where in (Where.ASLEEP, Where.OUT):
             self._interval = iv
             return
-        self._interval = replace(iv, start=now)
+        self._interval = replace(iv, start=now, run_start=None)
 
     def rename_room(self, old: str, new: str) -> None:
         """Follow a renamed room in the remembered rooms and interval."""
@@ -341,6 +353,7 @@ class Whereabouts:
                     "room": iv.room,
                     "tv": iv.tv,
                     "door": iv.door,
+                    "run_start": iv.run_start.isoformat() if iv.run_start else None,
                 }
                 if iv
                 else None
@@ -374,6 +387,11 @@ class Whereabouts:
                     raw["room"],
                     bool(raw["tv"]),
                     raw["door"],
+                    (
+                        datetime.fromisoformat(raw["run_start"])
+                        if raw.get("run_start")
+                        else None
+                    ),
                 )
             w._door_room = data.get("door_room")
             w._last_room = data.get("last_room")
@@ -396,6 +414,9 @@ class Whereabouts:
     def record(self, ev: ActivityEvent) -> None:
         """Feed one event; only presence, open and appliance events start intervals."""
         if self._interval is not None and ev.timestamp < self._interval.start:
+            return
+        if ev.kind is EventKind.BURST_END:
+            self._burst_end(ev)
             return
         sitting = ev.entity_id in self._cfg.sitting_appliances
         if ev.kind is EventKind.APPLIANCE_OFF:
@@ -452,6 +473,31 @@ class Whereabouts:
             )
         )
 
+    def _burst_end(self, ev: ActivityEvent) -> None:
+        """A newer burst end: someone was moving in its room until then.
+
+        Not a waking. It closes the interval like any activity, so a long
+        stretch in bed before it still cancels the waking seen before it.
+        """
+        iv = self._interval
+        if iv is not None and (iv.door is not None or ev.timestamp <= iv.start):
+            return
+        self._cancel_waking(ev.timestamp)
+        run = None
+        if iv is not None and iv.room == ev.room:
+            run = iv.run_start or iv.start
+        self._last_room = ev.room
+        tv = self._tv_on_in(ev.room)
+        self._begin(
+            Interval(
+                ev.timestamp,
+                self._classify(ev.timestamp, ev.room, tv),
+                ev.room,
+                tv,
+                run_start=run,
+            )
+        )
+
     def _cancel_waking(self, now: datetime) -> None:
         """Back to bed for a long while before noon: she was not up after all.
 
@@ -461,10 +507,11 @@ class Whereabouts:
         iv = self._interval
         if iv is None or cfg.bedrooms == frozenset() or not self.is_bedroom(iv.room):
             return
-        if iv.start.hour >= 12 or now - iv.start < timedelta(minutes=cfg.sleep_min_min):
+        begun = iv.run_start or iv.start
+        if begun.hour >= 12 or now - begun < timedelta(minutes=cfg.sleep_min_min):
             return
-        day = iso_day(iv.start.date())
-        if self._wakes.get(day, 24 * 60) <= iv.start.hour * 60 + iv.start.minute:
+        day = iso_day(begun.date())
+        if self._wakes.get(day, 24 * 60) <= begun.hour * 60 + begun.minute:
             del self._wakes[day]
 
     def _note_waking(self, ev: ActivityEvent) -> None:

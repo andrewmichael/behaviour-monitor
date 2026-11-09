@@ -194,6 +194,104 @@ def test_events_older_than_current_interval_are_ignored():
     assert (iv.start, iv.room) == (T(10, 0), "Kitchen")
 
 
+# ---------------------------------------------------------------- burst ends
+
+
+def S(h: int, m: int, s: int = 0) -> datetime:
+    return datetime(2026, 11, 9, h, m, s, tzinfo=timezone.utc)
+
+
+def _burst_end(ts: datetime, room: str) -> ActivityEvent:
+    return ActivityEvent(
+        "binary_sensor.m", Category.MOTION, EventKind.BURST_END, room, ts
+    )
+
+
+def test_back_room_burst_end_after_kitchen_presence_is_the_latest_activity():
+    """9 Nov: the back room was still moving after the kitchen's presence."""
+    w = Whereabouts(CFG)
+    w.record(_tv(S(16, 40), "Back room"))
+    w.record(_presence(S(16, 53, 1), "Back room"))
+    w.record(_presence(S(16, 53, 49), "Kitchen"))
+    w.record(_burst_end(S(16, 54, 53), "Kitchen"))
+    w.record(_burst_end(S(16, 55, 20), "Back room"))
+    iv = w.current(S(17, 40))
+    assert (iv.where, iv.room, iv.start) == (Where.HOME_TV, "Back room", S(16, 55, 20))
+    assert w.evaluate(S(17, 40)).alert is None
+    assert w.evaluate(S(18, 25, 19)).alert is None
+    a = w.evaluate(S(18, 25, 20)).alert
+    assert a.kind == "still_tv"
+
+
+def test_burst_end_in_the_same_room_counts_stillness_from_the_end():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    w.record(_burst_end(T(10, 20), "Kitchen"))
+    r = w.evaluate(T(10, 30))
+    assert (r.where, r.room, r.since) == (Where.HOME, "Kitchen", T(10, 20))
+    assert r.deadline == T(11, 20)
+    assert w.evaluate(T(11, 19)).alert is None
+    assert w.evaluate(T(11, 20)).alert.kind == "still_at_home"
+
+
+def test_burst_ends_after_an_outside_door_do_not_bring_the_house_home():
+    w = Whereabouts(CFG)
+    w.record(_presence(S(9, 59, 50), "Hall"))
+    w.record(_door(S(10, 0, 20), room="Hall"))
+    w.record(_burst_end(S(10, 0, 30), "Landing"))
+    w.record(_burst_end(S(10, 0, 40), "Hall"))
+    iv = w.current(S(10, 10, 20))
+    assert (iv.where, iv.start) == (Where.OUT, S(10, 0, 20))
+    assert w.current(S(10, 10, 19)).where is Where.HOME
+    for m in range(11, 300, 10):
+        a = w.evaluate(S(10, 0) + timedelta(minutes=m)).alert
+        assert a is None or a.kind != "still_at_home"
+
+
+def test_an_older_burst_end_flushed_later_is_ignored():
+    w = Whereabouts(CFG)
+    w.record(_tv(S(16, 40), "Back room"))
+    w.record(_presence(S(16, 53, 1), "Back room"))
+    w.record(_presence(S(16, 53, 49), "Kitchen"))
+    w.record(_burst_end(S(16, 55, 20), "Back room"))
+    w.record(_burst_end(S(16, 54, 53), "Kitchen"))
+    w.record(_burst_end(S(16, 55, 20), "Kitchen"))  # equal: not newer
+    iv = w.current(S(17, 40))
+    assert (iv.where, iv.room, iv.start) == (Where.HOME_TV, "Back room", S(16, 55, 20))
+
+
+def test_burst_end_is_not_a_waking():
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 5, 0), "Bedroom"))
+        w.record(_burst_end(D(day, 6, 30), "Kitchen"))
+        w.record(_presence(D(day, 7, 0), "Kitchen"))
+    assert w.usual_waking_min() == 7 * 60
+
+
+def test_back_to_bed_split_by_a_burst_end_still_cancels_the_waking():
+    """Back to bed 06:10 to 07:15 is over an hour though the burst ended 06:20."""
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 6, 0), "Kitchen"))
+        w.record(_presence(D(day, 6, 10), "Bedroom"))
+        w.record(_burst_end(D(day, 6, 20), "Bedroom"))
+        w.record(_presence(D(day, 7, 15), "Kitchen"))
+    assert w.usual_waking_min() == 7 * 60 + 15
+
+
+def test_burst_end_in_the_bedroom_at_night_is_asleep_and_keeps_bedtime():
+    """Getting into bed is one burst; the night's onset is still its start."""
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 22, 10), "Bedroom"))
+        w.record(_burst_end(D(day, 22, 30), "Bedroom"))
+        assert w.current(D(day, 23, 0)).where is Where.ASLEEP
+        assert w.current(D(day, 23, 0)).start == D(day, 22, 30)
+        w.record(_presence(D(day + 1, 7, 0), "Kitchen"))
+    assert w.night_start() == 1270  # 22:10 less an hour
+
+
 # ------------------------------------------------------------------ learning
 
 
