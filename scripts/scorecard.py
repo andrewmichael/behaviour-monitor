@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -350,8 +351,10 @@ def run(
     truth_path: Path | None = None,
     fall_times: list[str] | None = None,
     fall_days: int = 10,
+    tz: str = "Europe/London",
 ) -> dict[str, Any]:
     events, specs, options = load_fixture(fixture)
+    zone = ZoneInfo(tz)
     config = EngineConfig.from_options(options)
     end = events[-1][0]
     truth = load_truth(truth_path, end) if truth_path else []
@@ -360,6 +363,8 @@ def run(
         events, truth, config.learning_days, fall_times or ["10:00", "15:00"], fall_days
     )
     tl, snaps = replay(events, Engine(config, specs), holidays, points)
+    for r in tl:  # the poll clock keeps the first event's offset; show local
+        r["t"] = r["t"].astimezone(zone)
     data_days = len(
         {ts.date() for ts, _, _ in events if not any(h.covers(ts) for h in holidays)}
     )
@@ -458,9 +463,10 @@ def main(argv: list[str] | None = None) -> int:
         "--fall-times", default="10:00,15:00", help="local times, comma separated"
     )
     p.add_argument("--fall-days", type=int, default=10)
+    p.add_argument("--tz", default="Europe/London")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
-    report = run(a.fixture, a.truth, a.fall_times.split(","), a.fall_days)
+    report = run(a.fixture, a.truth, a.fall_times.split(","), a.fall_days, a.tz)
     print(json.dumps(report, indent=1, default=str) if a.json else render(report))
     return 0
 

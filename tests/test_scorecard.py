@@ -149,3 +149,9 @@ def test_fall_points_use_every_time_on_each_chosen_day():
     assert len(points) == 8
     assert sorted({p.strftime("%H:%M") for p in points}) == ["10:00", "15:00"]
     assert len({p.date() for p in points}) == 4
+
+
+def test_alert_times_are_reported_in_local_time(tmp_path):
+    report = sc.run(FIX, fall_times=["10:00"], fall_days=1, tz="UTC")
+    for u in report["welfare"]["unexplained"]:
+        assert u["t"].endswith("+00:00")
