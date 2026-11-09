@@ -40,6 +40,7 @@ CONF_ATTENTION_MIN_SEVERITY: Final = "attention_min_severity"
 CONF_CHAIN_WINDOW_S: Final = "chain_window_s"
 CONF_TIMING_PROMOTE_DAYS: Final = "timing_promote_days"
 CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
+CONF_LOW_BATTERY_PCT: Final = "low_battery_pct"
 
 OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_MOTION_DEBOUNCE_S: 90,
@@ -51,6 +52,7 @@ OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_CHAIN_WINDOW_S: 1800,
     CONF_TIMING_PROMOTE_DAYS: 7,
     CONF_DRIFT_SENSITIVITY: "medium",
+    CONF_LOW_BATTERY_PCT: 20,
 }
 
 # Whereabouts-step option keys (names match EngineConfig.from_options)

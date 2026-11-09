@@ -1,4 +1,4 @@
-"""Device health: unavailable, site-wide dropout, silent sensor, panic liveness."""
+"""Device health: unavailable, site-wide dropout, silent sensor, low battery."""
 
 from __future__ import annotations
 
@@ -18,6 +18,12 @@ class HealthConfig:
     silent_multiplier: float = 3.0
     sitewide_fraction: float = 0.5
     sitewide_window_s: float = 60.0
+    low_battery_pct: float = 20.0
+
+
+# A low battery alert clears only this many points above the threshold, so a
+# level wavering around it does not open and close the alert over and over.
+BATTERY_HYSTERESIS = 5.0
 
 
 @dataclass
@@ -27,6 +33,9 @@ class _EntityHealth:
     down_since: datetime | None = None
     last_event: datetime | None = None
     silent: bool = False
+    # Not persisted: the battery sensor is read again at startup.
+    battery: float | None = None
+    battery_low: bool = False
 
 
 def _dt(v: str | None) -> datetime | None:
@@ -68,6 +77,23 @@ class HealthTracker:
             e.down_since = event.timestamp
             self._recent_downs.append((event.entity_id, event.timestamp))
             self._maybe_open_sitewide(event.timestamp)
+
+    def record_battery(self, entity_id: str, level: float, ts: datetime) -> None:
+        """Latest battery level of a monitored entity's device, in percent."""
+        e = self._ent.get(entity_id)
+        if e is None:
+            return
+        e.battery = level
+        if level <= self._cfg.low_battery_pct:
+            e.battery_low = True
+        elif level >= self._cfg.low_battery_pct + BATTERY_HYSTERESIS:
+            e.battery_low = False
+
+    def resume_battery_alert(self, entity_id: str, level: float) -> None:
+        """Hold a low battery alert open from before a restart at its level."""
+        e = self._ent.get(entity_id)
+        if e is not None and e.battery is None:
+            e.battery, e.battery_low = level, True
 
     def record_activity(self, event: ActivityEvent) -> None:
         e = self._ent.get(event.entity_id)
@@ -164,6 +190,7 @@ class HealthTracker:
         now: datetime,
         longest_gap: Callable[[str], float | None],
         house_last_activity: datetime | None,
+        names: Callable[[str], str] | None = None,
     ) -> list[Alert]:
         out: list[Alert] = []
         down_now = {eid for eid, e in self._ent.items() if e.down_since is not None}
@@ -216,6 +243,21 @@ class HealthTracker:
                     f"{e.room}: {eid} has reported nothing for {secs / 3600:.1f} h while the house was active",
                     now,
                     {"silent_s": secs, "room": e.room},
+                )
+            )
+        for eid, e in sorted(self._ent.items()):
+            if not e.battery_low or e.battery is None:
+                continue
+            name = names(eid) if names is not None else eid
+            out.append(
+                Alert(
+                    AlertClass.HEALTH,
+                    eid,
+                    "battery_low",
+                    Severity.HIGH if e.category is Category.PANIC else Severity.MEDIUM,
+                    f"{name}: battery low ({e.battery:.0f}%)",
+                    now,
+                    {"room": e.room, "level": e.battery},
                 )
             )
         return out

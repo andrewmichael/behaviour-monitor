@@ -61,6 +61,7 @@ in one category's list.
 | Learning days | 14 |
 | Window days | 28 |
 | Health grace period (s) | 900 |
+| Low battery level (%) | 20 |
 | Minimum attention severity | medium |
 | Chain window (s) | 1800 |
 | Timing drift promotion (days) | 7 |
@@ -117,9 +118,16 @@ Every alert belongs to exactly one of three classes:
   the Welfare Status sensor, and every alert fires
   `behaviour_monitor_alert` events (see [Notifications](#notifications)).
 - **Device health** — the sensing itself has degraded (unavailable
-  entities, a site-wide dropout, a silent sensor). Raised as a Home
+  entities, a site-wide dropout, a silent sensor, a low battery). Raised as a Home
   Assistant repair issue, and the issue is deleted when the condition
   clears. Events fire with group `health`.
+
+  **Low battery.** Readings come from the battery sensor on each monitored
+  sensor's device. The alert fires at or below the low battery level and
+  clears once the level is 5 points above it. A panic button's low battery
+  is high severity, any other sensor's medium. To get these on a phone, tick
+  `health` in the notification automation's Alert groups.
+
 - **Statistical** — unusual but not a welfare concern on its own (routine
   notes, chain stalls, drift). Appended to the anomaly sensor's attributes
   and logged to the logbook. They sit in the `information` group.

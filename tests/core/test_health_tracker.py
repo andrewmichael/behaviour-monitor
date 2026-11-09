@@ -137,3 +137,67 @@ def test_remove_and_round_trip():
     t2.remove("binary_sensor.k")
     assert t2.down_entities(T0 + timedelta(minutes=16)) == set()
     assert HealthTracker.from_dict({"bad": 1}, HealthConfig()).entity_states(T0) == {}
+
+
+# ------------------------------------------------------------ low battery
+
+
+def _battery(t: HealthTracker, eid: str, level: float, ts: datetime = T0) -> list:
+    t.record_battery(eid, level, ts)
+    return [
+        a
+        for a in t.evaluate(ts, lambda e: None, None)
+        if a.kind == "battery_low" and a.source == eid
+    ]
+
+
+def test_battery_at_or_below_threshold_opens_medium_alert():
+    t = _tracker()
+    (a,) = _battery(t, "binary_sensor.k", 19)
+    assert a.cls is AlertClass.HEALTH and a.severity is Severity.MEDIUM
+    assert a.details["room"] == "Kitchen" and a.details["level"] == 19
+    assert len(_battery(_tracker(), "binary_sensor.k", 20)) == 1
+    assert _battery(_tracker(), "binary_sensor.k", 21) == []
+
+
+def test_battery_low_on_panic_button_is_high():
+    (a,) = _battery(_tracker(), "binary_sensor.p", 10)
+    assert a.severity is Severity.HIGH
+
+
+def test_battery_alert_clears_only_five_points_above_threshold():
+    t = _tracker()
+    assert len(_battery(t, "binary_sensor.k", 18)) == 1
+    assert len(_battery(t, "binary_sensor.k", 22)) == 1
+    assert _battery(t, "binary_sensor.k", 25) == []
+    # Closed again, 22 does not reopen it.
+    assert _battery(t, "binary_sensor.k", 22) == []
+
+
+def test_battery_of_unregistered_entity_is_ignored_and_remove_drops_it():
+    t = _tracker()
+    assert _battery(t, "binary_sensor.unknown", 5) == []
+    t.record_battery("binary_sensor.k", 10, T0)
+    t.remove("binary_sensor.k")
+    t.register("binary_sensor.k", Category.MOTION, "Kitchen")
+    assert [a for a in t.evaluate(T0, lambda e: None, None)] == []
+
+
+def test_battery_explanation_uses_readable_name():
+    t = _tracker()
+    t.record_battery("binary_sensor.k", 18, T0)
+    (a,) = t.evaluate(
+        T0,
+        lambda e: None,
+        None,
+        names=lambda eid: {"binary_sensor.k": "Kitchen motion"}[eid],
+    )
+    assert a.explanation == "Kitchen motion: battery low (18%)"
+
+
+def test_battery_levels_are_not_persisted():
+    t = _tracker()
+    t.record_battery("binary_sensor.k", 10, T0)
+    assert "battery" not in str(t.to_dict())
+    t2 = HealthTracker.from_dict(t.to_dict(), HealthConfig())
+    assert t2.evaluate(T0, lambda e: None, None) == []

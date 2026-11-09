@@ -898,3 +898,96 @@ async def test_held_panic_is_published_before_release(coordinator, mock_hass):
         await started(None)
     assert [p["type"] for p, _ in seen] == ["opened"]
     assert seen[0][0]["id"] in _attention_ids(seen[0][1])
+
+
+# ------------------------------------------------------------- low battery
+
+
+def _add_batteries(mock_hass) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(mock_hass)
+    reg.entities["binary_sensor.panic"] = SimpleNamespace(
+        area_id=None, device_id="dev_panic"
+    )
+    # On the panic device: a binary low-battery flag (wrong domain), a
+    # temperature sensor (wrong class) and two battery sensors.
+    reg.entities["binary_sensor.panic_battery_low"] = SimpleNamespace(
+        area_id=None, device_id="dev_panic", device_class="battery"
+    )
+    reg.entities["sensor.panic_temperature"] = SimpleNamespace(
+        area_id=None, device_id="dev_panic", original_device_class="temperature"
+    )
+    reg.entities["sensor.panic_button_hall_battery"] = SimpleNamespace(
+        area_id=None, device_id="dev_panic", original_device_class="battery"
+    )
+    reg.entities["sensor.zz_panic_battery"] = SimpleNamespace(
+        area_id=None, device_id="dev_panic", device_class="battery"
+    )
+    reg.entities["sensor.bed_battery"] = SimpleNamespace(
+        area_id=None,
+        device_id="dev_bed",
+        device_class="battery",
+        original_device_class=None,
+    )
+
+
+def _battery_change(coordinator, entity_id: str, state: str) -> None:
+    coordinator._handle_state_changed(
+        SimpleNamespace(
+            data={
+                "entity_id": entity_id,
+                "old_state": _state(entity_id, "50"),
+                "new_state": _state(entity_id, state),
+            }
+        )
+    )
+
+
+def test_battery_sensor_on_the_same_device_is_discovered(mock_hass, coordinator):
+    # The fixture's coordinator was built before the batteries were added.
+    assert coordinator._batteries == {}
+    _add_batteries(mock_hass)
+    coordinator = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+    assert coordinator._batteries == {
+        "sensor.panic_button_hall_battery": ["binary_sensor.panic"],
+        "sensor.bed_battery": ["binary_sensor.bed_motion"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_registry_update_rediscovers_battery_sensors(mock_hass, coordinator):
+    _add_batteries(mock_hass)
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    assert coordinator._batteries["sensor.bed_battery"] == ["binary_sensor.bed_motion"]
+
+
+def test_battery_state_change_feeds_the_monitored_entity(mock_hass, coordinator):
+    _add_batteries(mock_hass)
+    coordinator = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.Engine.record_battery"
+    ) as rec:
+        _battery_change(coordinator, "sensor.panic_button_hall_battery", "15")
+        for bad in ("unavailable", "unknown", "low"):
+            _battery_change(coordinator, "sensor.panic_button_hall_battery", bad)
+        _battery_change(coordinator, "sensor.unrelated_battery", "5")
+    rec.assert_called_once()
+    eid, level, _ts = rec.call_args.args
+    assert eid == "binary_sensor.panic"
+    assert level == 15.0 and isinstance(level, float)
+
+
+@pytest.mark.asyncio
+async def test_setup_reads_current_battery_levels(mock_hass, coordinator):
+    _add_batteries(mock_hass)
+    levels = {"sensor.panic_button_hall_battery": "9", "sensor.bed_battery": "unknown"}
+    mock_hass.states.get = lambda eid: (
+        _state(eid, levels[eid]) if eid in levels else None
+    )
+    coordinator = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()), patch(
+        "custom_components.behaviour_monitor.coordinator.Engine.record_battery"
+    ) as rec:
+        await coordinator.async_setup()
+    assert [c.args[:2] for c in rec.call_args_list] == [("binary_sensor.panic", 9.0)]

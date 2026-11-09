@@ -72,7 +72,10 @@ class EngineConfig:
             drift=DriftConfig(
                 sensitivity=str(o.get("drift_sensitivity", "medium")), window_days=wd
             ),
-            health=HealthConfig(grace_s=float(o.get("health_grace_s", 900))),
+            health=HealthConfig(
+                grace_s=float(o.get("health_grace_s", 900)),
+                low_battery_pct=float(o.get("low_battery_pct", 20)),
+            ),
             router=RouterConfig(
                 attention_min_severity=Severity(
                     str(o.get("attention_min_severity", "medium"))
@@ -233,6 +236,10 @@ class Engine:
             self._learn(ev)
         return actions
 
+    def record_battery(self, entity_id: str, level: float, ts: datetime) -> None:
+        """Battery level of a monitored entity's device. Never needs learning."""
+        self._health.record_battery(entity_id, level, ts)
+
     def _learn(self, ev: ActivityEvent) -> None:
         if self._holiday:
             return
@@ -298,6 +305,7 @@ class Engine:
 
         learned = confidence(self._days_seen(), self._cfg.learning_days) >= 1.0
         alerts: list[Alert] = []
+        names = self.drift_names()
         alerts.extend(
             self._health.evaluate(
                 now,
@@ -307,12 +315,12 @@ class Engine:
                 # until it means something.
                 self._routines.longest_gap if learned else _no_gap,
                 self._house.last_activity,
+                names=lambda eid: names.get(eid, eid),
             )
         )
         # On holiday nothing is suppressed for want of sensors: nothing is
         # raised at all, so the site must not read as degraded either.
         live = 1.0 if self._holiday else self._health.live_fraction(now)
-        names = self.drift_names()
         where = self._where.evaluate(now, live, names=lambda eid: names.get(eid, eid))
         if learned and not self._holiday:
             if where.alert is not None:
@@ -580,6 +588,16 @@ class Engine:
             e._drift.remove_prefix(f"open:{eid}")
             e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
+        # Battery levels are not stored, and the battery sensor may not have
+        # a reading yet after a restart. An open alert carries its own last
+        # level, so the restart neither clears it nor raises a new one.
+        for a in e._router.open_alerts:
+            if a.cls is AlertClass.HEALTH and a.kind == "battery_low":
+                try:
+                    level = float(a.details["level"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                e._health.resume_battery_alert(a.source, level)
         return e
 
 

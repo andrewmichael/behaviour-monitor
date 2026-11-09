@@ -51,6 +51,7 @@
           "learning_days": "Days before alerts start",
           "window_days": "Days of history kept",
           "health_grace_s": "Unavailable grace period (seconds)",
+          "low_battery_pct": "Low battery level (%)",
           "attention_min_severity": "Minimum severity for needs attention",
           "chain_window_s": "Chain step window (seconds)",
           "timing_promote_days": "Days of slower routine before a welfare alert",
