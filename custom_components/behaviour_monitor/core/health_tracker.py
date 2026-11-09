@@ -90,10 +90,22 @@ class HealthTracker:
             e.battery_low = False
 
     def resume_battery_alert(self, entity_id: str, level: float) -> None:
-        """Hold a low battery alert open from before a restart at its level."""
+        """Hold a low battery alert open from before a restart at its level.
+
+        The threshold may have changed since, so the level still has to be
+        short of the clearing point under the current one.
+        """
         e = self._ent.get(entity_id)
-        if e is not None and e.battery is None:
+        if e is None or e.battery is not None:
+            return
+        if level < self._cfg.low_battery_pct + BATTERY_HYSTERESIS:
             e.battery, e.battery_low = level, True
+
+    def clear_battery(self, entity_id: str) -> None:
+        """Forget the level, closing any alert: the battery sensor is gone."""
+        e = self._ent.get(entity_id)
+        if e is not None:
+            e.battery, e.battery_low = None, False
 
     def record_activity(self, event: ActivityEvent) -> None:
         e = self._ent.get(event.entity_id)

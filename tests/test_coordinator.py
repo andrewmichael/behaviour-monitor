@@ -991,3 +991,67 @@ async def test_setup_reads_current_battery_levels(mock_hass, coordinator):
     ) as rec:
         await coordinator.async_setup()
     assert [c.args[:2] for c in rec.call_args_list] == [("binary_sensor.panic", 9.0)]
+
+
+def test_user_device_class_overrides_original_and_entities_without_device_skip(
+    mock_hass, coordinator
+):
+    from homeassistant.helpers import entity_registry as er
+
+    _add_batteries(mock_hass)
+    reg = er.async_get(mock_hass)
+    # The user reclassified the bed battery as something else.
+    reg.entities["sensor.bed_battery"] = SimpleNamespace(
+        area_id=None,
+        device_id="dev_bed",
+        device_class="voltage",
+        original_device_class="battery",
+    )
+    # A monitored entity with a registry entry but no device.
+    reg.entities["binary_sensor.front_door"] = SimpleNamespace(
+        area_id=None, device_id=None
+    )
+    coordinator = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+    assert coordinator._batteries == {
+        "sensor.panic_button_hall_battery": ["binary_sensor.panic"]
+    }
+
+
+def _open_battery_kinds(coordinator) -> list[str]:
+    return [
+        a.source
+        for a in coordinator._engine._router.open_alerts
+        if a.kind == "battery_low"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_battery_alert_clears_when_its_battery_sensor_goes_away(
+    mock_hass, coordinator
+):
+    from homeassistant.helpers import entity_registry as er
+
+    _add_batteries(mock_hass)
+    coordinator = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+    _battery_change(coordinator, "sensor.bed_battery", "10")
+    coordinator._engine.poll(NOW)
+    assert _open_battery_kinds(coordinator) == ["binary_sensor.bed_motion"]
+    await coordinator._save()
+
+    reg = er.async_get(mock_hass)
+    del reg.entities["sensor.bed_battery"]
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    coordinator._engine.poll(NOW + timedelta(minutes=1))
+    assert _open_battery_kinds(coordinator) == []
+
+    # A restart from the store saved while it was open keeps it cleared.
+    store = coordinator._store._data
+    for _ in range(2):
+        restarted = BehaviourMonitorCoordinator(mock_hass, coordinator._entry)
+        restarted._store._data = store
+        with patch.object(restarted, "_bootstrap_entities", new=AsyncMock()):
+            await restarted.async_setup()
+        restarted._engine.poll(NOW + timedelta(minutes=2))
+        assert _open_battery_kinds(restarted) == []
+        await restarted._save()
+        store = restarted._store._data

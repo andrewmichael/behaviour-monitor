@@ -207,6 +207,17 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for entity_id in self._batteries.get(battery_id, []):
             self._engine.record_battery(entity_id, level, now)
 
+    def _forget_unmapped_batteries(self) -> None:
+        """Drop the level of every entity that no longer has a battery sensor.
+
+        Otherwise a removed or re-paired battery sensor would leave its alert
+        open for good, and every restart would reopen it from the store.
+        """
+        mapped = {eid for ids in self._batteries.values() for eid in ids}
+        for spec in self._specs:
+            if spec.entity_id not in mapped:
+                self._engine.forget_battery(spec.entity_id)
+
     async def _async_registry_updated(self, event: Any) -> None:
         """Re-resolve rooms, telling a renamed area apart from a moved entity.
 
@@ -234,6 +245,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._area_ids = new_area_ids
         self._batteries = self._resolve_batteries()
         self._engine.set_entities(self._specs)
+        self._forget_unmapped_batteries()
         await self._saver.async_call()
         self._rename_bedrooms(renamed)
 
@@ -316,6 +328,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now = dt_util.now()
         for battery_id in self._batteries:
             self._record_battery(battery_id, self.hass.states.get(battery_id), now)
+        self._forget_unmapped_batteries()
         self._schedule_flush()
         self._unsubs.append(
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)

@@ -713,3 +713,23 @@ def test_restart_without_a_reading_neither_clears_nor_raises_battery_alert():
     e2.record_battery("binary_sensor.panic", 25.0, MON + timedelta(minutes=3))
     acts = _battery_actions(e2.poll(MON + timedelta(minutes=3)))
     assert "repair_delete" in {a.action for a in acts}
+
+
+def test_forget_battery_clears_the_alert():
+    e = _engine()
+    e.record_battery("binary_sensor.kit", 10.0, MON)
+    e.poll(MON)
+    e.forget_battery("binary_sensor.kit")
+    acts = _battery_actions(e.poll(MON + timedelta(minutes=1)))
+    assert "repair_delete" in {a.action for a in acts}
+
+
+def test_restored_battery_alert_closes_when_the_threshold_was_lowered():
+    e = _engine()
+    e.record_battery("binary_sensor.kit", 18.0, MON)
+    e.poll(MON)
+    e2 = Engine.from_dict(
+        e.to_dict(), EngineConfig.from_options({"low_battery_pct": 10}), ENTS
+    )
+    acts = _battery_actions(e2.poll(MON + timedelta(minutes=1)))
+    assert "repair_delete" in {a.action for a in acts}

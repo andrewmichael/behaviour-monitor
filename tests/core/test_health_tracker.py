@@ -201,3 +201,20 @@ def test_battery_levels_are_not_persisted():
     assert "battery" not in str(t.to_dict())
     t2 = HealthTracker.from_dict(t.to_dict(), HealthConfig())
     assert t2.evaluate(T0, lambda e: None, None) == []
+
+
+def test_clear_battery_drops_level_and_open_alert():
+    t = _tracker()
+    t.record_battery("binary_sensor.k", 10, T0)
+    t.clear_battery("binary_sensor.k")
+    assert t.evaluate(T0, lambda e: None, None) == []
+    t.clear_battery("binary_sensor.unknown")  # no error
+
+
+def test_resumed_battery_alert_respects_the_current_threshold():
+    t = HealthTracker(HealthConfig(low_battery_pct=10.0))
+    t.register("binary_sensor.k", Category.MOTION, "Kitchen")
+    t.resume_battery_alert("binary_sensor.k", 18)
+    assert t.evaluate(T0, lambda e: None, None) == []
+    t.resume_battery_alert("binary_sensor.k", 12)  # inside the band: held open
+    assert len(t.evaluate(T0, lambda e: None, None)) == 1

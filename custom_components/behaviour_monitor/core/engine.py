@@ -240,6 +240,10 @@ class Engine:
         """Battery level of a monitored entity's device. Never needs learning."""
         self._health.record_battery(entity_id, level, ts)
 
+    def forget_battery(self, entity_id: str) -> None:
+        """The entity no longer has a battery sensor; its alert clears."""
+        self._health.clear_battery(entity_id)
+
     def _learn(self, ev: ActivityEvent) -> None:
         if self._holiday:
             return
