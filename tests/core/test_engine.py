@@ -160,7 +160,12 @@ def test_panic_opens_immediately_even_while_learning():
 def test_snapshot_splits_attention_and_information():
     e = _engine()
     high = Alert(
-        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "quiet too long", MON
+        AlertClass.WELFARE,
+        "whereabouts",
+        "still_at_home",
+        Severity.HIGH,
+        "quiet too long",
+        MON,
     )
     low = Alert(
         AlertClass.WELFARE,

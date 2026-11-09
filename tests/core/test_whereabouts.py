@@ -201,11 +201,6 @@ def D(day: int, h: int, m: int = 0) -> datetime:
     return datetime(2026, 11, day, h, m, tzinfo=timezone.utc)
 
 
-def _day_over(w: Whereabouts, day: int) -> None:
-    """Activity before 04:00 on ``day``: the day before is over and counts."""
-    w.record(_presence(D(day, 3, 0), "Kitchen"))
-
-
 def _learn_nights(w: Whereabouts) -> None:
     """Sleeps start 21:30, 22:00, 22:15; she is up at 06:30, 07:00, 08:00."""
     starts = [(21, 30), (22, 0), (22, 15)]
@@ -213,7 +208,6 @@ def _learn_nights(w: Whereabouts) -> None:
     for i, ((sh, sm), (wh, wm)) in enumerate(zip(starts, wakes)):
         w.record(_presence(D(1 + i, sh, sm), "Bedroom"))
         w.record(_presence(D(2 + i, wh, wm), "Kitchen"))
-    _day_over(w, 5)
 
 
 def test_home_limit_learns_995th_percentile_clamped_to_45_60():
@@ -262,7 +256,6 @@ def test_usual_waking_is_95th_percentile_of_first_non_bedroom_activity_after_4am
         w.record(_presence(D(day, 5, 0), "Bedroom"))
         w.record(_presence(D(day, h, m), "Kitchen"))
         w.record(_presence(D(day, h + 1, m), "Lounge"))
-    _day_over(w, 4)
     assert w.usual_waking_min() == 8 * 60 + 40
     assert w.earliest_waking_min() == 7 * 60
 
@@ -270,7 +263,7 @@ def test_usual_waking_is_95th_percentile_of_first_non_bedroom_activity_after_4am
 def test_waking_uses_end_of_main_sleep_when_no_bedrooms_chosen():
     cfg = WhereaboutsConfig(bedrooms=frozenset())
     w = Whereabouts(cfg)
-    for i in range(4):  # the fourth morning is still in progress
+    for i in range(3):
         w.record(_presence(D(1 + i, 22, 0), "Room"))
         w.record(_presence(D(2 + i, 7, 0), "Room"))
     assert w.usual_waking_min() == 7 * 60
@@ -301,7 +294,6 @@ def test_a_long_return_to_bed_cancels_the_waking_candidate():
         w.record(_presence(D(day, 5, 0), "Bathroom"))
         w.record(_presence(D(day, 5, 6), "Bedroom"))
         w.record(_presence(D(day, 7, 0), "Kitchen"))
-    _day_over(w, 4)
     assert w.usual_waking_min() == 7 * 60
     assert w.night_end() == 360
 
@@ -311,16 +303,25 @@ def test_todays_waking_counts_only_once_the_day_is_over():
     for day in (1, 2, 3, 4):
         w.record(_presence(D(day, 7, 0), "Kitchen"))
     w.record(_presence(D(5, 5, 0), "Bathroom"))  # may yet go back to bed
-    assert w.earliest_waking_min() == 7 * 60
-    _day_over(w, 6)
-    assert w.earliest_waking_min() == 5 * 60
+    assert w.earliest_waking_min(date(2026, 11, 5)) == 7 * 60
+    assert w.earliest_waking_min(date(2026, 11, 6)) == 5 * 60
+
+
+def test_overnight_evaluation_uses_yesterdays_finished_waking():
+    """Before she moves in the morning, yesterday is over and its waking counts."""
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 7, 0), "Kitchen"))
+        w.record(_presence(D(day, 22, 0), "Bedroom"))
+    a = w.evaluate(D(4, 6, 0))
+    assert a.where is Where.ASLEEP
+    assert a.deadline == D(4, 8, 0)  # usual waking 07:00, not the 09:00 fallback
 
 
 def test_late_waking_clamps_night_end_and_lie_in_end():
     w = Whereabouts(CFG)
     for day, (h, m) in zip((1, 2, 3), ((10, 30), (11, 0), (11, 30))):
         w.record(_presence(D(day, h, m), "Kitchen"))
-    _day_over(w, 4)
     assert w.night_end() == 9 * 60
     assert w.lie_in_end() == 13 * 60
 

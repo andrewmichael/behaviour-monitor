@@ -164,7 +164,7 @@ class Whereabouts:
         q = _quantile(samples, cfg.home_quantile)
         return max(cfg.home_floor_min, min(cfg.home_cap_min, q))
 
-    def _wakings(self) -> dict[str, int]:
+    def _wakings(self, today: date | None) -> dict[str, int]:
         wakes = dict(self._wakes)
         if self._cfg.bedrooms == frozenset():
             # No bedrooms chosen: she is up when the main sleep ends.
@@ -173,22 +173,25 @@ class Whereabouts:
                 minute = end.hour * 60 + end.minute
                 if minute >= self._cfg.waking_after_min:
                     wakes.setdefault(iso_day(end.date()), minute)
-        # A day's waking can still change until the day is over, so the day
-        # in progress (that of the latest activity) does not count yet.
-        if self._interval is not None:
-            wakes.pop(iso_day(self._interval.start.date()), None)
+        # A day's waking can still change until the day is over, so the
+        # caller's day in progress does not count yet.
+        if today is not None:
+            wakes.pop(iso_day(today), None)
         return wakes
 
-    def usual_waking_min(self) -> int:
+    # The learned waking values below take ``today``, the caller's day in
+    # progress, which is left out. None counts every day.
+
+    def usual_waking_min(self, today: date | None = None) -> int:
         """Minutes after midnight she is usually up by (95th percentile)."""
-        wakes = list(self._wakings().values())
+        wakes = list(self._wakings(today).values())
         if len(wakes) < self._cfg.min_days:
             return self._cfg.usual_waking_fallback_min
         return int(_quantile(wakes, self._cfg.waking_high_quantile))
 
-    def earliest_waking_min(self) -> int:
+    def earliest_waking_min(self, today: date | None = None) -> int:
         """Minutes after midnight of her earliest waking (5th percentile)."""
-        wakes = list(self._wakings().values())
+        wakes = list(self._wakings(today).values())
         if len(wakes) < self._cfg.min_days:
             return self._cfg.earliest_waking_fallback_min
         return int(_quantile(wakes, self._cfg.waking_low_quantile))
@@ -215,23 +218,24 @@ class Whereabouts:
         value = max(low - 12 * 60, min(high - 12 * 60, value))
         return int((value + 12 * 60) % 1440)
 
-    def night_end(self) -> int:
+    def night_end(self, today: date | None = None) -> int:
         """Minutes after midnight when the night ends."""
         cfg = self._cfg
-        if len(self._wakings()) < cfg.min_days:
+        if len(self._wakings(today)) < cfg.min_days:
             return cfg.night_end_min
         low, high = cfg.night_end_clamp
-        value = self.earliest_waking_min() - cfg.night_end_offset_min
+        value = self.earliest_waking_min(today) - cfg.night_end_offset_min
         return max(low, min(high, value))
 
-    def lie_in_end(self) -> int:
+    def lie_in_end(self, today: date | None = None) -> int:
         """Minutes after midnight when the lie-in ends."""
         cfg = self._cfg
-        if len(self._wakings()) < cfg.min_days:
+        if len(self._wakings(today)) < cfg.min_days:
             return cfg.lie_in_end_min
-        value = self.usual_waking_min() + cfg.lie_in_offset_min
+        value = self.usual_waking_min(today) + cfg.lie_in_offset_min
         return max(
-            self.night_end() + cfg.lie_in_offset_min, min(cfg.lie_in_latest_min, value)
+            self.night_end(today) + cfg.lie_in_offset_min,
+            min(cfg.lie_in_latest_min, value),
         )
 
     def _close(self, iv: Interval, end: datetime) -> None:
@@ -492,7 +496,7 @@ class Whereabouts:
                 morning += timedelta(days=1)
             deadline = datetime.combine(morning, datetime.min.time(), start.tzinfo)
             deadline += timedelta(
-                minutes=self.usual_waking_min() + cfg.not_up_offset_min
+                minutes=self.usual_waking_min(now.date()) + cfg.not_up_offset_min
             )
             high_at = deadline + timedelta(minutes=cfg.high_after_min)
             kind = "not_up"
@@ -534,7 +538,7 @@ class Whereabouts:
                 f"no movement for {_dur(elapsed)}"
             )
         elif iv.where is Where.ASLEEP:
-            waking = self.usual_waking_min()
+            waking = self.usual_waking_min(now.date())
             text = (
                 f"Not up yet; usually up by {waking // 60:02d}:{waking % 60:02d}, "
                 f"last seen in the {room} at {at}"
@@ -574,8 +578,9 @@ class Whereabouts:
     def _classify(self, start: datetime, room: str | None, tv: bool) -> Where:
         if self.is_bedroom(room):
             minute = start.hour * 60 + start.minute
-            if _in_window(minute, self.night_start(), self.night_end()):
+            today = start.date()
+            if _in_window(minute, self.night_start(), self.night_end(today)):
                 return Where.ASLEEP
-            if _in_window(minute, self.night_end(), self.lie_in_end()):
+            if _in_window(minute, self.night_end(today), self.lie_in_end(today)):
                 return Where.LYING_IN
         return Where.HOME_TV if tv else Where.HOME

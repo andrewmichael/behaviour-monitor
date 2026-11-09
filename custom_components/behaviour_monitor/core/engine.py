@@ -250,8 +250,11 @@ class Engine:
     # ---------------------------------------------------------------- poll
 
     def poll(self, now: datetime) -> list[DeliveryAction]:
-        # She may have moved while nothing was fed in. The first poll back
-        # from holiday restarts every clock below anyway.
+        for ev in self._normaliser.flush(now):
+            self._learn(ev)
+        # She may have moved while nothing was fed in. Flushed events come
+        # first: they predate ``now`` and a moved clock would drop them. The
+        # first poll back from holiday restarts every clock below anyway.
         if (
             self._last_poll is not None
             and now - self._last_poll >= POLL_GAP
@@ -259,8 +262,6 @@ class Engine:
         ):
             self._where.restart_clock(now)
         self._last_poll = now
-        for ev in self._normaliser.flush(now):
-            self._learn(ev)
 
         if self._holiday:
             # No rollover while paused: there is nothing learned to finalise,
@@ -310,9 +311,8 @@ class Engine:
         # On holiday nothing is suppressed for want of sensors: nothing is
         # raised at all, so the site must not read as degraded either.
         live = 1.0 if self._holiday else self._health.live_fraction(now)
-        where = self._where.evaluate(
-            now, live, names=lambda eid: self.drift_names().get(eid, eid)
-        )
+        names = self.drift_names()
+        where = self._where.evaluate(now, live, names=lambda eid: names.get(eid, eid))
         if learned and not self._holiday:
             if where.alert is not None:
                 alerts.append(where.alert)
