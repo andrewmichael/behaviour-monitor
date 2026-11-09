@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from .config_flow import entity_specs_from_data
 from .const import (
+    CONF_BEDROOMS,
     CONF_SITE_NAME,
     DOMAIN,
     EVENT_ALERT,
@@ -37,6 +38,7 @@ from .const import (
 from .core.alert_router import DeliveryAction
 from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
 from .core.events import UNAVAILABLE_STATES, Category
+from .rooms import bedroom_suggestions, display_room, resolve_room
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -75,6 +77,11 @@ class _EngineStore(Store[dict[str, Any]]):
         return {}
 
 
+# The poll saves the store at most this often, keeping the last poll time
+# fresh for the poll-gap check after an unclean shutdown.
+POLL_SAVE_EVERY = timedelta(minutes=5)
+
+
 class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Translate Home Assistant into Engine calls and Engine actions into HA."""
 
@@ -88,9 +95,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._entry = entry
         self._site: str = str(entry.data.get(CONF_SITE_NAME, "Behaviour Monitor"))
-        options = {**OPTION_DEFAULTS, **entry.options}
-        self._config = EngineConfig.from_options(options)
         self._specs, self._area_ids = self._resolve_specs()
+        options = {**OPTION_DEFAULTS, **entry.options}
+        if options.get(CONF_BEDROOMS) is None:
+            # Unset bedrooms are the rooms named "bedroom"; none of them means
+            # the night rules apply to every room.
+            options[CONF_BEDROOMS] = bedroom_suggestions(s.room for s in self._specs)
+        self._config = EngineConfig.from_options(options)
         self._engine = Engine(self._config, self._specs)
         self._store = _EngineStore(
             hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
@@ -102,6 +113,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._started = True
         self._held_events: list[dict[str, Any]] = []
         self._started_unsub: Any = None
+        self._last_save: datetime | None = None
         self._saver = Debouncer(
             hass,
             _LOGGER,
@@ -143,49 +155,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def display_room(self, room: str) -> str:
         """Strip a leading site name so "Test House Kitchen" reads as "Kitchen"."""
-        prefix = self._site.strip().lower()
-        low = room.lower()
-        if (
-            prefix
-            and low.startswith(prefix)
-            and len(room) > len(prefix)
-            and room[len(prefix)].isspace()
-        ):
-            return room[len(prefix) :].strip()
-        return room
+        return display_room(self._site, room)
 
     # ---------------------------------------------------------------- rooms
 
     def _resolve_specs(self) -> tuple[list[EntitySpec], dict[str, str | None]]:
         """Build the entity specs and remember which area each room came from."""
-        ent_reg = er.async_get(self.hass)
-        dev_reg = dr.async_get(self.hass)
-        area_reg = ar.async_get(self.hass)
         specs: list[EntitySpec] = []
         area_ids: dict[str, str | None] = {}
         for entity_id, category in entity_specs_from_data(self._entry.data):
-            room, area_id = self._room_for(entity_id, ent_reg, dev_reg, area_reg)
+            room, area_id = resolve_room(self.hass, entity_id)
             specs.append(EntitySpec(entity_id, Category(category), room))
             area_ids[entity_id] = area_id
         return specs, area_ids
-
-    def _room_for(
-        self, entity_id: str, ent_reg: Any, dev_reg: Any, area_reg: Any
-    ) -> tuple[str, str | None]:
-        """Resolve a room name, and the area id it came from if it had one."""
-        entry = ent_reg.async_get(entity_id)
-        area_id = getattr(entry, "area_id", None)
-        if not area_id and getattr(entry, "device_id", None):
-            device = dev_reg.async_get(entry.device_id)
-            area_id = getattr(device, "area_id", None)
-        if area_id:
-            area = area_reg.async_get_area(area_id)
-            if area is not None and getattr(area, "name", None):
-                return str(area.name), str(area_id)
-        state = self.hass.states.get(entity_id)
-        if state is not None and state.attributes.get("friendly_name"):
-            return str(state.attributes["friendly_name"]), None
-        return entity_id, None
 
     async def _async_registry_updated(self, event: Any) -> None:
         """Re-resolve rooms, telling a renamed area apart from a moved entity.
@@ -198,6 +180,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         new_specs, new_area_ids = self._resolve_specs()
         old_rooms = {s.entity_id: s.room for s in self._specs}
+        renamed: dict[str, str] = {}
         for spec in new_specs:
             entity_id = spec.entity_id
             if old_rooms.get(entity_id, spec.room) == spec.room:
@@ -205,6 +188,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             old_area = self._area_ids.get(entity_id)
             if old_area is not None and old_area == new_area_ids.get(entity_id):
                 self._engine.rename_room(old_rooms[entity_id], spec.room)
+                renamed[old_rooms[entity_id]] = spec.room
             # A move, or a room that never came from an area, changes only this
             # entity; set_entities below updates its room in place and the
             # room-keyed chains are left alone.
@@ -212,6 +196,32 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._area_ids = new_area_ids
         self._engine.set_entities(self._specs)
         await self._saver.async_call()
+        self._rename_bedrooms(renamed)
+
+    def _rename_bedrooms(self, renamed: dict[str, str]) -> None:
+        """Carry a renamed area over into the bedrooms option.
+
+        Unset bedrooms are left unset, and the entry reloads when the rooms
+        named "bedroom" change, so they are worked out again. Updating the
+        entry reloads it too, which is acceptable for a rename.
+        """
+        bedrooms = self._entry.options.get(CONF_BEDROOMS)
+        if bedrooms is None:
+            named = frozenset(bedroom_suggestions(s.room for s in self._specs))
+            if named != self._config.whereabouts.bedrooms:
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._entry.entry_id)
+                )
+            return
+        if not any(room in renamed for room in bedrooms):
+            return
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options={
+                **self._entry.options,
+                CONF_BEDROOMS: [renamed.get(room, room) for room in bedrooms],
+            },
+        )
 
     # ------------------------------------------------------------- lifecycle
 
@@ -341,6 +351,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._save()
 
     async def _save(self) -> None:
+        self._last_save = dt_util.now()
         await self._store.async_save(
             {
                 "site": self._site,
@@ -364,6 +375,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # state_changes_during_period takes one entity_id string, not a list,
         # and attributes are never read here.
         fetch = partial(recorder_state_changes_during_period, no_attributes=True)
+        # Every entity's rows are fetched before any is replayed, then merged
+        # by time: the whereabouts model drops events older than its current
+        # interval, so replaying one entity after another would teach it from
+        # the first entity only.
+        replay: list[tuple[datetime, str, str | None, str]] = []
         for entity_id in entity_ids:
             try:
                 rows = await instance.async_add_executor_job(
@@ -386,10 +402,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     prev = None
                     continue
                 ts = dt_util.as_local(state.last_changed)
-                self._engine.handle_state(
-                    entity_id, prev, state.state, ts, learn_only=True
-                )
+                replay.append((ts, entity_id, prev, state.state))
                 prev = state.state
+        # sorted is stable, so rows at the same instant keep entity order.
+        for ts, entity_id, prev, new in sorted(replay, key=lambda r: r[0]):
+            self._engine.handle_state(entity_id, prev, new, ts, learn_only=True)
         # The router has already recorded these as opened, so dropping them
         # here would lose their events for good.
         self._pending.extend((action, end) for action in self._engine.poll(end))
@@ -434,6 +451,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # The snapshot returned below is written to the entities before
             # Home Assistant runs any automation these events trigger.
             await self._perform(actions, now, publish=False)
+            # The last poll time decides whether a restart was a gap worth
+            # restarting the stillness clock for, so it must not go stale
+            # in the store while nothing changes.
+            if self._last_save is None or now - self._last_save >= POLL_SAVE_EVERY:
+                await self._save()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Engine poll failed")
         return self._build_snapshot(now)

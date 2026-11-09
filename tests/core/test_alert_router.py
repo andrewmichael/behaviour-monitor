@@ -14,8 +14,10 @@ from custom_components.behaviour_monitor.core.events import (
 T0 = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
 
 
-def _house(sev: Severity, ts: datetime = T0) -> Alert:
-    return Alert(AlertClass.WELFARE, "house", "inactivity", sev, "No activity", ts)
+def _where(sev: Severity, ts: datetime = T0) -> Alert:
+    return Alert(
+        AlertClass.WELFARE, "whereabouts", "still_at_home", sev, "No movement", ts
+    )
 
 
 def _note(
@@ -57,25 +59,53 @@ def test_health_becomes_repair_and_statistical_becomes_log():
     assert _acts(acts, "log_clear") == ["statistical:sensor.kettle:routine_missed"]
 
 
-def test_note_escalates_open_house_alert_by_one_level():
+def test_note_escalates_open_whereabouts_alert_by_one_level():
     # one note is one chance miss, not agreement
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.LOW), _note()], T0)
+    r.submit([_where(Severity.LOW), _note()], T0)
     assert r.welfare_severity is Severity.LOW
     # two distinct sources that both fired today do escalate
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.LOW), _note("a"), _note("b")], T0)
+    r.submit([_where(Severity.LOW), _note("a"), _note("b")], T0)
     assert r.welfare_severity is Severity.MEDIUM
     # so does a single stall
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.LOW), _stall()], T0)
+    r.submit([_where(Severity.LOW), _stall()], T0)
     assert r.welfare_severity is Severity.MEDIUM
+
+
+def test_router_escalates_whereabouts_alert_on_routine_signs():
+    def where(sev: Severity) -> Alert:
+        return Alert(
+            AlertClass.WELFARE,
+            "whereabouts",
+            "still_at_home",
+            sev,
+            "No movement for 50 min; last movement in the Kitchen at 10:00",
+            T0,
+            {"room": "Kitchen"},
+        )
+
+    r = AlertRouter(RouterConfig())
+    r.submit([where(Severity.MEDIUM), _note("a"), _note("b")], T0)
+    assert r.welfare_severity is Severity.HIGH
+    (alert,) = [a for a in r.open_alerts if a.source == "whereabouts"]
+    assert alert.details["room"] == "Kitchen"
+    assert alert.details["escalated_by"] == [
+        "statistical:a:routine_missed",
+        "statistical:b:routine_missed",
+    ]
+    assert alert.explanation.endswith("and 2 routine sign(s) missed")
+    r = AlertRouter(RouterConfig())
+    r.submit([where(Severity.MEDIUM), _stall()], T0)
+    assert r.welfare_severity is Severity.HIGH
+    assert "welfare:house:routine_agreement" not in [a.key for a in r.open_alerts]
 
 
 def test_notes_from_entities_silent_today_do_not_escalate():
     r = AlertRouter(RouterConfig())
     silent = [_note("a", fired_today=False), _note("b", fired_today=False)]
-    acts = r.submit([_house(Severity.LOW), *silent], T0)
+    acts = r.submit([_where(Severity.LOW), *silent], T0)
     assert r.welfare_severity is Severity.LOW
     # the notes themselves are still logged
     assert sorted(_acts(acts, "log")) == [
@@ -88,7 +118,7 @@ def test_notes_from_entities_silent_today_do_not_escalate():
     assert "welfare:house:routine_agreement" not in [a.key for a in r2.open_alerts]
 
 
-def test_two_notes_open_low_welfare_without_house_alert():
+def test_two_notes_open_low_welfare_without_whereabouts_alert():
     r = AlertRouter(RouterConfig())
     r.submit([_note("a"), _stall()], T0)
     keys = [a.key for a in r.open_alerts]
@@ -151,77 +181,77 @@ def test_open_escalate_clear_events_keep_one_id():
     r = AlertRouter(RouterConfig())
     m1 = T0 + timedelta(minutes=1)
     m2 = T0 + timedelta(minutes=2)
-    a1 = r.submit([_house(Severity.MEDIUM, T0)], T0)
-    a2 = r.submit([_house(Severity.HIGH, m1)], m1)
-    assert r.submit([_house(Severity.HIGH, m2)], m2) == []
+    a1 = r.submit([_where(Severity.MEDIUM, T0)], T0)
+    a2 = r.submit([_where(Severity.HIGH, m1)], m1)
+    assert r.submit([_where(Severity.HIGH, m2)], m2) == []
     a3 = r.submit([], T0 + timedelta(minutes=3))
     assert [x.event for x in a1 + a2 + a3] == ["opened", "escalated", "cleared"]
     assert len({x.alert_id for x in a1 + a2 + a3}) == 1
-    assert a1[0].alert_id == f"welfare:house:inactivity@{T0.isoformat()}"
+    assert a1[0].alert_id == f"welfare:whereabouts:still_at_home@{T0.isoformat()}"
 
 
 def test_reopened_key_gets_new_id_after_clear():
     r = AlertRouter(RouterConfig())
-    first = r.submit([_house(Severity.MEDIUM, T0)], T0)[0].alert_id
+    first = r.submit([_where(Severity.MEDIUM, T0)], T0)[0].alert_id
     cleared = r.submit([], T0 + timedelta(minutes=1))
     t2 = T0 + timedelta(minutes=2)
-    second = r.submit([_house(Severity.MEDIUM, t2)], t2)[0].alert_id
+    second = r.submit([_where(Severity.MEDIUM, t2)], t2)[0].alert_id
     assert cleared[0].alert_id == first and second != first
 
 
 def test_groups_threshold_panic_and_sticky_attention():
     r = AlertRouter(RouterConfig(attention_min_severity=Severity.HIGH))
-    acts = r.submit([_house(Severity.MEDIUM), _note(), _health()], T0)
+    acts = r.submit([_where(Severity.MEDIUM), _note(), _health()], T0)
     groups = {a.alert.key: a.group for a in acts if a.action == "event"}
     assert groups == {
-        "welfare:house:inactivity": "information",
+        "welfare:whereabouts:still_at_home": "information",
         "statistical:sensor.kettle:routine_missed": "information",
         "health:binary_sensor.k:unavailable": "health",
     }
     m1 = T0 + timedelta(minutes=1)
-    up = r.submit([_house(Severity.HIGH), _note(), _health()], m1)
-    assert [(a.event, a.group) for a in up if a.alert.kind == "inactivity"] == [
+    up = r.submit([_where(Severity.HIGH), _note(), _health()], m1)
+    assert [(a.event, a.group) for a in up if a.alert.kind == "still_at_home"] == [
         ("escalated", "attention")
     ]
-    r.submit([_house(Severity.MEDIUM), _note(), _health()], T0 + timedelta(minutes=2))
+    r.submit([_where(Severity.MEDIUM), _note(), _health()], T0 + timedelta(minutes=2))
     published = {p["key"]: p["group"] for p in r.published()}
-    assert published["welfare:house:inactivity"] == "attention"
+    assert published["welfare:whereabouts:still_at_home"] == "attention"
     p = r.submit_panic(_panic(), T0)
     assert p[0].group == "attention"  # panic is attention whatever the threshold
 
 
 def test_snooze_holds_attention_then_reminds_but_never_holds_panic():
     r = AlertRouter(RouterConfig())
-    assert _ev(r.submit([_house(Severity.HIGH)], T0, snoozed=True)) == []
+    assert _ev(r.submit([_where(Severity.HIGH)], T0, snoozed=True)) == []
     assert _ev(r.submit_panic(_panic(), T0)) == [
         ("opened", "welfare:binary_sensor.p:panic")
     ]
     m1 = T0 + timedelta(minutes=1)
     again = r.submit_panic(_panic(ts=m1), m1)
     assert [(a.event, a.reason) for a in again] == [("reminder", "pressed_again")]
-    acts = r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=5))
+    acts = r.submit([_where(Severity.HIGH)], T0 + timedelta(minutes=5))
     assert [(a.event, a.reason, a.alert.key) for a in acts] == [
-        ("reminder", "snooze_ended", "welfare:house:inactivity")
+        ("reminder", "snooze_ended", "welfare:whereabouts:still_at_home")
     ]
-    assert r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=6)) == []
+    assert r.submit([_where(Severity.HIGH)], T0 + timedelta(minutes=6)) == []
 
 
 def test_cleared_fires_during_holiday_without_log_clear():
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.HIGH), _note()], T0)
+    r.submit([_where(Severity.HIGH), _note()], T0)
     acts = r.submit([], T0 + timedelta(minutes=1), holiday=True)
     assert sorted(_ev(acts, "cleared")) == [
         ("cleared", "statistical:sensor.kettle:routine_missed"),
-        ("cleared", "welfare:house:inactivity"),
+        ("cleared", "welfare:whereabouts:still_at_home"),
     ]
     assert [a for a in acts if a.action == "log_clear"] == []
 
 
 def test_held_attention_alert_closing_during_snooze_fires_cleared():
     r = AlertRouter(RouterConfig())
-    assert _ev(r.submit([_house(Severity.HIGH)], T0, snoozed=True)) == []
+    assert _ev(r.submit([_where(Severity.HIGH)], T0, snoozed=True)) == []
     acts = r.submit([], T0 + timedelta(minutes=1), snoozed=True)
-    assert _ev(acts) == [("cleared", "welfare:house:inactivity")]
+    assert _ev(acts) == [("cleared", "welfare:whereabouts:still_at_home")]
     # closed, so no snooze_ended reminder when the snooze ends
     assert r.submit([], T0 + timedelta(minutes=2)) == []
 
@@ -236,30 +266,30 @@ def test_statistical_closing_during_snooze_fires_cleared_without_log_clear():
 
 def test_escalation_after_snooze_ends_does_not_also_remind():
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.HIGH)], T0, snoozed=True)
-    acts = r.submit([_house(Severity.CRITICAL)], T0 + timedelta(minutes=1))
+    r.submit([_where(Severity.HIGH)], T0, snoozed=True)
+    acts = r.submit([_where(Severity.CRITICAL)], T0 + timedelta(minutes=1))
     assert [(a.event, a.reason) for a in acts if a.action == "event"] == [
         ("escalated", None)
     ]
-    assert r.submit([_house(Severity.CRITICAL)], T0 + timedelta(minutes=2)) == []
+    assert r.submit([_where(Severity.CRITICAL)], T0 + timedelta(minutes=2)) == []
 
 
 def test_id_uses_opening_time_not_a_cached_raised_at():
     cached = T0 - timedelta(hours=1)
     r = AlertRouter(RouterConfig())
-    first = r.submit([_house(Severity.MEDIUM, cached)], T0)[0].alert_id
-    assert first == f"welfare:house:inactivity@{T0.isoformat()}"
+    first = r.submit([_where(Severity.MEDIUM, cached)], T0)[0].alert_id
+    assert first == f"welfare:whereabouts:still_at_home@{T0.isoformat()}"
     r.submit([], T0 + timedelta(minutes=1))
     t2 = T0 + timedelta(minutes=2)
-    second = r.submit([_house(Severity.MEDIUM, cached)], t2)[0].alert_id
-    assert second == f"welfare:house:inactivity@{t2.isoformat()}"
+    second = r.submit([_where(Severity.MEDIUM, cached)], t2)[0].alert_id
+    assert second == f"welfare:whereabouts:still_at_home@{t2.isoformat()}"
 
 
 def test_panic_stays_until_cleared_by_user():
     r = AlertRouter(RouterConfig())
     pid = r.submit_panic(_panic(), T0)[0].alert_id
     assert _ev(r.submit([], T0 + timedelta(hours=5), holiday=True)) == []
-    assert r.clear_panic("welfare:house:inactivity@x", T0) == []
+    assert r.clear_panic("welfare:whereabouts:still_at_home@x", T0) == []
     acts = r.clear_panic(pid, T0 + timedelta(hours=6))
     assert [(a.event, a.cleared_by, a.alert_id) for a in acts] == [
         ("cleared", "user", pid)
@@ -292,18 +322,18 @@ def test_test_alert_flags_events_and_never_touches_real_panic():
 
 def test_reminders_cover_open_attention_only():
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.HIGH), _note(), _health()], T0)
+    r.submit([_where(Severity.HIGH), _note(), _health()], T0)
     assert [(a.event, a.reason, a.alert.key) for a in r.reminders("restart")] == [
-        ("reminder", "restart", "welfare:house:inactivity")
+        ("reminder", "restart", "welfare:whereabouts:still_at_home")
     ]
 
 
 def test_round_trip_keeps_ids_groups_and_held():
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.HIGH), _health()], T0, snoozed=True)
+    r.submit([_where(Severity.HIGH), _health()], T0, snoozed=True)
     r2 = AlertRouter.from_dict(r.to_dict(), RouterConfig())
     assert r2.published() == r.published()
-    acts = r2.submit([_house(Severity.HIGH), _health()], T0)
+    acts = r2.submit([_where(Severity.HIGH), _health()], T0)
     assert [a.reason for a in acts] == ["snooze_ended"]
 
 
@@ -329,16 +359,21 @@ def test_loads_v11_router_state():
             "welfare:binary_sensor.q:panic": entry(
                 panic_alert("binary_sensor.q"), True, True, T0.isoformat()
             ),
-            "welfare:house:inactivity": entry(_house(Severity.LOW), False, False, None),
+            "welfare:whereabouts:still_at_home": entry(
+                _where(Severity.LOW), False, False, None
+            ),
         }
     }
     r = AlertRouter.from_dict(old, RouterConfig())
     pub = {p["key"]: p for p in r.published()}
-    assert set(pub) == {"welfare:binary_sensor.p:panic", "welfare:house:inactivity"}
+    assert set(pub) == {
+        "welfare:binary_sensor.p:panic",
+        "welfare:whereabouts:still_at_home",
+    }
     pid = f"welfare:binary_sensor.p:panic@{T0.isoformat()}"
     assert pub["welfare:binary_sensor.p:panic"]["id"] == pid
     assert pub["welfare:binary_sensor.p:panic"]["group"] == "attention"
-    assert pub["welfare:house:inactivity"]["group"] == "information"
+    assert pub["welfare:whereabouts:still_at_home"]["group"] == "information"
 
 
 def test_repeated_test_alert_clears_the_previous_one():
@@ -359,9 +394,9 @@ def test_repeated_test_alert_clears_the_previous_one():
 
 def test_reminders_skip_held_alerts_until_snooze_ends():
     r = AlertRouter(RouterConfig())
-    r.submit([_house(Severity.HIGH)], T0, snoozed=True)
+    r.submit([_where(Severity.HIGH)], T0, snoozed=True)
     assert r.reminders("restart") == []
-    acts = r.submit([_house(Severity.HIGH)], T0 + timedelta(minutes=1))
+    acts = r.submit([_where(Severity.HIGH)], T0 + timedelta(minutes=1))
     assert [a.reason for a in acts] == ["snooze_ended"]
 
 

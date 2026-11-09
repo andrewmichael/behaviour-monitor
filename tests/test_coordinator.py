@@ -15,6 +15,7 @@ from custom_components.behaviour_monitor.core.alert_router import (
 )
 from custom_components.behaviour_monitor.core.alerts import Alert, AlertClass, Severity
 from custom_components.behaviour_monitor.core.events import Category
+from custom_components.behaviour_monitor.core.engine import SCHEMA_VERSION
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
 EVENT = "behaviour_monitor_alert"
@@ -52,11 +53,11 @@ def _store_router(coordinator, alerts: list[Alert]) -> None:
     coordinator._store._stored_version = coordinator._store.version
 
 
-def _inactivity() -> Alert:
+def _still_at_home() -> Alert:
     return Alert(
         AlertClass.WELFARE,
-        "house",
-        "inactivity",
+        "whereabouts",
+        "still_at_home",
         Severity.HIGH,
         "No activity",
         NOW - timedelta(hours=1),
@@ -104,6 +105,36 @@ def test_specs_resolve_rooms_from_entity_then_device_then_name(coordinator):
     assert rooms["sensor.kettle_power"] == "sensor.kettle_power"
     cats = {s.entity_id: s.category for s in coordinator.entity_specs}
     assert cats["binary_sensor.panic"] is Category.PANIC
+
+
+def test_unset_bedrooms_resolve_to_suggestions(mock_hass, mock_config_entry):
+    """Unset bedrooms become the rooms named "bedroom", or none at all."""
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(mock_hass)
+    reg.entities.clear()
+    reg.devices.clear()
+    reg.areas.clear()
+    reg.entities["binary_sensor.kitchen_motion"] = SimpleNamespace(
+        area_id="a_kitchen", device_id=None
+    )
+    reg.entities["binary_sensor.bed_motion"] = SimpleNamespace(
+        area_id="a_bed", device_id=None
+    )
+    reg.areas["a_kitchen"] = SimpleNamespace(name="Kitchen")
+    reg.areas["a_bed"] = SimpleNamespace(name="Mum's room")
+    mock_hass.states.get = lambda eid: None
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset()
+
+    reg.areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset({"Back Bedroom"})
+
+    # A chosen list, even an empty one, is used as it is.
+    mock_config_entry.options = {"bedrooms": ["Kitchen"]}
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset({"Kitchen"})
 
 
 def test_display_room_strips_site_prefix(coordinator):
@@ -188,7 +219,7 @@ async def test_events_held_until_started_then_restart_reminders(coordinator, moc
     from homeassistant.core import CoreState
 
     mock_hass.state = CoreState.starting
-    _store_router(coordinator, [_inactivity()])
+    _store_router(coordinator, [_still_at_home()])
     await coordinator.async_setup()
     with patch(
         "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
@@ -205,7 +236,10 @@ async def test_events_held_until_started_then_restart_reminders(coordinator, moc
     started_listener = listens[0][1]
     await started_listener(None)
     types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
-    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    assert types == [
+        ("opened", None, "panic"),
+        ("reminder", "restart", "still_at_home"),
+    ]
     # Once started, events go straight out.
     await coordinator.async_test_panic()
     assert _fired(mock_hass)[-1]["test"] is True
@@ -222,7 +256,7 @@ async def test_started_during_setup_releases_held_events(coordinator, mock_hass)
     )
 
     mock_hass.state = CoreState.starting
-    _store_router(coordinator, [_inactivity()])
+    _store_router(coordinator, [_still_at_home()])
     coordinator._store._data["entity_ids"].remove("binary_sensor.panic")
 
     async def boot(_ids):
@@ -246,7 +280,10 @@ async def test_started_during_setup_releases_held_events(coordinator, mock_hass)
         await coordinator.async_setup()
     mock_hass.bus.async_listen_once.assert_not_called()
     types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
-    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    assert types == [
+        ("opened", None, "panic"),
+        ("reminder", "restart", "still_at_home"),
+    ]
     await coordinator.async_test_panic()
     assert _fired(mock_hass)[-1]["test"] is True
 
@@ -263,11 +300,13 @@ async def test_reload_while_running_sends_one_reminder_per_attention_alert(
         "missed",
         NOW - timedelta(hours=1),
     )
-    _store_router(coordinator, [_inactivity(), stat])
+    _store_router(coordinator, [_still_at_home(), stat])
     await coordinator.async_setup()
     mock_hass.bus.async_listen_once.assert_not_called()
     reminders = [d for d in _fired(mock_hass) if d["type"] == "reminder"]
-    assert [(r["reason"], r["kind"]) for r in reminders] == [("restart", "inactivity")]
+    assert [(r["reason"], r["kind"]) for r in reminders] == [
+        ("restart", "still_at_home")
+    ]
     await coordinator._async_update_data()
     assert len([d for d in _fired(mock_hass) if d["type"] == "reminder"]) == 1
 
@@ -303,8 +342,8 @@ async def test_delivery_actions_map_to_events_issues_and_logbook(
     coordinator._started = True
     welfare = Alert(
         AlertClass.WELFARE,
-        "house",
-        "inactivity",
+        "whereabouts",
+        "still_at_home",
         Severity.HIGH,
         "No activity in Test House Kitchen",
         NOW,
@@ -345,9 +384,9 @@ async def test_delivery_actions_map_to_events_issues_and_logbook(
             "id": "w1",
             "group": "attention",
             "class": "welfare",
-            "kind": "inactivity",
+            "kind": "still_at_home",
             "severity": "high",
-            "source": "house",
+            "source": "whereabouts",
             "room": "Test House Kitchen",
             "message": "No activity in Kitchen",
             "raised_at": NOW.isoformat(),
@@ -406,6 +445,30 @@ async def test_update_data_returns_snapshot_with_site(coordinator):
 
 
 @pytest.mark.asyncio
+async def test_poll_saves_the_store_at_most_every_five_minutes(coordinator):
+    """The last poll time reaches the store even when nothing changes."""
+    now = "custom_components.behaviour_monitor.coordinator.dt_util.now"
+    with patch(now, return_value=NOW), patch.object(
+        coordinator, "_bootstrap_entities", new=AsyncMock()
+    ):
+        await coordinator.async_setup()
+    with patch.object(coordinator._store, "async_save", new=AsyncMock()) as save:
+        with patch(now, return_value=NOW + timedelta(minutes=1)):
+            await coordinator._async_update_data()
+        save.assert_not_called()
+        with patch(now, return_value=NOW + timedelta(minutes=6)):
+            await coordinator._async_update_data()
+        save.assert_awaited_once()
+        with patch(now, return_value=NOW + timedelta(minutes=7)):
+            await coordinator._async_update_data()
+        save.assert_awaited_once()
+    assert (
+        save.await_args.args[0]["engine"]["meta"]["last_poll"]
+        == (NOW + timedelta(minutes=6)).isoformat()
+    )
+
+
+@pytest.mark.asyncio
 async def test_holiday_snooze_reset_roundtrip(coordinator):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
@@ -422,7 +485,7 @@ async def test_holiday_snooze_reset_roundtrip(coordinator):
     await coordinator.async_reset_learning("binary_sensor.kitchen_motion")
     await coordinator.async_reset_learning()
     saved = coordinator._store._data
-    assert saved["engine"]["schema"] == 2 and saved["site"] == "Test House"
+    assert saved["engine"]["schema"] == SCHEMA_VERSION and saved["site"] == "Test House"
 
 
 @pytest.mark.asyncio
@@ -494,6 +557,43 @@ async def test_registry_update_reresolves_rooms(coordinator, mock_hass):
 
 
 @pytest.mark.asyncio
+async def test_area_rename_renames_bedroom_option(
+    coordinator, mock_hass, mock_config_entry
+):
+    """A renamed bedroom area keeps its place in the bedrooms option."""
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    from homeassistant.helpers import entity_registry as er
+
+    mock_config_entry.options = {"learning_days": 10, "bedrooms": ["Bedroom", "Den"]}
+    reg = er.async_get(mock_hass)
+    reg.areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_called_once_with(
+        mock_config_entry,
+        options={"learning_days": 10, "bedrooms": ["Back Bedroom", "Den"]},
+    )
+
+    # A rename of a room that is not a bedroom leaves the option alone.
+    mock_hass.config_entries.async_update_entry.reset_mock()
+    mock_config_entry.options = {"bedrooms": ["Back Bedroom"]}
+    reg.areas["a_kitchen"] = SimpleNamespace(name="Test House Scullery")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_not_called()
+
+    # Unset bedrooms stay unset, but the entry reloads so the rooms named
+    # "bedroom" are worked out again.
+    mock_config_entry.options = {}
+    mock_hass.config_entries.async_reload.reset_mock()
+    reg.areas["a_bed"] = SimpleNamespace(name="Front Bedroom")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_not_called()
+    mock_hass.config_entries.async_reload.assert_called_once_with(
+        mock_config_entry.entry_id
+    )
+
+
+@pytest.mark.asyncio
 async def test_shutdown_stops_both_timers(coordinator):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
@@ -514,12 +614,14 @@ async def test_setup_survives_recorder_not_loaded(coordinator, mock_hass):
     mock_hass.bus.async_listen.assert_any_call(
         "state_changed", coordinator._handle_state_changed
     )
-    assert coordinator._store._data["engine"]["schema"] == 2
+    assert coordinator._store._data["engine"]["schema"] == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
 async def test_setup_survives_corrupt_engine_section(coordinator):
-    coordinator._store._data = {"engine": {"schema": 2, "house": "not a dict"}}
+    coordinator._store._data = {
+        "engine": {"schema": SCHEMA_VERSION, "house": "not a dict"}
+    }
     coordinator._store._stored_version = coordinator._store.version
     with patch.object(
         coordinator, "_bootstrap_entities", new=AsyncMock()
@@ -532,7 +634,7 @@ async def test_setup_survives_corrupt_engine_section(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
-    assert coordinator._engine.to_dict()["schema"] == 2
+    assert coordinator._engine.to_dict()["schema"] == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -552,7 +654,7 @@ async def test_setup_discards_old_store_version(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
-    assert coordinator._engine.to_dict()["schema"] == 2
+    assert coordinator._engine.to_dict()["schema"] == SCHEMA_VERSION
     assert coordinator._store._data["site"] == "Test House"
 
 
@@ -602,9 +704,56 @@ async def test_bootstrap_replays_recorder_rows(coordinator):
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_replays_all_entities_in_time_order(coordinator):
+    """History from several sensors is merged by time, not replayed per sensor:
+    a model that drops events older than its current interval would otherwise
+    learn from the first sensor only."""
+    kitchen, bed = "binary_sensor.kitchen_motion", "binary_sensor.bed_motion"
+    rows = {
+        kitchen: [
+            _row("on", NOW - timedelta(hours=5)),
+            _row("off", NOW - timedelta(hours=3)),
+            _row("unavailable", NOW - timedelta(hours=2, minutes=30)),
+            _row("on", NOW - timedelta(hours=1)),
+        ],
+        bed: [
+            _row("on", NOW - timedelta(hours=4)),
+            _row("off", NOW - timedelta(hours=2)),
+        ],
+    }
+    instance = _recorder_instance(rows)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        return_value=instance,
+    ), patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ), patch.object(
+        coordinator._engine,
+        "handle_state",
+        wraps=coordinator._engine.handle_state,
+    ) as handled:
+        await coordinator._bootstrap_entities([kitchen, bed])
+    assert [
+        (c.args[0], c.args[1], c.args[2], c.args[3]) for c in handled.call_args_list
+    ] == [
+        (kitchen, None, "on", NOW - timedelta(hours=5)),
+        (bed, None, "on", NOW - timedelta(hours=4)),
+        (kitchen, "on", "off", NOW - timedelta(hours=3)),
+        (bed, "on", "off", NOW - timedelta(hours=2)),
+        (kitchen, None, "on", NOW - timedelta(hours=1)),
+    ]
+    assert all(c.kwargs == {"learn_only": True} for c in handled.call_args_list)
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
     alert = Alert(
-        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
+        AlertClass.WELFARE,
+        "whereabouts",
+        "still_at_home",
+        Severity.HIGH,
+        "No activity",
+        NOW,
     )
     action = DeliveryAction("event", alert, event="opened", alert_id="a1")
     instance = _recorder_instance({})

@@ -28,7 +28,7 @@
 
 Pure Python, stdlib only, no Home Assistant imports. `engine.Engine` wires
 `normaliser`, `house_model`, `entity_routine`, `chain_model`,
-`drift_detector`, `health_tracker` and `alert_router`. Every module takes
+`drift_detector`, `health_tracker`, `whereabouts` and `alert_router`. Every module takes
 timestamps as arguments and never reads the clock. Replay any fixture with
 `python scripts/replay.py tests/fixtures/<name>.jsonl`. Tests live in
 `tests/core/` and run with `make test-core`.

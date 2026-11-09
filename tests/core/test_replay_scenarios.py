@@ -49,14 +49,16 @@ def test_panic_press_opens_once_and_stays_open(tmp_path):
     assert not [a for _, a in tl if a.action == "event" and a.event == "cleared"]
 
 
-def test_silent_kitchen_is_device_health_not_welfare(tmp_path):
+def test_silent_kitchen_raises_a_device_health_repair(tmp_path):
+    # No "no welfare push" check: with half the sensors or more still live,
+    # stillness can't be told from an occupant no sensor sees, and the
+    # repair explains those alerts.
     tl = _run(tmp_path, synth.silent_kitchen())
     repairs = [a.alert for _, a in tl if a.action == "repair_create"]
     assert any(
         a.kind == "silent" and a.source == "binary_sensor.kitchen_motion"
         for a in repairs
     )
-    assert [a for _, a in _pushes(tl) if a.kind == "inactivity"] == []
 
 
 def test_sitewide_dropout_is_one_health_alert(tmp_path):
@@ -76,7 +78,7 @@ def test_chain_stall_logs_missing_kitchen_and_silence_escalates(tmp_path):
     pushes = [
         (t, a)
         for t, a in _pushes(tl)
-        if a.kind == "inactivity" and t.date() == day.date()
+        if a.source == "whereabouts" and t.date() == day.date()
     ]
     assert pushes, "daytime silence after the stall should raise welfare"
     assert pushes[0][0] < day + timedelta(hours=12)

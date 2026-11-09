@@ -26,6 +26,9 @@ from custom_components.behaviour_monitor.const import (
 )
 
 
+EMPTY_LISTS = {"outside_doors": [], "sitting_appliances": []}
+
+
 def _legacy_entry():
     e = MagicMock()
     e.entry_id = "old"
@@ -47,19 +50,19 @@ async def test_migrate_v10_moves_entities_aside_and_raises_issue(mock_hass):
     entry = _legacy_entry()
     assert await async_migrate_entry(mock_hass, entry) is True
     kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kwargs["version"] == 12
+    assert kwargs["version"] == 13
     assert "notify_service" not in kwargs["data"]
     assert kwargs["data"]["legacy_unassigned"] == ["binary_sensor.a", "sensor.b"]
     assert kwargs["data"][CONF_SITE_NAME] == "Behaviour Monitor"
     assert kwargs["data"][CONF_MOTION_ENTITIES] == []
     assert "monitored_entities" not in kwargs["data"]
-    assert kwargs["options"] == OPTION_DEFAULTS
+    assert kwargs["options"] == {**OPTION_DEFAULTS, **EMPTY_LISTS}
     ir.async_create_issue.assert_called_once()
     assert ir.async_create_issue.call_args.args[2] == f"{ISSUE_ASSIGN_CATEGORIES}_old"
 
 
 @pytest.mark.asyncio
-async def test_migrate_v10_with_notify_service_lands_on_v12_with_notice(mock_hass):
+async def test_migrate_v10_with_notify_service_lands_on_v13_with_notice(mock_hass):
     from homeassistant.helpers import issue_registry as ir
 
     ir.async_create_issue.reset_mock()
@@ -67,15 +70,15 @@ async def test_migrate_v10_with_notify_service_lands_on_v12_with_notice(mock_has
     entry.data = {**entry.data, "notify_service": "notify.phone"}
     assert await async_migrate_entry(mock_hass, entry) is True
     kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kwargs["version"] == 12
+    assert kwargs["version"] == 13
     assert "notify_service" not in kwargs["data"]
-    assert kwargs["options"] == OPTION_DEFAULTS
+    assert kwargs["options"] == {**OPTION_DEFAULTS, **EMPTY_LISTS}
     ids = [c.args[2] for c in ir.async_create_issue.call_args_list]
     assert f"{ISSUE_NOTIFICATIONS_MOVED}_old" in ids
 
 
 @pytest.mark.asyncio
-async def test_migrate_v11_to_v12_moves_options_and_raises_notice(
+async def test_migrate_v11_to_v13_moves_options_and_raises_notice(
     mock_hass, mock_config_entry
 ):
     from homeassistant.helpers import issue_registry as ir
@@ -93,8 +96,12 @@ async def test_migrate_v11_to_v12_moves_options_and_raises_notice(
     }
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert "notify_service" not in kw["data"] and kw["version"] == 12
-    assert kw["options"] == {"attention_min_severity": "high", "learning_days": 10}
+    assert "notify_service" not in kw["data"] and kw["version"] == 13
+    assert kw["options"] == {
+        "attention_min_severity": "high",
+        "learning_days": 10,
+        **EMPTY_LISTS,
+    }
     call = ir.async_create_issue.call_args
     assert call.args[2] == "notifications_moved_test_entry_id"
     assert call.kwargs["is_fixable"] is False
@@ -117,13 +124,46 @@ async def test_migrate_v11_without_notify_service_raises_no_notice(
     mock_config_entry.options = {"learning_days": 10}
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kw["version"] == 12
-    assert kw["options"] == {"attention_min_severity": "medium", "learning_days": 10}
+    assert kw["version"] == 13
+    assert kw["options"] == {
+        "attention_min_severity": "medium",
+        "learning_days": 10,
+        **EMPTY_LISTS,
+    }
     ir.async_create_issue.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_migrate_v12_is_noop(mock_hass, mock_config_entry):
+async def test_migrate_v12_to_v13_adds_empty_lists_and_drops_house_low_ratio(
+    mock_hass, mock_config_entry
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_create_issue.reset_mock()
+    mock_config_entry.version = 12
+    mock_config_entry.options = {
+        "house_low_ratio": 4,
+        "learning_days": 10,
+        "attention_min_severity": "high",
+    }
+    data_before = dict(mock_config_entry.data)
+    assert await async_migrate_entry(mock_hass, mock_config_entry) is True
+    kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
+    assert kw["version"] == 13
+    assert kw["data"] == data_before
+    assert kw["options"] == {
+        "learning_days": 10,
+        "attention_min_severity": "high",
+        **EMPTY_LISTS,
+    }
+    # Left unset, so the engine picks rooms named "bedroom".
+    assert "bedrooms" not in kw["options"]
+    ir.async_create_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_migrate_v13_is_noop(mock_hass, mock_config_entry):
+    mock_config_entry.version = 13
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     mock_hass.config_entries.async_update_entry.assert_not_called()
 

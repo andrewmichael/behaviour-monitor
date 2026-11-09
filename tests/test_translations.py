@@ -19,7 +19,24 @@ def test_translations_cover_every_config_and_option_field():
         assert key in user and key in init
     for key in OPTION_DEFAULTS:
         assert key in init
-    assert set(t["config"]["error"]) >= {"no_entities", "duplicate_entity"}
+    assert "house_low_ratio" not in init
+    for section in ("config", "options"):
+        step = t[section]["step"]["whereabouts"]
+        assert step["title"]
+        assert set(step["data"]) == {"outside_doors", "bedrooms", "sitting_appliances"}
+        for sentence in (
+            "Doors that lead outside. Don't pick fridge, cupboard or internal "
+            "doors: they would hold back fall alerts.",
+            "Rooms she sleeps in. Stillness here at night is normal.",
+            "Plugs, like a TV, that mean she is sitting nearby when on.",
+        ):
+            assert sentence in step["description"]
+        assert set(t[section]["error"]) >= {
+            "no_entities",
+            "duplicate_entity",
+            "door_not_contact",
+            "appliance_not_plug",
+        }
     assert set(t["issues"]) >= {
         "assign_categories",
         "device_health",

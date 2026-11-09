@@ -43,6 +43,8 @@ def test_motion_rising_edge_is_presence_and_retrigger_is_merged():
     assert [e.kind for e in ev] == [EventKind.BURST_END, EventKind.PRESENCE]
     assert ev[0].duration_s == 132.0
     assert ev[0].timestamp == _t(132)
+    assert ev[0].last_rise == _t(70)
+    assert ev[1].last_rise is None
 
 
 def test_flush_closes_a_burst_after_the_window():
@@ -53,6 +55,7 @@ def test_flush_closes_a_burst_after_the_window():
     out = n.flush(_t(151))
     assert [e.kind for e in out] == [EventKind.BURST_END]
     assert out[0].duration_s == 60.0
+    assert out[0].last_rise == _t(0)
     assert n.flush(_t(200)) == []
 
 

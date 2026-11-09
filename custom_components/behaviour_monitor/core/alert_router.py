@@ -203,30 +203,28 @@ class AlertRouter:
         signs = stalls + notes
         escalates = bool(stalls) or len(notes) >= 2
         out = list(alerts)
-        house = next(
+        where = next(
             (
                 a
                 for a in out
-                if a.cls is AlertClass.WELFARE
-                and a.source == "house"
-                and a.kind == "inactivity"
+                if a.cls is AlertClass.WELFARE and a.source == "whereabouts"
             ),
             None,
         )
-        if house is not None and escalates:
-            out.remove(house)
+        if where is not None and escalates:
+            out.remove(where)
             out.append(
                 Alert(
-                    house.cls,
-                    house.source,
-                    house.kind,
-                    house.severity.bump(),
-                    house.explanation + f" and {len(signs)} routine sign(s) missed",
-                    house.raised_at,
-                    {**house.details, "escalated_by": signs},
+                    where.cls,
+                    where.source,
+                    where.kind,
+                    where.severity.bump(),
+                    where.explanation + f" and {len(signs)} routine sign(s) missed",
+                    where.raised_at,
+                    {**where.details, "escalated_by": signs},
                 )
             )
-        elif house is None and len(signs) >= 2:
+        elif where is None and len(signs) >= 2:
             out.append(
                 Alert(
                     AlertClass.WELFARE,

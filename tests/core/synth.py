@@ -72,6 +72,12 @@ def normal_day(
         if 12 <= t.hour < 13 and rng.random() < 0.3:
             _kettle(out, t + timedelta(minutes=3))
         t += timedelta(minutes=rng.uniform(20, 40))
+    # evening ends in the backroom (TV on) before bed
+    _pulse(
+        out,
+        "binary_sensor.lounge_motion",
+        min(t, day + timedelta(hours=21, minutes=50)),
+    )
     out.append((day + timedelta(hours=11), "binary_sensor.side_door", "on"))
     out.append(
         (day + timedelta(hours=11, seconds=40), "binary_sensor.side_door", "off")
@@ -197,7 +203,11 @@ def write_fixture(
                     }
                     for s in specs
                 ],
-                "options": options or {},
+                "options": {
+                    "outside_doors": ["binary_sensor.side_door"],
+                    "sitting_appliances": ["sensor.tv_power"],
+                    **(options or {}),
+                },
             },
             indent=2,
         )

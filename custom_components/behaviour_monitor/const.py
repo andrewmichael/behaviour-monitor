@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "behaviour_monitor"
 VERSION: Final = "5.0.0"
-CONFIG_VERSION: Final = 12
+CONFIG_VERSION: Final = 13
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 11
 UPDATE_INTERVAL: Final = 60  # seconds
@@ -37,7 +37,6 @@ CONF_LEARNING_DAYS: Final = "learning_days"
 CONF_WINDOW_DAYS: Final = "window_days"
 CONF_HEALTH_GRACE_S: Final = "health_grace_s"
 CONF_ATTENTION_MIN_SEVERITY: Final = "attention_min_severity"
-CONF_HOUSE_LOW_RATIO: Final = "house_low_ratio"
 CONF_CHAIN_WINDOW_S: Final = "chain_window_s"
 CONF_TIMING_PROMOTE_DAYS: Final = "timing_promote_days"
 CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
@@ -49,11 +48,15 @@ OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_WINDOW_DAYS: 28,
     CONF_HEALTH_GRACE_S: 900,
     CONF_ATTENTION_MIN_SEVERITY: "medium",
-    CONF_HOUSE_LOW_RATIO: 3,
     CONF_CHAIN_WINDOW_S: 1800,
     CONF_TIMING_PROMOTE_DAYS: 7,
     CONF_DRIFT_SENSITIVITY: "medium",
 }
+
+# Whereabouts-step option keys (names match EngineConfig.from_options)
+CONF_OUTSIDE_DOORS: Final = "outside_doors"
+CONF_SITTING_APPLIANCES: Final = "sitting_appliances"
+CONF_BEDROOMS: Final = "bedrooms"
 
 SEVERITY_OPTIONS: Final = ["low", "medium", "high", "critical"]
 SENSITIVITY_OPTIONS: Final = ["low", "medium", "high"]
@@ -64,6 +67,8 @@ LEGACY_CONF_MONITORED_ENTITIES: Final = "monitored_entities"
 LEGACY_CONF_NOTIFY_SERVICE: Final = "notify_service"
 LEGACY_CONF_PUSH_MIN_SEVERITY: Final = "push_min_severity"
 LEGACY_CONF_PUSH_REPEAT_S: Final = "push_repeat_s"
+# Legacy (v12) key kept only for migration
+LEGACY_CONF_HOUSE_LOW_RATIO: Final = "house_low_ratio"
 BLUEPRINT_URL: Final = (
     "https://github.com/andrewmichael/behaviour-monitor/blob/main/"
     "blueprints/automation/behaviour_monitor/notify.yaml"

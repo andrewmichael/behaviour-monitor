@@ -1,6 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
 
-from custom_components.behaviour_monitor.core.alerts import Severity
 from custom_components.behaviour_monitor.core.events import (
     ActivityEvent,
     Category,
@@ -39,96 +38,6 @@ def test_learns_expected_gap_for_slot():
     assert m.expected_gap(MON + timedelta(days=14, minutes=30)) == 300.0
     assert m.expected_gap(MON + timedelta(days=14, hours=5)) is None
     assert m.confidence(MON + timedelta(days=14)) == 1.0
-
-
-def test_severity_ladder_and_sustain():
-    m = HouseModel(HouseConfig(sustain_polls=2, floor_s=300.0))
-    _train(m)
-    now = MON + timedelta(days=14)
-    m.record(_ev(now))
-    a = m.evaluate(now + timedelta(minutes=10))  # ratio 2
-    assert a.severity is None and a.ratio == 2.0
-    a = m.evaluate(now + timedelta(minutes=20))  # ratio 4 -> low, first poll
-    assert a.severity is None
-    a = m.evaluate(now + timedelta(minutes=21))  # second poll sustains
-    assert a.severity is Severity.LOW
-    a = m.evaluate(now + timedelta(minutes=35))  # ratio 7 -> medium after two polls
-    a = m.evaluate(now + timedelta(minutes=36))
-    assert a.severity is Severity.MEDIUM
-    a = m.evaluate(now + timedelta(minutes=61))
-    a = m.evaluate(now + timedelta(minutes=62))
-    assert a.severity is Severity.HIGH
-    # one poll below threshold drops one level
-    m.record(_ev(now + timedelta(minutes=63)))
-    a = m.evaluate(now + timedelta(minutes=64))
-    assert a.severity is Severity.MEDIUM
-
-
-def test_restart_clock_resets_gap_and_ladder():
-    m = HouseModel(HouseConfig(sustain_polls=2, floor_s=300.0))
-    _train(m)
-    now = MON + timedelta(days=14)
-    m.record(_ev(now))
-    m.evaluate(now + timedelta(minutes=20))  # ratio 4 -> low, first poll
-    m.evaluate(now + timedelta(minutes=21))  # second poll sustains -> LOW
-    m.evaluate(now + timedelta(minutes=35))  # ratio 7 -> medium, first poll
-    m.evaluate(now + timedelta(minutes=36))  # second poll sustains -> MEDIUM
-    m.evaluate(now + timedelta(minutes=61))  # ratio 12.2 -> high, first poll
-    a = m.evaluate(now + timedelta(minutes=62))  # second poll sustains -> HIGH
-    assert a.severity is Severity.HIGH
-    t = now + timedelta(minutes=70)
-    m.restart_clock(t)
-    assert m.last_activity == t
-    a = m.evaluate(t + timedelta(minutes=1))
-    assert a.severity is None
-
-
-def test_floor_prevents_tiny_median_blowing_up_ratio():
-    m = HouseModel(HouseConfig(floor_s=300.0))
-    _train(m, gap_min=1)
-    now = MON + timedelta(days=14)
-    m.record(_ev(now))
-    a = m.evaluate(now + timedelta(minutes=5))
-    assert a.expected_s == 60.0 and a.ratio == 1.0
-
-
-def test_unknown_slot_reports_no_severity():
-    m = HouseModel(HouseConfig())
-    _train(m)
-    now = MON + timedelta(days=14, hours=6)
-    m.record(_ev(now))
-    a = m.evaluate(now + timedelta(hours=3))
-    assert a.severity is None and a.expected_s is None
-
-
-def test_degraded_when_live_fraction_low():
-    m = HouseModel(HouseConfig(min_live_fraction=0.5))
-    _train(m)
-    now = MON + timedelta(days=14)
-    m.record(_ev(now))
-    for _ in range(2):
-        a = m.evaluate(now + timedelta(hours=2), live_fraction=0.4)
-    assert a.degraded is True and a.severity is None
-
-
-def test_degraded_polls_hold_the_ladder():
-    m = HouseModel(HouseConfig(sustain_polls=2, min_live_fraction=0.5, floor_s=300.0))
-    _train(m)
-    now = MON + timedelta(days=14)
-    m.record(_ev(now))
-    m.evaluate(now + timedelta(minutes=10))  # ratio 2
-    m.evaluate(now + timedelta(minutes=20))  # ratio 4 -> low, first poll
-    m.evaluate(now + timedelta(minutes=21))  # second poll sustains -> LOW
-    m.evaluate(now + timedelta(minutes=35))  # ratio 7 -> medium, first poll
-    m.evaluate(now + timedelta(minutes=36))  # second poll sustains -> MEDIUM
-    m.evaluate(now + timedelta(minutes=61))  # ratio 12.2 -> high, first poll
-    a = m.evaluate(now + timedelta(minutes=62))  # second poll sustains -> HIGH
-    assert a.severity is Severity.HIGH
-    for minutes in (63, 64, 65):
-        a = m.evaluate(now + timedelta(minutes=minutes), live_fraction=0.4)
-        assert a.degraded is True and a.severity is None
-    a = m.evaluate(now + timedelta(minutes=66), live_fraction=1.0)  # ratio 13.2
-    assert a.degraded is False and a.severity is Severity.HIGH
 
 
 def test_rooms_visited_and_prune():
@@ -184,10 +93,6 @@ def test_round_trip():
     assert m2.expected_gap(MON + timedelta(days=14, minutes=30)) == 300.0
     assert m2.last_activity == m.last_activity
     assert HouseModel.from_dict({"bad": True}, HouseConfig()).last_activity is None
-
-
-def test_default_floor_is_twenty_minutes():
-    assert HouseConfig().floor_s == 1200.0
 
 
 def test_one_busy_day_does_not_make_a_slot_trusted():

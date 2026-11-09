@@ -58,7 +58,6 @@ in one category's list.
 | Window days | 28 |
 | Health grace period (s) | 900 |
 | Minimum attention severity | medium |
-| House low ratio | 3 |
 | Chain window (s) | 1800 |
 | Timing drift promotion (days) | 7 |
 | Drift sensitivity | medium |
@@ -127,6 +126,89 @@ Every alert belongs to exactly one of three classes:
 events immediately regardless of any suppression in effect, and is never
 treated as a silent-sensor candidate. A panic stays open until a person
 clears it with the Clear panic button or `behaviour_monitor.clear_alert`.
+
+## Where she is
+
+Behaviour Monitor keeps track of where the person is, in plain terms, and
+raises a welfare alert when she has been still for longer than is normal for
+that place and time. It replaces the old whole-house inactivity alert, and it
+catches a fall in the day usually within about an hour and a half.
+
+With more than one person living there, the alerts are about the whole
+household: room sensors can't tell people apart. "Still at home" means no one
+has moved, and "out" means the house is empty. A fall by one person while
+another is moving about can't be detected from room sensors; panic buttons
+cover that.
+
+### Setup lists
+
+The setup step asks for three lists. Each is optional, but without them the
+matching states can't be told apart.
+
+- **Outside doors**: the doors she goes out through. Without them the
+  integration can't tell that she is out, so a long outing looks like a fall.
+  Tick only real outside doors: not the fridge, a cupboard or an internal
+  door.
+- **Bedrooms**: the rooms she sleeps in. Rooms with "bedroom" in the name
+  are pre-ticked. Without them a night's sleep is judged in every room.
+- **Sitting appliances**: the TV, or a plug that shows she is sitting down
+  with something on. Quiet time with one on is allowed to run longer, so a
+  film isn't mistaken for a fall.
+
+### States and alerts
+
+| State | Meaning |
+|---|---|
+| Home | Moving about indoors |
+| Home with TV on | Last seen in a room with a sitting appliance on |
+| Asleep | Last seen in a bedroom during her usual night |
+| Lying in | Last seen in a bedroom after the night ends, before the usual lie-in ends |
+| Out | An outside door opened and no indoor movement followed |
+
+Welfare alerts have source `whereabouts` and one of four kinds:
+
+| Kind | Fires when |
+|---|---|
+| `still_at_home` | Home and still for longer than the home limit for that hour |
+| `still_tv` | Home with the TV on and still for 90 minutes |
+| `not_up` | Asleep, and not up an hour after her usual waking time. Also used after a lie-in, when she is still in bed 90 minutes after stirring |
+| `not_back` | House empty for longer than her longest outing so far, plus a quarter |
+
+### What it learns
+
+- the home limit for each hour of the day (between 45 and 60 minutes)
+- her usual waking time
+- when her night starts and ends
+- her longest outing
+
+Each needs 3 days of data. Trips of 24 hours or more are not learned as
+outings. A day's waking time counts once the day is over, and a return to bed
+of an hour or more before noon cancels that morning's waking. Bedtime is the
+first bedroom stretch of an hour or more after 18:00. Until values are
+learned, fixed defaults apply.
+
+### Restarts
+
+Stillness keeps counting through a Home Assistant restart of under 30
+minutes. A longer outage restarts the count from when it ends, except in bed
+or out, where the original time is kept. Stretches of stillness cut short by a
+restart teach slightly shorter limits.
+
+### Upgrading to v8
+
+- The welfare alert with kind `inactivity` and source `house` is replaced by
+  source `whereabouts` and the four kinds above. Automations that match
+  `inactivity` must be changed. The notify blueprint needs nothing.
+- Welfare Status gains `where`, `where_since`, `last_room` and `limit_min`.
+- The "house quiet ratio" option is gone.
+- Set outside doors and sitting appliances after upgrading, in the
+  integration's options, and check the Bedrooms list in the same step.
+- The integration relearns from recorder history. Welfare alerts stay off
+  until 14 days are learned; with Home Assistant's default 10-day recorder
+  that is about 4 days of waiting. Panic buttons keep working throughout.
+- A sensor that stops reporting while still shown as available can cause
+  stillness alerts in the rooms it covered until it is fixed. If one of these
+  appears, the device health repair for that sensor is the likely cause.
 
 ## Notifications
 
@@ -213,7 +295,7 @@ a site that had a notify service gets a repair issue linking the blueprint.
 Learned data from v4 is discarded — the storage schema is bumped to a new
 major version, so nothing is carried forward.
 
-The config entry migrates automatically (it is now at version 12). Your previously
+The config entry migrates automatically (it is now at version 13). Your previously
 monitored entities are kept but left unassigned, and a repair issue asks
 you to place them into the new categories under the integration's options.
 Until you do, nothing is monitored and the integration creates no entities.
@@ -283,6 +365,23 @@ python scripts/export_influx.py --sidecar site.sidecar.json \
 `--context` also writes everything else recorded (batteries, `sensor.uptime`
 restarts, Behaviour Monitor's own sensors) to a separate file. These exports
 are not anonymised; keep them out of git.
+
+### Scoring a change against real data
+
+`scripts/scorecard.py` replays a fixture through the current engine and
+scores it against a hand-written truth file of what really happened (outings,
+visitors, sensor faults, maintenance, real concerns, data gaps; the format is
+in the script's docstring). It reports welfare alerts the truth explains or
+doesn't, sensor faults caught or missed, restart storms, information-alert
+volume, panic presses, and injected falls: on ordinary days after learning it
+stops all activity at set times and measures how long welfare takes to alert.
+
+```bash
+python scripts/scorecard.py site.jsonl --truth site.truth.yaml \
+  --fall-times 10:00,15:00 --fall-days 10
+```
+
+Run it before and after a change to see the difference on real data.
 
 ## Development
 

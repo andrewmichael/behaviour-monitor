@@ -14,13 +14,18 @@ from .drift_detector import DriftConfig, DriftDetector
 from .entity_routine import EntityRoutineModel, RoutineConfig
 from .events import ActivityEvent, Category, HealthEvent
 from .health_tracker import HealthConfig, HealthTracker
-from .house_model import HouseAssessment, HouseConfig, HouseModel
+from .house_model import HouseConfig, HouseModel
 from .normaliser import Normaliser, NormaliserConfig
 from .slots import confidence, iso_day
+from .whereabouts import Whereabouts, WhereaboutsConfig
 
 # 2: chain pairs, steps and chains are keyed by three-hour time bucket,
 # so a store written by schema 1 carries no usable chain learning.
-SCHEMA_VERSION = 2
+# 3: whereabouts replaces the house inactivity alert; its learning comes
+# from history, so the store is relearned from the recorder.
+SCHEMA_VERSION = 3
+# A poll gap this long may hide movement, so the stillness clock restarts.
+POLL_GAP = timedelta(minutes=30)
 
 
 def _no_gap(entity_id: str) -> float | None:
@@ -44,6 +49,7 @@ class EngineConfig:
     drift: DriftConfig = field(default_factory=DriftConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     router: RouterConfig = field(default_factory=RouterConfig)
+    whereabouts: WhereaboutsConfig = field(default_factory=WhereaboutsConfig)
     learning_days: int = 14
     window_days: int = 28
 
@@ -51,19 +57,12 @@ class EngineConfig:
     def from_options(cls, o: dict[str, Any]) -> "EngineConfig":
         ld = int(o.get("learning_days", 14))
         wd = int(o.get("window_days", 28))
-        low = float(o.get("house_low_ratio", 3.0))
         return cls(
             normaliser=NormaliserConfig(
                 motion_debounce_s=float(o.get("motion_debounce_s", 90)),
                 plug_margin_w=float(o.get("plug_margin_w", 5)),
             ),
-            house=HouseConfig(
-                learning_days=ld,
-                window_days=wd,
-                low_ratio=low,
-                medium_ratio=low * 2,
-                high_ratio=low * 4,
-            ),
+            house=HouseConfig(learning_days=ld, window_days=wd),
             routine=RoutineConfig(learning_days=ld, window_days=wd),
             chain=ChainConfig(
                 window_s=float(o.get("chain_window_s", 1800)),
@@ -79,6 +78,13 @@ class EngineConfig:
                     str(o.get("attention_min_severity", "medium"))
                 ),
                 timing_promote_days=int(o.get("timing_promote_days", 7)),
+            ),
+            whereabouts=WhereaboutsConfig(
+                outside_doors=frozenset(o.get("outside_doors") or ()),
+                sitting_appliances=frozenset(o.get("sitting_appliances") or ()),
+                bedrooms=(
+                    frozenset(o["bedrooms"]) if o.get("bedrooms") is not None else None
+                ),
             ),
             learning_days=ld,
             window_days=wd,
@@ -96,6 +102,8 @@ class Engine:
         self._drift = DriftDetector(config.drift)
         self._health = HealthTracker(config.health)
         self._router = AlertRouter(config.router)
+        self._where = Whereabouts(config.whereabouts)
+        self._last_poll: datetime | None = None
         self._holiday = False
         self._holiday_just_ended = False
         self._snooze_until: datetime | None = None
@@ -134,6 +142,7 @@ class Engine:
 
     def rename_room(self, old: str, new: str) -> None:
         self._chains.rename_room(old, new)
+        self._where.rename_room(old, new)
         self._specs = {
             k: EntitySpec(v.entity_id, v.category, new if v.room == old else v.room)
             for k, v in self._specs.items()
@@ -234,6 +243,7 @@ class Engine:
                 self._today, self._today_count = ev.timestamp.date(), 0
             self._today_count += 1
         self._house.record(ev)
+        self._where.record(ev)
         self._routines.record(ev)
         self._chains.record(ev)
         self._health.record_activity(ev)
@@ -243,6 +253,16 @@ class Engine:
     def poll(self, now: datetime) -> list[DeliveryAction]:
         for ev in self._normaliser.flush(now):
             self._learn(ev)
+        # She may have moved while nothing was fed in. Flushed events come
+        # first: they predate ``now`` and a moved clock would drop them. The
+        # first poll back from holiday restarts every clock below anyway.
+        if (
+            self._last_poll is not None
+            and now - self._last_poll >= POLL_GAP
+            and not self._holiday_just_ended
+        ):
+            self._where.restart_clock(now, keep_anchored=True)
+        self._last_poll = now
 
         if self._holiday:
             # No rollover while paused: there is nothing learned to finalise,
@@ -255,6 +275,7 @@ class Engine:
             # been quiet" needs to restart, or the pause itself looks like an
             # anomaly to every downstream detector.
             self._house.restart_clock(now)
+            self._where.restart_clock(now)
             self._chains.clear_runs()
             self._routines.restart_clock(now)
             self._health.restart_clock(now)
@@ -269,6 +290,7 @@ class Engine:
                 self._chains.recompute()
                 cutoff = now.date() - timedelta(days=self._cfg.window_days)
                 self._house.prune(cutoff)
+                self._where.prune(cutoff)
                 self._routines.prune(cutoff)
                 self._chains.prune(cutoff)
                 self._drift.prune(cutoff)
@@ -287,38 +309,18 @@ class Engine:
                 self._house.last_activity,
             )
         )
-        if self._holiday:
-            assessment = HouseAssessment(
-                None, None, None, None, False, self._house.last_room
-            )
-        else:
-            live = self._health.live_fraction(now)
-            assessment = self._house.evaluate(now, live_fraction=live)
+        # On holiday nothing is suppressed for want of sensors: nothing is
+        # raised at all, so the site must not read as degraded either.
+        live = 1.0 if self._holiday else self._health.live_fraction(now)
+        names = self.drift_names()
+        where = self._where.evaluate(now, live, names=lambda eid: names.get(eid, eid))
         if learned and not self._holiday:
-            if assessment.severity is not None:
-                hours = (assessment.gap_s or 0) / 3600
-                alerts.append(
-                    Alert(
-                        AlertClass.WELFARE,
-                        "house",
-                        "inactivity",
-                        assessment.severity,
-                        f"No activity anywhere for {hours:.1f} h; last seen in "
-                        f"{assessment.last_room} (usual gap "
-                        f"{((assessment.expected_s or 0) / 60):.0f} min)",
-                        now,
-                        {
-                            "gap_s": assessment.gap_s,
-                            "expected_s": assessment.expected_s,
-                            "ratio": assessment.ratio,
-                            "last_room": assessment.last_room,
-                        },
-                    )
-                )
+            if where.alert is not None:
+                alerts.append(where.alert)
             alerts.extend(self._routines.evaluate(now))
             alerts.extend(self._chains.evaluate(now))
             alerts.extend(self._last_stat)
-        self._degraded = assessment.degraded
+        self._degraded = where.degraded
         return self._router.submit(
             alerts, now, snoozed=self.is_snoozed(now), holiday=self._holiday
         )
@@ -396,6 +398,8 @@ class Engine:
             if self._house.last_activity
             else None
         )
+        # Evaluating changes nothing, so the snapshot reads it fresh for ``now``.
+        w = self._where.evaluate(now)
         return {
             "welfare": {
                 "status": status,
@@ -418,6 +422,12 @@ class Engine:
                 ),
                 "rooms_today": sorted(self._house.rooms_visited(now.date())),
                 "daily_count": self._today_count if self._today == now.date() else 0,
+            },
+            "whereabouts": {
+                "where": w.where.value if w.where else None,
+                "where_since": w.since.isoformat() if w.since else None,
+                "last_room": w.room,
+                "limit_min": w.limit_min,
             },
             "anomalies": [
                 a.to_dict() for a in open_alerts if a.cls is AlertClass.STATISTICAL
@@ -482,6 +492,7 @@ class Engine:
             "schema": SCHEMA_VERSION,
             "normaliser": self._normaliser.to_dict(),
             "house": self._house.to_dict(),
+            "whereabouts": self._where.to_dict(),
             "routines": self._routines.to_dict(),
             "chains": self._chains.to_dict(),
             "drift": self._drift.to_dict(),
@@ -504,6 +515,7 @@ class Engine:
                 ),
                 "today": iso_day(self._today) if self._today else None,
                 "today_count": self._today_count,
+                "last_poll": self._last_poll.isoformat() if self._last_poll else None,
             },
         }
 
@@ -518,6 +530,9 @@ class Engine:
             data.get("normaliser", {}), config.normaliser
         )
         e._house = HouseModel.from_dict(data.get("house", {}), config.house)
+        e._where = Whereabouts.from_dict(
+            data.get("whereabouts", {}), config.whereabouts
+        )
         e._routines = EntityRoutineModel.from_dict(
             data.get("routines", {}), config.routine
         )
@@ -546,6 +561,9 @@ class Engine:
             )
             e._today = date.fromisoformat(m["today"]) if m.get("today") else None
             e._today_count = int(m.get("today_count", 0))
+            e._last_poll = (
+                datetime.fromisoformat(m["last_poll"]) if m.get("last_poll") else None
+            )
             e._last_stat = [Alert.from_dict(a) for a in data.get("last_stat", [])]
         except (KeyError, TypeError, ValueError):
             pass

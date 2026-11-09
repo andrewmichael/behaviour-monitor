@@ -16,11 +16,14 @@ from .const import (
     BLUEPRINT_URL,
     CATEGORY_CONF_KEYS,
     CONF_ATTENTION_MIN_SEVERITY,
+    CONF_OUTSIDE_DOORS,
     CONF_SITE_NAME,
+    CONF_SITTING_APPLIANCES,
     CONFIG_VERSION,
     DOMAIN,
     ISSUE_ASSIGN_CATEGORIES,
     ISSUE_NOTIFICATIONS_MOVED,
+    LEGACY_CONF_HOUSE_LOW_RATIO,
     LEGACY_CONF_MONITORED_ENTITIES,
     LEGACY_CONF_NOTIFY_SERVICE,
     LEGACY_CONF_PUSH_MIN_SEVERITY,
@@ -99,10 +102,17 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options = dict(OPTION_DEFAULTS)
     else:
         legacy = []
-        options[CONF_ATTENTION_MIN_SEVERITY] = options.pop(
-            LEGACY_CONF_PUSH_MIN_SEVERITY, OPTION_DEFAULTS[CONF_ATTENTION_MIN_SEVERITY]
-        )
-        options.pop(LEGACY_CONF_PUSH_REPEAT_S, None)
+        if entry.version < 12:
+            options[CONF_ATTENTION_MIN_SEVERITY] = options.pop(
+                LEGACY_CONF_PUSH_MIN_SEVERITY,
+                OPTION_DEFAULTS[CONF_ATTENTION_MIN_SEVERITY],
+            )
+            options.pop(LEGACY_CONF_PUSH_REPEAT_S, None)
+    # v13: the whereabouts lists start empty and bedrooms stays unset, so the
+    # engine picks the rooms named "bedroom". The house silence ratio is gone.
+    options.setdefault(CONF_OUTSIDE_DOORS, [])
+    options.setdefault(CONF_SITTING_APPLIANCES, [])
+    options.pop(LEGACY_CONF_HOUSE_LOW_RATIO, None)
     hass.config_entries.async_update_entry(
         entry, data=data, options=options, version=CONFIG_VERSION
     )
