@@ -14,10 +14,12 @@ out depends on what happens in the next ten minutes, so that interval reads as
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
+from typing import Any
 
 from .events import ActivityEvent, EventKind
+from .slots import iso_day
 
 
 class Where(str, Enum):
@@ -45,6 +47,29 @@ class WhereaboutsConfig:
     lie_in_allowance_min: float = 90.0
     not_up_offset_min: float = 60.0
     outing_factor: float = 1.25
+    # Learning: samples from this many distinct days before a value is trusted.
+    min_days: int = 3
+    home_quantile: float = 0.995
+    waking_high_quantile: float = 0.95
+    waking_low_quantile: float = 0.05
+    night_start_quantile: float = 0.05
+    # Fallbacks for waking times until learning completes.
+    usual_waking_fallback_min: int = 9 * 60
+    earliest_waking_fallback_min: int = 6 * 60
+    outing_fallback_min: float = 240.0
+    # Offsets and clamps (minutes; times of day are minutes after midnight).
+    night_start_offset_min: int = 60
+    night_start_clamp: tuple[int, int] = (18 * 60, 25 * 60)
+    night_end_offset_min: int = 60
+    night_end_clamp: tuple[int, int] = (3 * 60, 9 * 60)
+    lie_in_offset_min: int = 120
+    lie_in_latest_min: int = 13 * 60
+    # The main sleep starts between these times (wrapping midnight).
+    sleep_window: tuple[int, int] = (18 * 60, 4 * 60)
+    # Waking is the first activity at or after this time.
+    waking_after_min: int = 4 * 60
+    # An outing this long or longer is a trip away, not an outing.
+    max_outing_min: float = 24 * 60.0
     # Night used until learning completes.
     night_start_min: int = 20 * 60
     night_end_min: int = 5 * 60
@@ -68,6 +93,12 @@ class Interval:
     door: str | None = None
 
 
+def _quantile(xs: list[float], p: float) -> float:
+    """``sorted(xs)[min(len-1, int(p*len))]``; ``xs`` must not be empty."""
+    ys = sorted(xs)
+    return ys[min(len(ys) - 1, int(p * len(ys)))]
+
+
 def _in_window(minute: int, begin: int, end: int) -> bool:
     """True when ``minute`` is in [begin, end), wrapping midnight."""
     if begin <= end:
@@ -84,19 +115,192 @@ class Whereabouts:
         self._door_room: str | None = None
         self._last_room: str | None = None
         self._tvs_on: dict[str, str] = {}
+        # Learned, all keyed by ISO day.
+        self._home: dict[str, dict[int, list[float]]] = {}
+        self._outs: dict[str, list[float]] = {}
+        # Night key (the evening's date) -> (start, length in minutes).
+        self._sleeps: dict[str, tuple[datetime, float]] = {}
+        # Day -> minutes after midnight of the first non-bedroom activity.
+        self._wakes: dict[str, int] = {}
 
-    # Task 2 swaps these for learned values.
+    # ------------------------------------------------------------- learned
+
+    def home_limit_min(self, hour: int) -> float:
+        """Longest ordinary stillness at ``hour`` before it is worth an alert."""
+        cfg = self._cfg
+        days = [d[hour] for d in self._home.values() if d.get(hour)]
+        if len(days) < cfg.min_days:
+            return cfg.home_cap_min
+        samples = [m for lengths in days for m in lengths]
+        q = _quantile(samples, cfg.home_quantile)
+        return max(cfg.home_floor_min, min(cfg.home_cap_min, q))
+
+    def _wakings(self) -> dict[str, int]:
+        wakes = dict(self._wakes)
+        if self._cfg.bedrooms == frozenset():
+            # No bedrooms chosen: she is up when the main sleep ends.
+            for start, length in self._sleeps.values():
+                end = start + timedelta(minutes=length)
+                minute = end.hour * 60 + end.minute
+                if minute >= self._cfg.waking_after_min:
+                    wakes.setdefault(iso_day(end.date()), minute)
+        return wakes
+
+    def usual_waking_min(self) -> int:
+        """Minutes after midnight she is usually up by (95th percentile)."""
+        wakes = list(self._wakings().values())
+        if len(wakes) < self._cfg.min_days:
+            return self._cfg.usual_waking_fallback_min
+        return int(_quantile(wakes, self._cfg.waking_high_quantile))
+
+    def earliest_waking_min(self) -> int:
+        """Minutes after midnight of her earliest waking (5th percentile)."""
+        wakes = list(self._wakings().values())
+        if len(wakes) < self._cfg.min_days:
+            return self._cfg.earliest_waking_fallback_min
+        return int(_quantile(wakes, self._cfg.waking_low_quantile))
+
+    def longest_out_min(self) -> float | None:
+        """Her longest outing so far, or None before any."""
+        lengths = [m for day in self._outs.values() for m in day]
+        return max(lengths) if lengths else None
+
     def night_start(self) -> int:
         """Minutes after midnight when the night begins."""
-        return self._cfg.night_start_min
+        cfg = self._cfg
+        if len(self._sleeps) < cfg.min_days:
+            return cfg.night_start_min
+        # Measured from noon so that 23:30 and 00:30 sort the right way round.
+        from_noon = [
+            (s.hour * 60 + s.minute - 12 * 60) % 1440 for s, _ in self._sleeps.values()
+        ]
+        low, high = cfg.night_start_clamp
+        value = _quantile(from_noon, cfg.night_start_quantile)
+        value -= cfg.night_start_offset_min
+        value = max(low - 12 * 60, min(high - 12 * 60, value))
+        return int((value + 12 * 60) % 1440)
 
     def night_end(self) -> int:
         """Minutes after midnight when the night ends."""
-        return self._cfg.night_end_min
+        cfg = self._cfg
+        if len(self._wakings()) < cfg.min_days:
+            return cfg.night_end_min
+        low, high = cfg.night_end_clamp
+        value = self.earliest_waking_min() - cfg.night_end_offset_min
+        return max(low, min(high, value))
 
     def lie_in_end(self) -> int:
         """Minutes after midnight when the lie-in ends."""
-        return self._cfg.lie_in_end_min
+        cfg = self._cfg
+        if len(self._wakings()) < cfg.min_days:
+            return cfg.lie_in_end_min
+        value = self.usual_waking_min() + cfg.lie_in_offset_min
+        return max(
+            self.night_end() + cfg.lie_in_offset_min, min(cfg.lie_in_latest_min, value)
+        )
+
+    def _close(self, iv: Interval, end: datetime) -> None:
+        """Learn from ``iv``, whose length is known now that ``end`` came."""
+        cfg = self._cfg
+        length = (end - iv.start).total_seconds() / 60
+        out = iv.door is not None and length >= cfg.out_after_min
+        day = iso_day(iv.start.date())
+        if out:
+            if length < cfg.max_outing_min:
+                self._outs.setdefault(day, []).append(length)
+            return
+        if iv.where is Where.HOME:
+            hours = self._home.setdefault(day, {})
+            hours.setdefault(iv.start.hour, []).append(length)
+        minute = iv.start.hour * 60 + iv.start.minute
+        if self.is_bedroom(iv.room) and _in_window(minute, *cfg.sleep_window):
+            night = iv.start.date()
+            if iv.start.hour < 12:
+                night -= timedelta(days=1)
+            key = iso_day(night)
+            best = self._sleeps.get(key)
+            if best is None or length > best[1]:
+                self._sleeps[key] = (iv.start, length)
+
+    def _begin(self, iv: Interval) -> None:
+        if self._interval is not None:
+            self._close(self._interval, iv.start)
+        self._interval = iv
+
+    def restart_clock(self, now: datetime) -> None:
+        """After a gap in polling: keep the state, count stillness from ``now``."""
+        if self._interval is not None:
+            self._interval = replace(self._interval, start=now)
+
+    def prune(self, before: date) -> None:
+        """Forget days before ``before``."""
+        cutoff = iso_day(before)
+        self._home = {d: v for d, v in self._home.items() if d >= cutoff}
+        self._outs = {d: v for d, v in self._outs.items() if d >= cutoff}
+        self._sleeps = {d: v for d, v in self._sleeps.items() if d >= cutoff}
+        self._wakes = {d: v for d, v in self._wakes.items() if d >= cutoff}
+
+    # --------------------------------------------------------- persistence
+
+    def to_dict(self) -> dict[str, Any]:
+        iv = self._interval
+        return {
+            "home": {
+                d: {str(h): list(v) for h, v in hours.items()}
+                for d, hours in self._home.items()
+            },
+            "outs": {d: list(v) for d, v in self._outs.items()},
+            "sleeps": {
+                d: [s.isoformat(), length] for d, (s, length) in self._sleeps.items()
+            },
+            "wakes": dict(self._wakes),
+            "interval": (
+                {
+                    "start": iv.start.isoformat(),
+                    "where": iv.where.value,
+                    "room": iv.room,
+                    "tv": iv.tv,
+                    "door": iv.door,
+                }
+                if iv
+                else None
+            ),
+            "door_room": self._door_room,
+            "last_room": self._last_room,
+            "tvs_on": dict(self._tvs_on),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, Any], config: WhereaboutsConfig
+    ) -> "Whereabouts":
+        w = cls(config)
+        try:
+            w._home = {
+                d: {int(h): [float(x) for x in v] for h, v in hours.items()}
+                for d, hours in data["home"].items()
+            }
+            w._outs = {d: [float(x) for x in v] for d, v in data["outs"].items()}
+            w._sleeps = {
+                d: (datetime.fromisoformat(s), float(length))
+                for d, (s, length) in data["sleeps"].items()
+            }
+            w._wakes = {d: int(m) for d, m in data["wakes"].items()}
+            raw = data.get("interval")
+            if raw:
+                w._interval = Interval(
+                    datetime.fromisoformat(raw["start"]),
+                    Where(raw["where"]),
+                    raw["room"],
+                    bool(raw["tv"]),
+                    raw["door"],
+                )
+            w._door_room = data.get("door_room")
+            w._last_room = data.get("last_room")
+            w._tvs_on = dict(data.get("tvs_on", {}))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return cls(config)
+        return w
 
     def is_bedroom(self, room: str | None) -> bool:
         """Whether the night rules apply to ``room``."""
@@ -134,28 +338,44 @@ class Whereabouts:
             < timedelta(minutes=self._cfg.door_room_ignore_min)
         ):
             return
+        self._note_waking(ev)
         if ev.kind is EventKind.APPLIANCE_ON and sitting:
             self._tvs_on[ev.entity_id] = ev.room
         if ev.kind is not EventKind.OPEN:
             self._last_room = ev.room
         if ev.kind is EventKind.OPEN and ev.entity_id in self._cfg.outside_doors:
             self._door_room = ev.room
-            self._interval = Interval(
-                ev.timestamp,
-                Where.HOME,
-                self._last_room,
-                self._tv_on_in(self._last_room),
-                ev.entity_id,
+            self._begin(
+                Interval(
+                    ev.timestamp,
+                    Where.HOME,
+                    self._last_room,
+                    self._tv_on_in(self._last_room),
+                    ev.entity_id,
+                )
             )
             return
         self._door_room = None
         tv = self._tv_on_in(self._last_room)
-        self._interval = Interval(
-            ev.timestamp,
-            self._classify(ev.timestamp, self._last_room, tv),
-            self._last_room,
-            tv,
+        self._begin(
+            Interval(
+                ev.timestamp,
+                self._classify(ev.timestamp, self._last_room, tv),
+                self._last_room,
+                tv,
+            )
         )
+
+    def _note_waking(self, ev: ActivityEvent) -> None:
+        """Remember the day's first activity outside a bedroom after 04:00."""
+        minute = ev.timestamp.hour * 60 + ev.timestamp.minute
+        if minute < self._cfg.waking_after_min or self._cfg.bedrooms == frozenset():
+            return
+        if self.is_bedroom(ev.room):
+            return
+        day = iso_day(ev.timestamp.date())
+        if day not in self._wakes or minute < self._wakes[day]:
+            self._wakes[day] = minute
 
     def current(self, now: datetime) -> Interval | None:
         """The interval in force at ``now``, or None before any activity."""
