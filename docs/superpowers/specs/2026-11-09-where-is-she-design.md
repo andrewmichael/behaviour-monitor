@@ -155,12 +155,17 @@ closing are not activity.
   in `home` that start in that hour, clamped to 45–60 minutes. Before
   learning completes, 60 minutes.
 - **Usual waking time:** the 95th percentile, over days, of the first
-  activity outside a bedroom after 04:00. Before learning, 09:00.
-- **Longest outing:** the longest `out` interval seen. Before any outing is
-  seen, 4 hours.
-- **Main sleep, per night:** the longest stillness interval that starts
-  between 18:00 and 04:00 in a bedroom (in any room if no bedrooms are
-  chosen).
+  activity outside a bedroom after 04:00. A day's waking counts only once the
+  day is over. A bedroom interval of 60 minutes or more starting before 12:00
+  cancels that day's waking candidate (she went back to bed). Before
+  learning, 09:00.
+- **Longest outing:** the longest `out` interval seen. Outings of 24 hours
+  or more are not learned. Before any outing is seen, 4 hours.
+- **Main sleep, per night (bedtime):** the start of the earliest bedroom
+  interval that starts between 18:00 and 04:00 and lasts 60 minutes or more
+  (in any room if no bedrooms are chosen).
+- **Minimum data:** every learned value, the longest outing included, needs
+  3 days of data before it replaces its fixed default.
 - **Night start:** the 5th percentile of main-sleep start times, minus 60
   minutes, clamped to 18:00–01:00. Before learning, 20:00.
 - **Night end:** the 5th percentile of usual waking time (the earliest she
@@ -220,7 +225,7 @@ Welfare class, group `attention` through the existing router, replacing the
 |---|---|---|
 | `still_at_home` | "No movement for 62 min; last seen in the Kitchen at 10:12" | Medium at the limit, High at 1.5× the limit |
 | `still_tv` | "No movement for 91 min with the Back room TV on; last seen at 19:05" | Medium, High at 1.5× |
-| `not_up` | "Not up yet; usually up by 08:40, last seen in the Back bedroom at 22:30" | Medium, High after a further hour |
+| `not_up` (also used for a lying-in alert) | "Not up yet; usually up by 08:40, last seen in the Back bedroom at 22:30" | Medium, High after a further hour |
 | `not_back` | "Out for 4h 30m, longer than usual (longest 3h 35m); left by the Side door at 10:13" | Medium, High after a further hour |
 
 The alert clears when activity resumes, as today. The router's routine-sign
@@ -308,3 +313,7 @@ passes `--fall-times`.
   or similar) fed by the engine, or an evolution of `house_model.py`.
 - How quiet gaps are stored for the percentile.
 - Migration details for the store.
+
+## Acceptance result (9 Nov 2026)
+
+Biddulph Road, 43 days of data, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 95% (124 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 5, of which 4 are explained by the truth file and 1 is unexplained (2026-10-29 still_at_home, 45 min, Kitchen). None fell inside a confirmed outing.
