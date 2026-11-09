@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.events import (
     ActivityEvent,
@@ -326,13 +326,29 @@ def test_learned_night_changes_state_of_a_bedroom_interval():
     assert w.current(D(5, 5, 20)).where is Where.ASLEEP
 
 
+def _outing(w: Whereabouts, day: int, minutes: int) -> None:
+    w.record(_door(D(day, 10, 0)))
+    end = D(day, 10, 0) + timedelta(minutes=minutes)
+    w.record(_presence(end, "Hall"))
+
+
 def test_longest_outing_ignores_trips_of_a_day_or_more():
     w = Whereabouts(CFG)
-    w.record(_door(D(1, 10, 0)))
-    w.record(_presence(D(1, 11, 30), "Hall"))  # out 90 min
-    w.record(_door(D(2, 8, 0)))
-    w.record(_presence(D(3, 14, 0), "Hall"))  # out 30 h
+    _outing(w, 1, 90)
+    _outing(w, 2, 30 * 60)  # 30 h: a trip away, not counted
+    _outing(w, 4, 45)
+    _outing(w, 5, 60)
     assert w.longest_out_min() == 90
+
+
+def test_longest_outing_waits_for_outings_on_three_days():
+    w = Whereabouts(CFG)
+    _outing(w, 1, 15)
+    _outing(w, 2, 30)
+    _outing(w, 2, 20)  # same day again does not add a day
+    assert w.longest_out_min() is None
+    _outing(w, 3, 25)
+    assert w.longest_out_min() == 30
 
 
 def test_short_door_interval_is_not_an_outing_and_counts_as_home():
@@ -359,26 +375,26 @@ def test_restart_clock_keeps_state_and_moves_start():
 def test_round_trip_and_prune():
     w = Whereabouts(CFG)
     _learn_nights(w)
-    w.record(_door(D(4, 9, 0)))
-    w.record(_presence(D(4, 10, 30), "Hall"))
-    w.record(_tv(D(4, 19, 0), "Lounge"))
+    for day in (5, 6, 7):
+        _outing(w, day, 90)
+    w.record(_tv(D(7, 19, 0), "Lounge"))
     clone = Whereabouts.from_dict(w.to_dict(), CFG)
     assert clone.to_dict() == w.to_dict()
-    assert clone.current(D(4, 19, 10)) == w.current(D(4, 19, 10))
+    assert clone.current(D(7, 19, 10)) == w.current(D(7, 19, 10))
     assert (clone.night_start(), clone.night_end(), clone.lie_in_end()) == (
         w.night_start(),
         w.night_end(),
         w.lie_in_end(),
     )
     assert clone.longest_out_min() == 90
-    clone.record(_tv(D(4, 19, 30), "Lounge", on=False))
-    clone.record(_presence(D(4, 19, 40), "Lounge"))
-    assert clone.current(D(4, 19, 50)).where is Where.HOME
+    clone.record(_tv(D(7, 19, 30), "Lounge", on=False))
+    clone.record(_presence(D(7, 19, 40), "Lounge"))
+    assert clone.current(D(7, 19, 50)).where is Where.HOME
 
-    w.prune(date(2026, 11, 4))
+    w.prune(date(2026, 11, 5))
     assert w.longest_out_min() == 90
     assert w.night_start() == 1200  # earlier days gone: back to the fallback
-    w.prune(date(2026, 11, 5))
+    w.prune(date(2026, 11, 7))
     assert w.longest_out_min() is None
 
 

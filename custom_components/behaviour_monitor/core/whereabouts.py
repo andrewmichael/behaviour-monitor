@@ -161,9 +161,11 @@ class Whereabouts:
         return int(_quantile(wakes, self._cfg.waking_low_quantile))
 
     def longest_out_min(self) -> float | None:
-        """Her longest outing so far, or None before any."""
-        lengths = [m for day in self._outs.values() for m in day]
-        return max(lengths) if lengths else None
+        """Her longest outing, or None until outings on enough days."""
+        days = [lengths for lengths in self._outs.values() if lengths]
+        if len(days) < self._cfg.min_days:
+            return None
+        return max(m for lengths in days for m in lengths)
 
     def night_start(self) -> int:
         """Minutes after midnight when the night begins."""
