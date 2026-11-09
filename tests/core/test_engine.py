@@ -33,7 +33,8 @@ def _pulse(e: Engine, eid: str, ts: datetime, learn_only: bool = True) -> list:
 
 
 def _day(e: Engine, day: datetime, learn_only: bool = True) -> None:
-    """07:00 bed, 07:04 bath, 07:08 kitchen + kettle, then kitchen every 30 min until 21:00."""
+    """07:00 bed, 07:04 bath, 07:08 kitchen + kettle, kitchen every 30 min
+    until 21:00, then bed at 21:10."""
     _pulse(e, "binary_sensor.bed", day + timedelta(hours=7), learn_only)
     _pulse(e, "binary_sensor.bath", day + timedelta(hours=7, minutes=4), learn_only)
     _pulse(e, "binary_sensor.kit", day + timedelta(hours=7, minutes=8), learn_only)
@@ -55,6 +56,7 @@ def _day(e: Engine, day: datetime, learn_only: bool = True) -> None:
     while t < day + timedelta(hours=21):
         _pulse(e, "binary_sensor.kit", t, learn_only)
         t += timedelta(minutes=30)
+    _pulse(e, "binary_sensor.bed", day + timedelta(hours=21, minutes=10), learn_only)
     e.poll(day + timedelta(hours=23, minutes=59))
 
 
@@ -122,7 +124,7 @@ def test_daytime_silence_raises_welfare_after_training():
         and a.event in ("opened", "escalated", "reminder")
         and a.group == "attention"
     ]
-    assert pushes and pushes[0].alert.kind == "inactivity"
+    assert pushes and pushes[0].alert.kind == "still_at_home"
     snap = e.snapshot(quiet + timedelta(minutes=260))
     assert snap["welfare"]["status"] in ("medium", "high")
     assert "Kitchen" in snap["house"]["last_room"]
@@ -264,7 +266,7 @@ def test_holiday_pauses_the_ladder_and_ends_cleanly():
         ]
         t += timedelta(minutes=10)
     assert pushes
-    assert pushes[0].alert.kind == "inactivity"
+    assert pushes[0].alert.kind == "still_at_home"
     assert pushes[0].alert.raised_at > day18_noon
     # the health clock also restarted, so no entity looks silent on return
     assert not any(
@@ -375,3 +377,134 @@ def test_drift_names_use_room_and_type_and_disambiguate():
     assert names["sensor.kettle"] == "Kitchen plug"
     assert names["binary_sensor.back_door_door"] == "Back door"
     assert names["binary_sensor.side_door_door"] == "Side door"
+
+
+DOOR = EntitySpec("binary_sensor.side_door", Category.CONTACT, "Utility")
+
+
+def _door_engine() -> Engine:
+    e = Engine(
+        EngineConfig.from_options(
+            {"learning_days": 14, "outside_doors": ["binary_sensor.side_door"]}
+        ),
+        ENTS + [DOOR],
+    )
+    _train(e, days=15)
+    return e
+
+
+def _opened(actions: list) -> list:
+    return [
+        a.alert
+        for a in actions
+        if a.action == "event"
+        and a.event in ("opened", "escalated", "reminder")
+        and a.group == "attention"
+    ]
+
+
+def _open_where(e: Engine) -> list[Alert]:
+    return [a for a in e._router.open_alerts if a.source == "whereabouts"]
+
+
+def test_kitchen_stillness_raises_still_at_home_within_an_hour():
+    e = _door_engine()
+    day = MON + timedelta(days=15)
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=10), learn_only=False)
+    acts = []
+    for m in range(0, 66):
+        acts += e.poll(day + timedelta(hours=10, minutes=m))
+    opened = _opened(acts)
+    assert opened
+    assert (opened[0].cls, opened[0].source, opened[0].kind) == (
+        AlertClass.WELFARE,
+        "whereabouts",
+        "still_at_home",
+    )
+    assert "Kitchen" in opened[0].details["room"]
+
+
+def test_outing_through_side_door_raises_no_fall_alert():
+    e = _door_engine()
+    day = MON + timedelta(days=15)
+    door_at = day + timedelta(hours=10)
+    e.handle_state("binary_sensor.side_door", "off", "on", door_at)
+    e.handle_state(
+        "binary_sensor.side_door", "on", "off", door_at + timedelta(seconds=30)
+    )
+    acts = []
+    for m in range(0, 181, 5):
+        acts += e.poll(door_at + timedelta(minutes=m))
+    assert [a for a in _opened(acts) if a.cls is AlertClass.WELFARE] == []
+    assert e.snapshot(door_at + timedelta(hours=3))["whereabouts"]["where"] == "out"
+
+
+def test_short_poll_gap_keeps_counting_and_long_gap_restarts():
+    day = MON + timedelta(days=15)
+    ten = day + timedelta(hours=10)
+
+    e = _door_engine()
+    _pulse(e, "binary_sensor.kit", ten)
+    for m in (20, 45, 65):  # 25 and 20 minute gaps: the clock keeps running
+        e.poll(ten + timedelta(minutes=m))
+    assert [a.kind for a in _open_where(e)] == ["still_at_home"]
+
+    e = _door_engine()
+    _pulse(e, "binary_sensor.kit", ten)
+    for m in (20, 50, 65):  # a 30 minute gap restarts the clock at 10:50
+        e.poll(ten + timedelta(minutes=m))
+    assert _open_where(e) == []
+    m = 65
+    while not _open_where(e):
+        m += 5
+        e.poll(ten + timedelta(minutes=m))
+    assert m == 95  # 10:50 plus the 45 minute limit
+
+    e = _door_engine()
+    e.handle_state("binary_sensor.side_door", "off", "on", ten)
+    e.handle_state("binary_sensor.side_door", "on", "off", ten + timedelta(seconds=30))
+    e.poll(ten + timedelta(minutes=5))
+    e.poll(ten + timedelta(minutes=15))
+    late = ten + timedelta(minutes=55)  # 40 minute gap
+    e.poll(late)
+    assert e.snapshot(late)["whereabouts"]["where"] == "out"
+
+
+def test_snapshot_has_whereabouts_block():
+    e = _door_engine()
+    day = MON + timedelta(days=15)
+    e.poll(day + timedelta(hours=9, minutes=59))
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=10))
+    now = day + timedelta(hours=10, minutes=5)
+    e.poll(now)
+    w = e.snapshot(now)["whereabouts"]
+    assert set(w) == {"where", "where_since", "last_room", "limit_min"}
+    assert w["where"] == "home" and w["last_room"] == "Kitchen"
+    assert w["where_since"] == (day + timedelta(hours=10)).isoformat()
+    assert w["limit_min"] == 45.0
+    assert _engine().snapshot(MON)["whereabouts"] == {
+        "where": None,
+        "where_since": None,
+        "last_room": None,
+        "limit_min": None,
+    }
+
+
+def test_schema_3_round_trip_keeps_whereabouts_state():
+    e = _door_engine()
+    day = MON + timedelta(days=15)
+    e.poll(day + timedelta(hours=9, minutes=59))
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=10))
+    now = day + timedelta(hours=10, minutes=5)
+    e.poll(now)
+    data = e.to_dict()
+    assert data["schema"] == 3
+    assert data["meta"]["last_poll"] == now.isoformat()
+    e2 = Engine.from_dict(data, e._cfg, ENTS + [DOOR])
+    assert e2._where.to_dict() == e._where.to_dict()
+    assert e2.snapshot(now)["whereabouts"] == e.snapshot(now)["whereabouts"]
+    # The restored last poll still drives the gap check: a 25 minute gap
+    # keeps counting from 10:00, so the alert is due at 10:45.
+    e2.poll(day + timedelta(hours=10, minutes=30))
+    e2.poll(day + timedelta(hours=10, minutes=46))
+    assert [a.kind for a in _open_where(e2)] == ["still_at_home"]

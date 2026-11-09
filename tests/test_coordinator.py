@@ -15,6 +15,7 @@ from custom_components.behaviour_monitor.core.alert_router import (
 )
 from custom_components.behaviour_monitor.core.alerts import Alert, AlertClass, Severity
 from custom_components.behaviour_monitor.core.events import Category
+from custom_components.behaviour_monitor.core.engine import SCHEMA_VERSION
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
 EVENT = "behaviour_monitor_alert"
@@ -422,7 +423,7 @@ async def test_holiday_snooze_reset_roundtrip(coordinator):
     await coordinator.async_reset_learning("binary_sensor.kitchen_motion")
     await coordinator.async_reset_learning()
     saved = coordinator._store._data
-    assert saved["engine"]["schema"] == 2 and saved["site"] == "Test House"
+    assert saved["engine"]["schema"] == SCHEMA_VERSION and saved["site"] == "Test House"
 
 
 @pytest.mark.asyncio
@@ -514,12 +515,14 @@ async def test_setup_survives_recorder_not_loaded(coordinator, mock_hass):
     mock_hass.bus.async_listen.assert_any_call(
         "state_changed", coordinator._handle_state_changed
     )
-    assert coordinator._store._data["engine"]["schema"] == 2
+    assert coordinator._store._data["engine"]["schema"] == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
 async def test_setup_survives_corrupt_engine_section(coordinator):
-    coordinator._store._data = {"engine": {"schema": 2, "house": "not a dict"}}
+    coordinator._store._data = {
+        "engine": {"schema": SCHEMA_VERSION, "house": "not a dict"}
+    }
     coordinator._store._stored_version = coordinator._store.version
     with patch.object(
         coordinator, "_bootstrap_entities", new=AsyncMock()
@@ -532,7 +535,7 @@ async def test_setup_survives_corrupt_engine_section(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
-    assert coordinator._engine.to_dict()["schema"] == 2
+    assert coordinator._engine.to_dict()["schema"] == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -552,7 +555,7 @@ async def test_setup_discards_old_store_version(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
-    assert coordinator._engine.to_dict()["schema"] == 2
+    assert coordinator._engine.to_dict()["schema"] == SCHEMA_VERSION
     assert coordinator._store._data["site"] == "Test House"
 
 
