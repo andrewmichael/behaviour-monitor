@@ -364,6 +364,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # state_changes_during_period takes one entity_id string, not a list,
         # and attributes are never read here.
         fetch = partial(recorder_state_changes_during_period, no_attributes=True)
+        # Every entity's rows are fetched before any is replayed, then merged
+        # by time: the whereabouts model drops events older than its current
+        # interval, so replaying one entity after another would teach it from
+        # the first entity only.
+        replay: list[tuple[datetime, str, str | None, str]] = []
         for entity_id in entity_ids:
             try:
                 rows = await instance.async_add_executor_job(
@@ -386,10 +391,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     prev = None
                     continue
                 ts = dt_util.as_local(state.last_changed)
-                self._engine.handle_state(
-                    entity_id, prev, state.state, ts, learn_only=True
-                )
+                replay.append((ts, entity_id, prev, state.state))
                 prev = state.state
+        # sorted is stable, so rows at the same instant keep entity order.
+        for ts, entity_id, prev, new in sorted(replay, key=lambda r: r[0]):
+            self._engine.handle_state(entity_id, prev, new, ts, learn_only=True)
         # The router has already recorded these as opened, so dropping them
         # here would lose their events for good.
         self._pending.extend((action, end) for action in self._engine.poll(end))

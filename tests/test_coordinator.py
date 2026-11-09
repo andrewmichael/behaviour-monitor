@@ -605,6 +605,48 @@ async def test_bootstrap_replays_recorder_rows(coordinator):
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_replays_all_entities_in_time_order(coordinator):
+    """History from several sensors is merged by time, not replayed per sensor:
+    a model that drops events older than its current interval would otherwise
+    learn from the first sensor only."""
+    kitchen, bed = "binary_sensor.kitchen_motion", "binary_sensor.bed_motion"
+    rows = {
+        kitchen: [
+            _row("on", NOW - timedelta(hours=5)),
+            _row("off", NOW - timedelta(hours=3)),
+            _row("unavailable", NOW - timedelta(hours=2, minutes=30)),
+            _row("on", NOW - timedelta(hours=1)),
+        ],
+        bed: [
+            _row("on", NOW - timedelta(hours=4)),
+            _row("off", NOW - timedelta(hours=2)),
+        ],
+    }
+    instance = _recorder_instance(rows)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        return_value=instance,
+    ), patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ), patch.object(
+        coordinator._engine,
+        "handle_state",
+        wraps=coordinator._engine.handle_state,
+    ) as handled:
+        await coordinator._bootstrap_entities([kitchen, bed])
+    assert [
+        (c.args[0], c.args[1], c.args[2], c.args[3]) for c in handled.call_args_list
+    ] == [
+        (kitchen, None, "on", NOW - timedelta(hours=5)),
+        (bed, None, "on", NOW - timedelta(hours=4)),
+        (kitchen, "on", "off", NOW - timedelta(hours=3)),
+        (bed, "on", "off", NOW - timedelta(hours=2)),
+        (kitchen, None, "on", NOW - timedelta(hours=1)),
+    ]
+    assert all(c.kwargs == {"learn_only": True} for c in handled.call_args_list)
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
     alert = Alert(
         AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
