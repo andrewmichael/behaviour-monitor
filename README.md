@@ -132,7 +132,7 @@ clears it with the Clear panic button or `behaviour_monitor.clear_alert`.
 Behaviour Monitor keeps track of where the person is, in plain terms, and
 raises a welfare alert when she has been still for longer than is normal for
 that place and time. It replaces the old whole-house inactivity alert, and it
-catches a fall in the day within about an hour and a half.
+catches a fall in the day usually within about an hour and a half.
 
 ### Setup lists
 
@@ -181,6 +181,13 @@ of an hour or more before noon cancels that morning's waking. Bedtime is the
 first bedroom stretch of an hour or more after 18:00. Until values are
 learned, fixed defaults apply.
 
+### Restarts
+
+Stillness keeps counting through a Home Assistant restart of under 30
+minutes. A longer outage restarts the count from when it ends, except in bed
+or out, where the original time is kept. Stretches of stillness cut short by a
+restart teach slightly shorter limits.
+
 ### Upgrading to v8
 
 - The welfare alert with kind `inactivity` and source `house` is replaced by
@@ -189,13 +196,13 @@ learned, fixed defaults apply.
 - Welfare Status gains `where`, `where_since`, `last_room` and `limit_min`.
 - The "house quiet ratio" option is gone.
 - Set outside doors and sitting appliances after upgrading, in the
-  integration's options.
+  integration's options, and check the Bedrooms list in the same step.
 - The integration relearns from recorder history. Welfare alerts stay off
   until 14 days are learned; with Home Assistant's default 10-day recorder
   that is about 4 days of waiting. Panic buttons keep working throughout.
 - A sensor that stops reporting while still shown as available can cause
-  stillness alerts in the rooms it covered until it is fixed. The device
-  health repair explains these.
+  stillness alerts in the rooms it covered until it is fixed. If one of these
+  appears, the device health repair for that sensor is the likely cause.
 
 ## Notifications
 
