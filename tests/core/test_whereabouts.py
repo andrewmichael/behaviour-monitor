@@ -201,9 +201,14 @@ def S(h: int, m: int, s: int = 0) -> datetime:
     return datetime(2026, 11, 9, h, m, s, tzinfo=timezone.utc)
 
 
-def _burst_end(ts: datetime, room: str) -> ActivityEvent:
+def _burst_end(ts: datetime, room: str, last_rise: datetime) -> ActivityEvent:
     return ActivityEvent(
-        "binary_sensor.m", Category.MOTION, EventKind.BURST_END, room, ts
+        "binary_sensor.m",
+        Category.MOTION,
+        EventKind.BURST_END,
+        room,
+        ts,
+        last_rise=last_rise,
     )
 
 
@@ -213,8 +218,8 @@ def test_back_room_burst_end_after_kitchen_presence_is_the_latest_activity():
     w.record(_tv(S(16, 40), "Back room"))
     w.record(_presence(S(16, 53, 1), "Back room"))
     w.record(_presence(S(16, 53, 49), "Kitchen"))
-    w.record(_burst_end(S(16, 54, 53), "Kitchen"))
-    w.record(_burst_end(S(16, 55, 20), "Back room"))
+    w.record(_burst_end(S(16, 54, 53), "Kitchen", S(16, 53, 49)))
+    w.record(_burst_end(S(16, 55, 20), "Back room", S(16, 54, 18)))
     iv = w.current(S(17, 40))
     assert (iv.where, iv.room, iv.start) == (Where.HOME_TV, "Back room", S(16, 55, 20))
     assert w.evaluate(S(17, 40)).alert is None
@@ -226,7 +231,7 @@ def test_back_room_burst_end_after_kitchen_presence_is_the_latest_activity():
 def test_burst_end_in_the_same_room_counts_stillness_from_the_end():
     w = Whereabouts(CFG)
     w.record(_presence(T(10, 0), "Kitchen"))
-    w.record(_burst_end(T(10, 20), "Kitchen"))
+    w.record(_burst_end(T(10, 20), "Kitchen", T(10, 19)))
     r = w.evaluate(T(10, 30))
     assert (r.where, r.room, r.since) == (Where.HOME, "Kitchen", T(10, 20))
     assert r.deadline == T(11, 20)
@@ -238,8 +243,8 @@ def test_burst_ends_after_an_outside_door_do_not_bring_the_house_home():
     w = Whereabouts(CFG)
     w.record(_presence(S(9, 59, 50), "Hall"))
     w.record(_door(S(10, 0, 20), room="Hall"))
-    w.record(_burst_end(S(10, 0, 30), "Landing"))
-    w.record(_burst_end(S(10, 0, 40), "Hall"))
+    w.record(_burst_end(S(10, 0, 30), "Landing", S(10, 0, 25)))
+    w.record(_burst_end(S(10, 0, 40), "Hall", S(10, 0, 30)))
     iv = w.current(S(10, 10, 20))
     assert (iv.where, iv.start) == (Where.OUT, S(10, 0, 20))
     assert w.current(S(10, 10, 19)).where is Where.HOME
@@ -253,9 +258,9 @@ def test_an_older_burst_end_flushed_later_is_ignored():
     w.record(_tv(S(16, 40), "Back room"))
     w.record(_presence(S(16, 53, 1), "Back room"))
     w.record(_presence(S(16, 53, 49), "Kitchen"))
-    w.record(_burst_end(S(16, 55, 20), "Back room"))
-    w.record(_burst_end(S(16, 54, 53), "Kitchen"))
-    w.record(_burst_end(S(16, 55, 20), "Kitchen"))  # equal: not newer
+    w.record(_burst_end(S(16, 55, 20), "Back room", S(16, 54, 18)))
+    w.record(_burst_end(S(16, 54, 53), "Kitchen", S(16, 53, 49)))
+    w.record(_burst_end(S(16, 55, 20), "Kitchen", S(16, 55)))  # equal: not newer
     iv = w.current(S(17, 40))
     assert (iv.where, iv.room, iv.start) == (Where.HOME_TV, "Back room", S(16, 55, 20))
 
@@ -264,7 +269,7 @@ def test_burst_end_is_not_a_waking():
     w = Whereabouts(CFG)
     for day in (1, 2, 3):
         w.record(_presence(D(day, 5, 0), "Bedroom"))
-        w.record(_burst_end(D(day, 6, 30), "Kitchen"))
+        w.record(_burst_end(D(day, 6, 30), "Kitchen", D(day, 6, 29)))
         w.record(_presence(D(day, 7, 0), "Kitchen"))
     assert w.usual_waking_min() == 7 * 60
 
@@ -275,7 +280,7 @@ def test_back_to_bed_split_by_a_burst_end_still_cancels_the_waking():
     for day in (1, 2, 3):
         w.record(_presence(D(day, 6, 0), "Kitchen"))
         w.record(_presence(D(day, 6, 10), "Bedroom"))
-        w.record(_burst_end(D(day, 6, 20), "Bedroom"))
+        w.record(_burst_end(D(day, 6, 20), "Bedroom", D(day, 6, 19)))
         w.record(_presence(D(day, 7, 15), "Kitchen"))
     assert w.usual_waking_min() == 7 * 60 + 15
 
@@ -285,11 +290,57 @@ def test_burst_end_in_the_bedroom_at_night_is_asleep_and_keeps_bedtime():
     w = Whereabouts(CFG)
     for day in (1, 2, 3):
         w.record(_presence(D(day, 22, 10), "Bedroom"))
-        w.record(_burst_end(D(day, 22, 30), "Bedroom"))
+        w.record(_burst_end(D(day, 22, 30), "Bedroom", D(day, 22, 29)))
         assert w.current(D(day, 23, 0)).where is Where.ASLEEP
         assert w.current(D(day, 23, 0)).start == D(day, 22, 30)
         w.record(_presence(D(day + 1, 7, 0), "Kitchen"))
     assert w.night_start() == 1270  # 22:10 less an hour
+
+
+def _back_to_bed(order: list[str], landing_off: datetime) -> Whereabouts:
+    """7 Nov: bathroom, landing, back bedroom; the landing clears last or level."""
+    n = lambda h, m, s=0: datetime(2026, 11, 7, h, m, s, tzinfo=timezone.utc)  # noqa
+    w = Whereabouts(CFG)
+    w.record(_presence(n(23, 59, 55) - timedelta(days=1), "Bathroom"))
+    w.record(_presence(n(0, 0, 11), "Landing"))
+    w.record(_presence(n(0, 0, 12), "Back Bedroom"))
+    ends = {
+        "Bathroom": _burst_end(
+            n(0, 0, 57), "Bathroom", n(23, 59, 55) - timedelta(days=1)
+        ),
+        "Landing": _burst_end(landing_off, "Landing", n(0, 0, 11)),
+        "Back Bedroom": _burst_end(n(0, 1, 15), "Back Bedroom", n(0, 0, 12)),
+    }
+    for room in order:
+        w.record(ends[room])
+    return w
+
+
+def test_walk_back_to_bed_stays_in_the_bedroom_whichever_sensor_clears_last():
+    n = lambda h, m, s=0: datetime(2026, 11, 7, h, m, s, tzinfo=timezone.utc)  # noqa
+    for landing_off in (n(0, 1, 15), n(0, 1, 16)):
+        for order in (
+            ["Bathroom", "Landing", "Back Bedroom"],
+            ["Bathroom", "Back Bedroom", "Landing"],
+            ["Back Bedroom", "Landing", "Bathroom"],
+        ):
+            w = _back_to_bed(order, landing_off)
+            iv = w.current(n(0, 50))
+            assert (iv.where, iv.room) == (Where.ASLEEP, "Back Bedroom"), order
+            for m in range(5, 300, 15):
+                a = w.evaluate(n(0, 1) + timedelta(minutes=m)).alert
+                assert a is None or a.kind != "still_at_home", (order, m)
+
+
+def test_burst_end_with_an_older_rise_moves_the_start_but_keeps_the_room():
+    w = Whereabouts(CFG)
+    w.record(_presence(S(10, 0), "Lounge"))
+    w.record(_presence(S(10, 1), "Kitchen"))
+    w.record(_burst_end(S(10, 3), "Lounge", S(10, 0, 30)))
+    iv = w.current(S(10, 10))
+    assert (iv.where, iv.room, iv.start) == (Where.HOME, "Kitchen", S(10, 3))
+    w.record(_burst_end(S(10, 4), "Hall", S(10, 2)))  # a later rise moves her
+    assert w.current(S(10, 10)).room == "Hall"
 
 
 # ------------------------------------------------------------------ learning

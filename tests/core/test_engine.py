@@ -622,3 +622,39 @@ def test_back_room_burst_end_reaches_whereabouts_through_the_normaliser():
         t += timedelta(minutes=1)
     assert [a.kind for a in _open_where(e)] == ["still_tv"]
     assert first == at(18, 26)  # 16:55:20 plus 90 minutes, polled each minute
+
+
+def test_walk_back_to_bed_through_the_normaliser_stays_asleep():
+    """7 Nov: the landing clears in the same second as the bedroom."""
+    landing = EntitySpec("binary_sensor.landing", Category.MOTION, "Landing")
+    e = Engine(
+        EngineConfig.from_options(
+            {"learning_days": 14, "outside_doors": ["binary_sensor.side_door"]}
+        ),
+        ENTS + [DOOR, landing],
+    )
+    _train(e, days=15)
+    night = MON + timedelta(days=16)
+
+    def at(h: int, m: int, s: int = 0) -> datetime:
+        return night + timedelta(hours=h, minutes=m, seconds=s)
+
+    feed = [
+        ("binary_sensor.bath", "off", "on", at(0, 0, 0)),
+        ("binary_sensor.landing", "off", "on", at(0, 0, 11)),
+        ("binary_sensor.bed", "off", "on", at(0, 0, 12)),
+        ("binary_sensor.bath", "on", "off", at(0, 0, 57)),
+        ("binary_sensor.bed", "on", "off", at(0, 1, 15)),
+        ("binary_sensor.landing", "on", "off", at(0, 1, 15)),
+    ]
+    t = at(0, 0)
+    while t <= at(2, 0):
+        while feed and feed[0][3] <= t:
+            eid, old, new, ts = feed.pop(0)
+            e.handle_state(eid, old, new, ts, learn_only=False)
+        e.poll(t)
+        t += timedelta(minutes=1)
+    w = e.snapshot(t)["whereabouts"]
+    assert (w["where"], w["last_room"]) == ("asleep", "Bedroom")
+    assert w["where_since"] == at(0, 1, 15).isoformat()
+    assert _open_where(e) == []

@@ -116,8 +116,13 @@ closing are not activity.
 - **Burst ends.** A motion sensor re-triggered inside its debounce sends no
   new `PRESENCE`, so the end of a burst (`BURST_END`, at its last "off") is
   activity too. A burst end later than the current interval's start begins a
-  new interval at that time in the burst's room, same room or not, so
-  stillness counts from the end of the movement. It is not a waking. A burst
+  new interval at that time, so stillness counts from the end of the
+  movement. The room follows the latest motion, not the latest sensor to
+  clear: it moves to the burst's room only when the burst's last rise is
+  later than the rise of the activity that set the current room (ties keep
+  the room), and the state is worked out afresh for the new start. On the
+  way back to bed the landing can clear in the same second as the bedroom,
+  or a second later; she stays in the bedroom. It is not a waking. A burst
   end at or before the interval start is ignored, and so is any burst end
   during an outside-door interval (pending or `out`): sensors hold "on" for a
   minute or more, so a burst ending after the door opened is no evidence
@@ -331,4 +336,4 @@ passes `--fall-times`.
 
 ## Acceptance result (9 Nov 2026)
 
-Biddulph Road, 44 days of data to the evening of 9 Nov, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 8, of which 5 are explained by the truth file and 3 are unexplained, so the bar of 2 is missed: 2026-10-29 05:00 still_at_home (Kitchen, after the data gap); 2026-11-07 00:50 still_at_home (Landing, a walk back to bed whose landing burst ended in the same second as the bedroom's; three more like it on 31 Oct and 1 Nov fall inside maintenance windows, so count as explained); 2026-11-09 20:30 still_at_home (Back room, at the end of the export: the open-ended gap in the truth file ends at the last event, so it does not cover an alert raised after it). The 9 Nov 17:40 kitchen alert is gone now that a burst's end counts. None fell inside a confirmed outing.
+Biddulph Road, 44 days of data to the evening of 9 Nov, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 3, of which 2 are explained by the truth file (visitor) and 1 is unexplained (2026-10-29 05:00 still_at_home, 45 min, Kitchen, just after the recorder-purge gap). None fell inside a confirmed outing.

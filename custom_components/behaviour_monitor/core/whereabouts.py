@@ -15,9 +15,13 @@ interval in the door's room.
 A motion burst's end is activity too: a sensor re-triggered inside its
 debounce emits no new presence, so the room still moving after another room's
 presence would otherwise be lost. A burst end newer than the interval starts a
-new one in the burst's room. During a door interval it is ignored: sensors
-hold "on" for a minute or more, so a burst ending after the door opened is not
-evidence anyone is home.
+new one at its time. The room follows the latest motion, not the latest
+sensor to clear: it moves to the burst's room only when the burst's last rise
+is later than the rise that set the current room, so a landing that clears a
+second after the bedroom on the way back to bed leaves her in the bedroom.
+During a door interval a burst end is ignored: sensors hold "on" for a minute
+or more, so a burst ending after the door opened is not evidence anyone is
+home.
 """
 
 from __future__ import annotations
@@ -155,6 +159,8 @@ class Whereabouts:
         self._interval: Interval | None = None
         self._door_room: str | None = None
         self._last_room: str | None = None
+        # When the motion (or other activity) that set ``_last_room`` rose.
+        self._room_rise: datetime | None = None
         self._tvs_on: dict[str, str] = {}
         # Learned, all keyed by ISO day.
         self._home: dict[str, dict[int, list[float]]] = {}
@@ -360,6 +366,7 @@ class Whereabouts:
             ),
             "door_room": self._door_room,
             "last_room": self._last_room,
+            "room_rise": self._room_rise.isoformat() if self._room_rise else None,
             "tvs_on": dict(self._tvs_on),
         }
 
@@ -395,6 +402,8 @@ class Whereabouts:
                 )
             w._door_room = data.get("door_room")
             w._last_room = data.get("last_room")
+            rise = data.get("room_rise")
+            w._room_rise = datetime.fromisoformat(rise) if rise else None
             w._tvs_on = dict(data.get("tvs_on", {}))
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
@@ -450,6 +459,7 @@ class Whereabouts:
         returning = outside and iv is not None and iv.door is not None
         if ev.kind is not EventKind.OPEN or returning:
             self._last_room = ev.room
+            self._room_rise = ev.timestamp
         if outside and not returning:
             self._door_room = ev.room
             self._begin(
@@ -474,25 +484,31 @@ class Whereabouts:
         )
 
     def _burst_end(self, ev: ActivityEvent) -> None:
-        """A newer burst end: someone was moving in its room until then.
+        """A newer burst end: someone was moving until then.
 
-        Not a waking. It closes the interval like any activity, so a long
-        stretch in bed before it still cancels the waking seen before it.
+        Stillness counts from it. The room moves to the burst's room only if
+        the burst last rose after the motion that set the current room; ties
+        keep the current room. Not a waking. It closes the interval like any
+        activity, so a long stretch in bed before it still cancels the waking
+        seen before it.
         """
         iv = self._interval
         if iv is not None and (iv.door is not None or ev.timestamp <= iv.start):
             return
         self._cancel_waking(ev.timestamp)
+        rise = ev.last_rise or ev.timestamp
+        if self._last_room is None or self._room_rise is None or rise > self._room_rise:
+            self._last_room, self._room_rise = ev.room, rise
+        room = self._last_room
         run = None
-        if iv is not None and iv.room == ev.room:
+        if iv is not None and iv.room == room:
             run = iv.run_start or iv.start
-        self._last_room = ev.room
-        tv = self._tv_on_in(ev.room)
+        tv = self._tv_on_in(room)
         self._begin(
             Interval(
                 ev.timestamp,
-                self._classify(ev.timestamp, ev.room, tv),
-                ev.room,
+                self._classify(ev.timestamp, room, tv),
+                room,
                 tv,
                 run_start=run,
             )

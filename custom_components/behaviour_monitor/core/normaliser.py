@@ -190,6 +190,7 @@ class Normaliser:
             b.room,
             end,
             duration_s=(end - b.start).total_seconds(),
+            last_rise=b.last_rise,
         )
 
     def _contact(

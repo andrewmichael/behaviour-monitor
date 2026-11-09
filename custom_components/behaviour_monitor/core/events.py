@@ -59,6 +59,8 @@ class ActivityEvent:
     timestamp: datetime
     duration_s: float | None = None
     bypass: bool = False
+    # BURST_END only: the burst's last rise, when motion was last detected.
+    last_rise: datetime | None = None
 
     @property
     def is_activity(self) -> bool:
