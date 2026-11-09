@@ -134,6 +134,12 @@ raises a welfare alert when she has been still for longer than is normal for
 that place and time. It replaces the old whole-house inactivity alert, and it
 catches a fall in the day usually within about an hour and a half.
 
+With more than one person living there, the alerts are about the whole
+household: room sensors can't tell people apart. "Still at home" means no one
+has moved, and "out" means the house is empty. A fall by one person while
+another is moving about can't be detected from room sensors; panic buttons
+cover that.
+
 ### Setup lists
 
 The setup step asks for three lists. Each is optional, but without them the
@@ -166,7 +172,7 @@ Welfare alerts have source `whereabouts` and one of four kinds:
 | `still_at_home` | Home and still for longer than the home limit for that hour |
 | `still_tv` | Home with the TV on and still for 90 minutes |
 | `not_up` | Asleep, and not up an hour after her usual waking time. Also used after a lie-in, when she is still in bed 90 minutes after stirring |
-| `not_back` | Out for longer than her longest outing so far, plus a quarter |
+| `not_back` | House empty for longer than her longest outing so far, plus a quarter |
 
 ### What it learns
 

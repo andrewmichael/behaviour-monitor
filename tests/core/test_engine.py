@@ -550,7 +550,9 @@ def test_poll_gap_while_out_keeps_the_time_she_left():
     assert w["where"] == "out" and w["where_since"] == ten.isoformat()
     a = e._where.evaluate(day + timedelta(days=1))
     assert a.deadline == ten + timedelta(minutes=240 * 1.25)
-    assert "left by the" in a.alert.explanation and "at 10:00" in a.alert.explanation
+    assert (
+        "last out by the" in a.alert.explanation and "at 10:00" in a.alert.explanation
+    )
 
 
 def test_rename_room_renames_whereabouts_rooms():

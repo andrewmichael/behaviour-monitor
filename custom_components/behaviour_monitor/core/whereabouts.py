@@ -601,22 +601,25 @@ class Whereabouts:
         at = start.strftime("%H:%M")
         elapsed = (now - start).total_seconds() / 60
         if iv.where is Where.HOME:
-            text = f"No movement for {_dur(elapsed)}; last seen in the {room} at {at}"
+            text = (
+                f"No movement for {_dur(elapsed)}; "
+                f"last movement in the {room} at {at}"
+            )
         elif iv.where is Where.HOME_TV:
             text = (
                 f"No movement for {_dur(elapsed)} with the {room} TV on; "
-                f"last seen at {at}"
+                f"last movement at {at}"
             )
         elif iv.where is Where.LYING_IN:
             text = (
-                f"Not up yet; stirred in the {room} at {at}, "
-                f"no movement for {_dur(elapsed)}"
+                f"Not up yet; movement in the {room} at {at}, "
+                f"none for {_dur(elapsed)}"
             )
         elif iv.where is Where.ASLEEP:
             waking = self.usual_waking_min(now.date())
             text = (
                 f"Not up yet; usually up by {waking // 60:02d}:{waking % 60:02d}, "
-                f"last seen in the {room} at {at}"
+                f"last movement in the {room} at {at}"
             )
         else:
             longest = self.longest_out_min()
@@ -628,8 +631,8 @@ class Whereabouts:
             door = iv.door or "door"
             door = names(door) if names is not None else door
             text = (
-                f"Out for {_dur(elapsed)}, longer than usual ({usual}); "
-                f"left by the {door} at {at}"
+                f"House empty for {_dur(elapsed)}, longer than usual ({usual}); "
+                f"last out by the {door} at {at}"
             )
         return Alert(
             AlertClass.WELFARE,

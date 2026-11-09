@@ -81,7 +81,7 @@ def test_router_escalates_whereabouts_alert_on_routine_signs():
             "whereabouts",
             "still_at_home",
             sev,
-            "No movement for 50 min; last seen in the Kitchen at 10:00",
+            "No movement for 50 min; last movement in the Kitchen at 10:00",
             T0,
             {"room": "Kitchen"},
         )

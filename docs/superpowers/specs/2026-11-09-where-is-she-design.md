@@ -233,10 +233,15 @@ Welfare class, group `attention` through the existing router, replacing the
 
 | Kind | Example explanation | Severity |
 |---|---|---|
-| `still_at_home` | "No movement for 62 min; last seen in the Kitchen at 10:12" | Medium at the limit, High at 1.5× the limit |
-| `still_tv` | "No movement for 91 min with the Back room TV on; last seen at 19:05" | Medium, High at 1.5× |
-| `not_up` (also used for a lying-in alert) | "Not up yet; usually up by 08:40, last seen in the Back bedroom at 22:30" | Medium, High after a further hour |
-| `not_back` | "Out for 4h 30m, longer than usual (longest 3h 35m); left by the Side door at 10:13" | Medium, High after a further hour |
+| `still_at_home` | "No movement for 62 min; last movement in the Kitchen at 10:12" | Medium at the limit, High at 1.5× the limit |
+| `still_tv` | "No movement for 91 min with the Back room TV on; last movement at 19:05" | Medium, High at 1.5× |
+| `not_up` | "Not up yet; usually up by 08:40, last movement in the Back bedroom at 22:30" | Medium, High after a further hour |
+| `not_up` (lying in) | "Not up yet; movement in the Back bedroom at 07:10, none for 1h 30m" | Medium, High at 1.5× |
+| `not_back` | "House empty for 4h 30m, longer than usual (longest 3h 35m); last out by the Side door at 10:13" (before outings are learned: "(usual limit 4h 0m)") | Medium, High after a further hour |
+
+With more than one occupant every signal is household-level: "no movement"
+means no one has moved and "house empty" means everyone is out. The wording
+says so rather than naming one person.
 
 The alert clears when activity resumes, as today. The router's routine-sign
 escalation (`_combine`) applies to these kinds the same way it applies to
@@ -326,4 +331,4 @@ passes `--fall-times`.
 
 ## Acceptance result (9 Nov 2026)
 
-Biddulph Road, 43 days of data, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 5, of which 4 are explained by the truth file and 1 is unexplained (2026-10-29 still_at_home, 45 min, Kitchen). None fell inside a confirmed outing.
+Biddulph Road, 44 days of data to the evening of 9 Nov, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 8, of which 5 are explained by the truth file and 3 are unexplained, so the bar of 2 is missed: 2026-10-29 05:00 still_at_home (Kitchen, after the data gap); 2026-11-07 00:50 still_at_home (Landing, a walk back to bed whose landing burst ended in the same second as the bedroom's; three more like it on 31 Oct and 1 Nov fall inside maintenance windows, so count as explained); 2026-11-09 20:30 still_at_home (Back room, at the end of the export: the open-ended gap in the truth file ends at the last event, so it does not cover an alert raised after it). The 9 Nov 17:40 kitchen alert is gone now that a burst's end counts. None fell inside a confirmed outing.
