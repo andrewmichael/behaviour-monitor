@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-11-09
+
+### Added
+- setup step for outside doors, bedrooms and sitting appliances
+- whereabouts alert replaces the whole-house inactivity alert
+- whereabouts raises still_at_home, still_tv, not_up and not_back
+- whereabouts learns home limits, waking time, night and outings
+- whereabouts state machine for the welfare alert
+
+### Changed
+- Documentation: restarts, bedrooms check and fall timing wording
+- Documentation: where she is, setup lists and upgrade note
+- Documentation: where-is-she implementation plan
+- Documentation: make where-is-she generic (bedroom selector, learned night, outside doors opt-in)
+- Documentation: where-is-she design and its reference spike
+
+### Fixed
+- a sensor stuck on can't hide stillness
+- the room follows the latest motion, not the latest sensor to clear
+- household-neutral alert wording
+- a motion burst's end counts as the latest activity
+- a quick return through an outside door brings her home
+- rename whereabouts rooms and let cleared lists save empty
+- resolve unset bedrooms by name and keep the last poll saved
+- an outside door while she is out is her return
+- poll gap keeps the start of a night or an outing
+- recorder bootstrap replays history in time order
+- whereabouts day boundary, flush order and names
+- whereabouts counts a day's waking only once the day is over
+- whereabouts night onset, waking and restarts survive night trips
+- longest outing waits for three days of outings
+- scorecard reports alert times in local time
+
 ## [7.0.1] - 2026-11-08
 
 ### Fixed
