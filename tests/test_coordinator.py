@@ -107,6 +107,36 @@ def test_specs_resolve_rooms_from_entity_then_device_then_name(coordinator):
     assert cats["binary_sensor.panic"] is Category.PANIC
 
 
+def test_unset_bedrooms_resolve_to_suggestions(mock_hass, mock_config_entry):
+    """Unset bedrooms become the rooms named "bedroom", or none at all."""
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(mock_hass)
+    reg.entities.clear()
+    reg.devices.clear()
+    reg.areas.clear()
+    reg.entities["binary_sensor.kitchen_motion"] = SimpleNamespace(
+        area_id="a_kitchen", device_id=None
+    )
+    reg.entities["binary_sensor.bed_motion"] = SimpleNamespace(
+        area_id="a_bed", device_id=None
+    )
+    reg.areas["a_kitchen"] = SimpleNamespace(name="Kitchen")
+    reg.areas["a_bed"] = SimpleNamespace(name="Mum's room")
+    mock_hass.states.get = lambda eid: None
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset()
+
+    reg.areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset({"Back Bedroom"})
+
+    # A chosen list, even an empty one, is used as it is.
+    mock_config_entry.options = {"bedrooms": ["Kitchen"]}
+    coordinator = BehaviourMonitorCoordinator(mock_hass, mock_config_entry)
+    assert coordinator._config.whereabouts.bedrooms == frozenset({"Kitchen"})
+
+
 def test_display_room_strips_site_prefix(coordinator):
     assert coordinator.display_room("Test House Kitchen") == "Kitchen"
     assert coordinator.display_room("test house Bedroom") == "Bedroom"
@@ -415,6 +445,31 @@ async def test_update_data_returns_snapshot_with_site(coordinator):
 
 
 @pytest.mark.asyncio
+async def test_poll_saves_the_store_at_most_every_five_minutes(coordinator):
+    """The last poll time reaches the store even when nothing changes."""
+    now = "custom_components.behaviour_monitor.coordinator.dt_util.now"
+    with patch(now, return_value=NOW), patch.object(
+        coordinator, "_bootstrap_entities", new=AsyncMock()
+    ):
+        await coordinator.async_setup()
+    with patch.object(
+        coordinator._store, "async_save", new=AsyncMock()
+    ) as save:
+        with patch(now, return_value=NOW + timedelta(minutes=1)):
+            await coordinator._async_update_data()
+        save.assert_not_called()
+        with patch(now, return_value=NOW + timedelta(minutes=6)):
+            await coordinator._async_update_data()
+        save.assert_awaited_once()
+        with patch(now, return_value=NOW + timedelta(minutes=7)):
+            await coordinator._async_update_data()
+        save.assert_awaited_once()
+    assert save.await_args.args[0]["engine"]["meta"]["last_poll"] == (
+        NOW + timedelta(minutes=6)
+    ).isoformat()
+
+
+@pytest.mark.asyncio
 async def test_holiday_snooze_reset_roundtrip(coordinator):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
@@ -527,11 +582,16 @@ async def test_area_rename_renames_bedroom_option(
     await coordinator._async_registry_updated(SimpleNamespace(data={}))
     mock_hass.config_entries.async_update_entry.assert_not_called()
 
-    # Unset bedrooms stay unset: the engine applies the name rule itself.
+    # Unset bedrooms stay unset, but the entry reloads so the rooms named
+    # "bedroom" are worked out again.
     mock_config_entry.options = {}
+    mock_hass.config_entries.async_reload.reset_mock()
     reg.areas["a_bed"] = SimpleNamespace(name="Front Bedroom")
     await coordinator._async_registry_updated(SimpleNamespace(data={}))
     mock_hass.config_entries.async_update_entry.assert_not_called()
+    mock_hass.config_entries.async_reload.assert_called_once_with(
+        mock_config_entry.entry_id
+    )
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,7 @@ from .const import (
 from .core.alert_router import DeliveryAction
 from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
 from .core.events import UNAVAILABLE_STATES, Category
-from .rooms import display_room, resolve_room
+from .rooms import bedroom_suggestions, display_room, resolve_room
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -77,6 +77,11 @@ class _EngineStore(Store[dict[str, Any]]):
         return {}
 
 
+# The poll saves the store at most this often, keeping the last poll time
+# fresh for the poll-gap check after an unclean shutdown.
+POLL_SAVE_EVERY = timedelta(minutes=5)
+
+
 class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Translate Home Assistant into Engine calls and Engine actions into HA."""
 
@@ -90,9 +95,13 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._entry = entry
         self._site: str = str(entry.data.get(CONF_SITE_NAME, "Behaviour Monitor"))
-        options = {**OPTION_DEFAULTS, **entry.options}
-        self._config = EngineConfig.from_options(options)
         self._specs, self._area_ids = self._resolve_specs()
+        options = {**OPTION_DEFAULTS, **entry.options}
+        if options.get(CONF_BEDROOMS) is None:
+            # Unset bedrooms are the rooms named "bedroom"; none of them means
+            # the night rules apply to every room.
+            options[CONF_BEDROOMS] = bedroom_suggestions(s.room for s in self._specs)
+        self._config = EngineConfig.from_options(options)
         self._engine = Engine(self._config, self._specs)
         self._store = _EngineStore(
             hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
@@ -104,6 +113,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._started = True
         self._held_events: list[dict[str, Any]] = []
         self._started_unsub: Any = None
+        self._last_save: datetime | None = None
         self._saver = Debouncer(
             hass,
             _LOGGER,
@@ -191,11 +201,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _rename_bedrooms(self, renamed: dict[str, str]) -> None:
         """Carry a renamed area over into the bedrooms option.
 
-        Unset bedrooms are left unset, since the engine then picks rooms by
-        name. Updating the entry reloads it, which is acceptable for a rename.
+        Unset bedrooms are left unset, and the entry reloads when the rooms
+        named "bedroom" change, so they are worked out again. Updating the
+        entry reloads it too, which is acceptable for a rename.
         """
         bedrooms = self._entry.options.get(CONF_BEDROOMS)
-        if bedrooms is None or not any(room in renamed for room in bedrooms):
+        if bedrooms is None:
+            named = frozenset(bedroom_suggestions(s.room for s in self._specs))
+            if named != self._config.whereabouts.bedrooms:
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._entry.entry_id)
+                )
+            return
+        if not any(room in renamed for room in bedrooms):
             return
         self.hass.config_entries.async_update_entry(
             self._entry,
@@ -333,6 +351,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._save()
 
     async def _save(self) -> None:
+        self._last_save = dt_util.now()
         await self._store.async_save(
             {
                 "site": self._site,
@@ -432,6 +451,11 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # The snapshot returned below is written to the entities before
             # Home Assistant runs any automation these events trigger.
             await self._perform(actions, now, publish=False)
+            # The last poll time decides whether a restart was a gap worth
+            # restarting the stillness clock for, so it must not go stale
+            # in the store while nothing changes.
+            if self._last_save is None or now - self._last_save >= POLL_SAVE_EVERY:
+                await self._save()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Engine poll failed")
         return self._build_snapshot(now)
