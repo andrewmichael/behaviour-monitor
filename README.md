@@ -409,6 +409,12 @@ python scripts/scorecard.py site.jsonl --truth site.truth.yaml \
 
 Run it before and after a change to see the difference on real data.
 
+Restart storms in data exported from the recorder as CSV are mostly an export
+artefact: the "unavailable" row at a restart can survive while the "back to
+normal" row a second later is lost, so sensors look offline for hours. Live,
+the outage lasts under a second and never raises a repair. InfluxDB exports
+keep both rows.
+
 ## Development
 
 See [README-DEV.md](README-DEV.md) for complete development setup
