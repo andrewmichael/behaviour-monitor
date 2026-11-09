@@ -173,6 +173,10 @@ class Whereabouts:
                 minute = end.hour * 60 + end.minute
                 if minute >= self._cfg.waking_after_min:
                     wakes.setdefault(iso_day(end.date()), minute)
+        # A day's waking can still change until the day is over, so the day
+        # in progress (that of the latest activity) does not count yet.
+        if self._interval is not None:
+            wakes.pop(iso_day(self._interval.start.date()), None)
         return wakes
 
     def usual_waking_min(self) -> int:
