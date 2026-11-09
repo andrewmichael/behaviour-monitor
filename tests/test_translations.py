@@ -27,8 +27,8 @@ def test_translations_cover_every_config_and_option_field():
         for sentence in (
             "Doors that lead outside. Don't pick fridge, cupboard or internal "
             "doors: they would hold back fall alerts.",
-            "Rooms she sleeps in. Stillness here at night is normal.",
-            "Plugs, like a TV, that mean she is sitting nearby when on.",
+            "Rooms people sleep in. Stillness here at night is normal.",
+            "Plugs, like a TV, that mean someone is sitting nearby when on.",
         ):
             assert sentence in step["description"]
         assert set(t[section]["error"]) >= {

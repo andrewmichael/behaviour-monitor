@@ -165,59 +165,63 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _entity_label(hass: Any, entity_id: str, site: str) -> str:
+    """Friendly name without a leading site name, or the entity id."""
+    state = hass.states.get(entity_id) if hass is not None else None
+    name = state.attributes.get("friendly_name") if state is not None else None
+    return display_room(site, str(name)) if name else entity_id
+
+
+def _tick_list(options: list[dict[str, str]]) -> SelectSelector:
+    """All three whereabouts lists are tick boxes of the same style."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=sorted(options, key=lambda o: (o["label"].lower(), o["value"])),
+            multiple=True,
+            mode=SelectSelectorMode.LIST,
+        )
+    )
+
+
 def _whereabouts_schema(
     hass: Any, data: dict[str, Any], current: dict[str, Any]
 ) -> vol.Schema:
-    """Outside doors and sitting appliances from the site's contacts and plugs,
-    and bedrooms from the rooms its sensors are in.
+    """Tick lists: outside doors from the site's contacts, bedrooms from the
+    rooms its sensors are in, and sitting appliances from its plugs.
 
     Current values are suggested rather than defaults: a default would refill
-    a list the user cleared, and a cleared list must save as [].
+    a list the user cleared, and a cleared list must save as []. A saved
+    value that is no longer offered (its sensor left the category) is dropped
+    from the suggestion so the form can still be submitted.
     """
     site = str(data.get(CONF_SITE_NAME, ""))
     rooms = {resolve_room(hass, eid)[0] for eid, _ in entity_specs_from_data(data)}
+    contacts = list(data.get(CONF_CONTACT_ENTITIES) or [])
+    plugs = list(data.get(CONF_PLUG_ENTITIES) or [])
     saved = current.get(CONF_BEDROOMS)
     bedrooms = (
         bedroom_suggestions(rooms)
         if saved is None
         else [room for room in saved if room in rooms]
     )
-    room_options = sorted(
-        ({"value": r, "label": display_room(site, r)} for r in rooms),
-        key=lambda o: (o["label"].lower(), o["value"]),
-    )
+    doors = [e for e in current.get(CONF_OUTSIDE_DOORS) or [] if e in contacts]
+    sitting = [e for e in current.get(CONF_SITTING_APPLIANCES) or [] if e in plugs]
     return vol.Schema(
         {
             vol.Optional(
-                CONF_OUTSIDE_DOORS,
-                description={
-                    "suggested_value": list(current.get(CONF_OUTSIDE_DOORS) or [])
-                },
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    multiple=True,
-                    include_entities=list(data.get(CONF_CONTACT_ENTITIES) or []),
-                )
+                CONF_OUTSIDE_DOORS, description={"suggested_value": doors}
+            ): _tick_list(
+                [{"value": e, "label": _entity_label(hass, e, site)} for e in contacts]
             ),
             vol.Optional(
                 CONF_BEDROOMS, description={"suggested_value": bedrooms}
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=room_options,
-                    multiple=True,
-                    mode=SelectSelectorMode.LIST,
-                )
+            ): _tick_list(
+                [{"value": r, "label": display_room(site, r)} for r in rooms]
             ),
             vol.Optional(
-                CONF_SITTING_APPLIANCES,
-                description={
-                    "suggested_value": list(current.get(CONF_SITTING_APPLIANCES) or [])
-                },
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    multiple=True,
-                    include_entities=list(data.get(CONF_PLUG_ENTITIES) or []),
-                )
+                CONF_SITTING_APPLIANCES, description={"suggested_value": sitting}
+            ): _tick_list(
+                [{"value": e, "label": _entity_label(hass, e, site)} for e in plugs]
             ),
         }
     )

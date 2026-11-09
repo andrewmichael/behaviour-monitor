@@ -15,8 +15,8 @@
         }
       },
       "whereabouts": {
-        "title": "Where she is",
-        "description": "Outside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms she sleeps in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean she is sitting nearby when on.",
+        "title": "Doors, bedrooms and TVs",
+        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.",
         "data": {
           "outside_doors": "Outside doors",
           "bedrooms": "Bedrooms",
@@ -58,8 +58,8 @@
         }
       },
       "whereabouts": {
-        "title": "Where she is",
-        "description": "Outside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms she sleeps in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean she is sitting nearby when on.",
+        "title": "Doors, bedrooms and TVs",
+        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.",
         "data": {
           "outside_doors": "Outside doors",
           "bedrooms": "Bedrooms",

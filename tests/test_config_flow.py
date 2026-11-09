@@ -154,13 +154,48 @@ async def test_bedrooms_default_to_rooms_named_bedroom(monkeypatch):
         CONF_OUTSIDE_DOORS: None,
         CONF_SITTING_APPLIANCES: None,
     }
+    # All three lists are tick boxes of the same style: doors, bedrooms, plugs.
+    doors, beds, plugs = selects[-3:]
+    list_mode = config_flow.SelectSelectorMode.LIST
+    assert all(s["mode"] == list_mode and s["multiple"] for s in selects[-3:])
     # Values are the raw room names; labels drop the site-name prefix.
-    assert selects[-1]["options"] == [
+    assert beds["options"] == [
         {"value": "Back Bedroom", "label": "Back Bedroom"},
         {"value": "Biddulph Road Hall", "label": "Hall"},
         {"value": "Kitchen", "label": "Kitchen"},
     ]
-    assert selects[-1]["multiple"] is True
+    # Doors offer only the site's contacts; with no friendly name, the id.
+    assert doors["options"] == [
+        {"value": "binary_sensor.d", "label": "binary_sensor.d"}
+    ]
+    assert plugs["options"] == []
+
+
+@pytest.mark.asyncio
+async def test_door_and_plug_ticks_use_friendly_names_without_the_site(monkeypatch):
+    from custom_components.behaviour_monitor import config_flow
+
+    _rooms({"binary_sensor.d": "Hall", "sensor.tv": "Back room"})
+    selects: list[dict] = []
+    monkeypatch.setattr(config_flow.vol, "Optional", _keyed)
+    monkeypatch.setattr(
+        config_flow, "SelectSelectorConfig", lambda **kw: selects.append(kw) or kw
+    )
+    names = {
+        "binary_sensor.d": "Biddulph Road Front door",
+        "sensor.tv": "Back room TV plug",
+    }
+    flow = BehaviourMonitorConfigFlow()
+    flow.hass = _hass()
+    flow.hass.states.get = lambda eid: (
+        SimpleNamespace(attributes={"friendly_name": names[eid]})
+        if eid in names
+        else None
+    )
+    await flow.async_step_user({**GOOD, CONF_PLUG_ENTITIES: ["sensor.tv"]})
+    doors, _, plugs = selects[-3:]
+    assert doors["options"] == [{"value": "binary_sensor.d", "label": "Front door"}]
+    assert plugs["options"] == [{"value": "sensor.tv", "label": "Back room TV plug"}]
 
 
 @pytest.mark.asyncio
