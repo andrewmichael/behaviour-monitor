@@ -16,8 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
+from .alerts import Alert, AlertClass, Severity
 from .events import ActivityEvent, EventKind
 from .slots import iso_day
 
@@ -80,6 +81,12 @@ class WhereaboutsConfig:
     # None: rooms whose name contains "bedroom". Empty: none chosen, so the
     # night rules apply to every room.
     bedrooms: frozenset[str] | None = None
+    # No alerts while fewer than this fraction of sensors are live.
+    min_live_fraction: float = 0.5
+    # Severity turns HIGH at this multiple of the limit (stillness states).
+    high_factor: float = 1.5
+    # Severity turns HIGH this long after the deadline (not_up, not_back).
+    high_after_min: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,24 @@ def _in_window(minute: int, begin: int, end: int) -> bool:
     if begin <= end:
         return begin <= minute < end
     return minute >= begin or minute < end
+
+
+@dataclass(frozen=True)
+class WhereAssessment:
+    """Where she is taken to be at one moment, and the alert if any."""
+
+    where: Where | None
+    since: datetime | None
+    room: str | None
+    limit_min: float | None
+    deadline: datetime | None
+    alert: Alert | None
+    degraded: bool
+
+
+def _dur(minutes: float) -> str:
+    m = int(minutes)
+    return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m} min"
 
 
 class Whereabouts:
@@ -389,6 +414,117 @@ class Whereabouts:
         ):
             return replace(iv, where=Where.OUT)
         return iv
+
+    def evaluate(
+        self,
+        now: datetime,
+        live_fraction: float = 1.0,
+        names: Callable[[str], str] | None = None,
+    ) -> WhereAssessment:
+        """Assess ``now``; raises no state change, so it may run every minute."""
+        cfg = self._cfg
+        iv = self.current(now)
+        if iv is None:
+            return WhereAssessment(None, None, None, None, None, None, False)
+        start, room = iv.start, iv.room
+        limit: float | None = None
+        high_at: datetime
+        if iv.where is Where.HOME:
+            limit = self.home_limit_min(start.hour)
+            deadline = start + timedelta(minutes=limit)
+            high_at = start + timedelta(minutes=limit * cfg.high_factor)
+            kind = "still_at_home"
+        elif iv.where is Where.HOME_TV:
+            limit = cfg.tv_allowance_min
+            deadline = start + timedelta(minutes=limit)
+            high_at = start + timedelta(minutes=limit * cfg.high_factor)
+            kind = "still_tv"
+        elif iv.where is Where.LYING_IN:
+            limit = cfg.lie_in_allowance_min
+            deadline = start + timedelta(minutes=limit)
+            high_at = start + timedelta(minutes=limit * cfg.high_factor)
+            kind = "not_up"
+        elif iv.where is Where.ASLEEP:
+            morning = start.date()
+            if start.hour >= 12:
+                morning += timedelta(days=1)
+            deadline = datetime.combine(morning, datetime.min.time(), start.tzinfo)
+            deadline += timedelta(
+                minutes=self.usual_waking_min() + cfg.not_up_offset_min
+            )
+            high_at = deadline + timedelta(minutes=cfg.high_after_min)
+            kind = "not_up"
+        else:
+            longest = self.longest_out_min()
+            base = longest if longest is not None else cfg.outing_fallback_min
+            deadline = start + timedelta(minutes=base * cfg.outing_factor)
+            high_at = deadline + timedelta(minutes=cfg.high_after_min)
+            kind = "not_back"
+        degraded = live_fraction < cfg.min_live_fraction
+        alert: Alert | None = None
+        if now >= deadline and not degraded:
+            alert = self._alert(iv, kind, now, limit, high_at, names)
+        return WhereAssessment(iv.where, start, room, limit, deadline, alert, degraded)
+
+    def _alert(
+        self,
+        iv: Interval,
+        kind: str,
+        now: datetime,
+        limit: float | None,
+        high_at: datetime,
+        names: Callable[[str], str] | None,
+    ) -> Alert:
+        start = iv.start
+        room = iv.room or "house"
+        at = start.strftime("%H:%M")
+        elapsed = (now - start).total_seconds() / 60
+        if iv.where is Where.HOME:
+            text = f"No movement for {_dur(elapsed)}; last seen in the {room} at {at}"
+        elif iv.where is Where.HOME_TV:
+            text = (
+                f"No movement for {_dur(elapsed)} with the {room} TV on; "
+                f"last seen at {at}"
+            )
+        elif iv.where is Where.LYING_IN:
+            text = (
+                f"Not up yet; stirred in the {room} at {at}, "
+                f"no movement for {_dur(elapsed)}"
+            )
+        elif iv.where is Where.ASLEEP:
+            waking = self.usual_waking_min()
+            text = (
+                f"Not up yet; usually up by {waking // 60:02d}:{waking % 60:02d}, "
+                f"last seen in the {room} at {at}"
+            )
+        else:
+            longest = self.longest_out_min()
+            usual = (
+                f"longest {_dur(longest)}"
+                if longest is not None
+                else f"usual limit {_dur(self._cfg.outing_fallback_min)}"
+            )
+            door = iv.door or "door"
+            door = names(door) if names is not None else door
+            text = (
+                f"Out for {_dur(elapsed)}, longer than usual ({usual}); "
+                f"left by the {door} at {at}"
+            )
+        return Alert(
+            AlertClass.WELFARE,
+            "whereabouts",
+            kind,
+            Severity.HIGH if now >= high_at else Severity.MEDIUM,
+            text,
+            now,
+            {
+                "room": iv.room,
+                "where": iv.where.value,
+                "since": start.isoformat(),
+                "limit_min": limit,
+                "minutes": int(elapsed),
+            },
+        )
 
     def _tv_on_in(self, room: str | None) -> bool:
         return room is not None and room in self._tvs_on.values()

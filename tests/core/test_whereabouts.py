@@ -10,6 +10,7 @@ from custom_components.behaviour_monitor.core.whereabouts import (
     WhereaboutsConfig,
     Where,
 )
+from custom_components.behaviour_monitor.core.alerts import AlertClass, Severity
 
 DOOR = "binary_sensor.front_door"
 TV = "sensor.tv"
@@ -403,3 +404,137 @@ def test_from_dict_with_bad_data_is_fresh():
         Whereabouts.from_dict({"junk": 1}, CFG).to_dict() == Whereabouts(CFG).to_dict()
     )
     assert Whereabouts.from_dict({}, CFG).current(T(10)) is None
+
+
+def test_still_at_home_opens_medium_at_limit_and_high_at_one_and_a_half():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    assert w.evaluate(T(10, 59)).alert is None
+    a = w.evaluate(T(11, 0))
+    assert a.where is Where.HOME and a.deadline == T(11, 0)
+    assert a.alert.kind == "still_at_home" and a.alert.severity is Severity.MEDIUM
+    assert a.alert.cls is AlertClass.WELFARE and a.alert.source == "whereabouts"
+    assert a.alert.explanation == (
+        "No movement for 1h 0m; last seen in the Kitchen at 10:00"
+    )
+    assert w.evaluate(T(11, 29)).alert.severity is Severity.MEDIUM
+    assert w.evaluate(T(11, 30)).alert.severity is Severity.HIGH
+
+
+def test_still_tv_uses_ninety_minutes():
+    w = Whereabouts(CFG)
+    w.record(_tv(T(20, 0), "Lounge"))
+    w.record(_presence(T(20, 1), "Lounge"))
+    assert w.evaluate(T(21, 30)).alert is None
+    a = w.evaluate(T(21, 31)).alert
+    assert a.kind == "still_tv" and a.severity is Severity.MEDIUM
+    assert a.explanation == (
+        "No movement for 1h 30m with the Lounge TV on; last seen at 20:01"
+    )
+    assert w.evaluate(T(22, 16)).alert.severity is Severity.HIGH
+
+
+def test_lying_in_alerts_as_not_up_after_ninety_minutes():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(7, 0), "Bedroom"))
+    assert w.current(T(7, 0)).where is Where.LYING_IN
+    assert w.evaluate(T(8, 29)).alert is None
+    a = w.evaluate(T(8, 30)).alert
+    assert a.kind == "not_up" and a.severity is Severity.MEDIUM
+    assert a.explanation == (
+        "Not up yet; stirred in the Bedroom at 07:00, no movement for 1h 30m"
+    )
+    assert w.evaluate(T(9, 15)).alert.severity is Severity.HIGH
+
+
+def test_asleep_alerts_at_usual_waking_plus_an_hour_next_morning():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(22, 30), "Bedroom"))
+    nxt = lambda h, m=0: T(h, m) + timedelta(days=1)  # noqa: E731
+    r = w.evaluate(nxt(9, 59))
+    assert r.where is Where.ASLEEP and r.alert is None and r.limit_min is None
+    a = w.evaluate(nxt(10, 0)).alert
+    assert a.kind == "not_up" and a.severity is Severity.MEDIUM
+    assert a.explanation == (
+        "Not up yet; usually up by 09:00, last seen in the Bedroom at 22:30"
+    )
+    assert w.evaluate(nxt(10, 59)).alert.severity is Severity.MEDIUM
+    assert w.evaluate(nxt(11, 0)).alert.severity is Severity.HIGH
+
+
+def test_asleep_started_after_midnight_uses_same_morning():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(1, 0), "Bedroom"))
+    assert w.evaluate(T(9, 59)).alert is None
+    assert w.evaluate(T(10, 0)).alert.kind == "not_up"
+
+
+FRONT = lambda _e: "Front door"  # noqa: E731
+
+
+def test_out_alerts_not_back_after_longest_outing_times_one_and_a_quarter():
+    w = Whereabouts(CFG)
+    w.record(_door(T(10, 0)))
+    r = w.evaluate(T(10, 30))
+    assert r.where is Where.OUT and r.limit_min is None
+    assert r.deadline == T(10, 0) + timedelta(minutes=300)
+    assert w.evaluate(T(14, 59)).alert is None
+    a = w.evaluate(T(15, 0), names=FRONT).alert
+    assert a.kind == "not_back" and a.severity is Severity.MEDIUM
+    assert "left by the Front door at 10:00" in a.explanation
+    assert a.explanation == (
+        "Out for 5h 0m, longer than usual (usual limit 4h 0m); "
+        "left by the Front door at 10:00"
+    )
+    assert w.evaluate(T(15, 59), names=FRONT).alert.severity is Severity.MEDIUM
+    assert w.evaluate(T(16, 0), names=FRONT).alert.severity is Severity.HIGH
+
+
+def test_out_names_longest_outing_when_learned():
+    w = Whereabouts(CFG)
+    _outing(w, 1, 60)
+    _outing(w, 2, 120)
+    _outing(w, 3, 30)
+    base = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
+    w.record(_door(base))
+    a = w.evaluate(base + timedelta(minutes=150)).alert
+    assert a.explanation.startswith("Out for 2h 30m, longer than usual (longest 2h 0m)")
+
+
+def test_names_callable_is_used_for_the_door():
+    w = Whereabouts(CFG)
+    w.record(_door(T(10, 0)))
+    a = w.evaluate(T(15, 0), names=lambda e: "Back gate").alert
+    assert "left by the Back gate at 10:00" in a.explanation
+
+
+def test_degraded_suppresses_alert():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    r = w.evaluate(T(12, 0), live_fraction=0.4)
+    assert r.alert is None and r.degraded
+    assert not w.evaluate(T(12, 0), live_fraction=0.5).degraded
+
+
+def test_details_carry_room_and_limit():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    r = w.evaluate(T(11, 5))
+    assert r.room == "Kitchen" and r.limit_min == 60 and r.since == T(10, 0)
+    assert r.alert.details == {
+        "room": "Kitchen",
+        "where": "home",
+        "since": T(10, 0).isoformat(),
+        "limit_min": 60,
+        "minutes": 65,
+    }
+
+
+def test_evaluate_without_activity_and_does_not_mutate():
+    w = Whereabouts(CFG)
+    r = w.evaluate(T(10, 0))
+    assert r.where is None and r.alert is None
+    w.record(_presence(T(10, 0), "Kitchen"))
+    before = w.to_dict()
+    w.evaluate(T(12, 0))
+    assert w.to_dict() == before
