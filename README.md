@@ -1,11 +1,13 @@
 # Behaviour Monitor
 
 A Home Assistant custom integration that learns a household's routine from
-its sensors and alerts when the occupant's behaviour departs from what the
-home has learned is normal. Built for **elder care and welfare monitoring**:
-it learns whole-house activity, per-entity routines, and the ordered chains
-of rooms an occupant moves through, then separates welfare concerns from
-device problems from merely unusual activity.
+its sensors and alerts when behaviour departs from what the home has learned
+is normal. Built for **elder care and welfare monitoring**: it tracks where
+the household probably is (home, watching TV, asleep, lying in or out) to
+catch a fall or illness at home within about an hour, and it learns
+per-entity routines and the ordered chains of rooms people move through. It
+keeps welfare concerns apart from device problems and from merely unusual
+activity.
 
 ## Installation
 
@@ -30,8 +32,10 @@ device problems from merely unusual activity.
    in explanations)
 4. Assign each entity you want monitored to exactly one of the six
    categories below
-5. Configure the options
-6. To get phone notifications, import the blueprint (see
+5. On the next step, choose the outside doors, bedrooms and sitting
+   appliances (see [Whereabouts](#whereabouts))
+6. Configure the options
+7. To get phone notifications, import the blueprint (see
    [Notifications](#notifications))
 
 An entity assigned to no category is not monitored. An entity can only be
@@ -62,14 +66,17 @@ in one category's list.
 | Timing drift promotion (days) | 7 |
 | Drift sensitivity | medium |
 
+The options flow has a second step with the outside doors, bedrooms and
+sitting appliances lists.
+
 ## Entities
 
 ### Sensors
 
 | Sensor | Description |
 |--------|-------------|
-| `sensor.<site>_welfare_status` | Overall welfare status: `ok`, `degraded`, `low`, `medium`, `high`, or `critical`, with `reasons` (needs-attention explanations only), the `attention` and `information` alert lists, and `snoozed` (true while a snooze is active) |
-| `sensor.<site>_house_activity` | Seconds since the last whole-house activity event, with the expected gap, ratio, last room, and rooms visited today |
+| `sensor.<site>_welfare_status` | Overall welfare status: `ok`, `degraded`, `low`, `medium`, `high`, or `critical`, with `reasons` (needs-attention explanations only), the `attention` and `information` alert lists, `snoozed` (true while a snooze is active), and the whereabouts: `where` (`home`, `home_tv`, `asleep`, `lying_in` or `out`), `where_since`, `last_room` and `limit_min` (the stillness limit in force) |
+| `sensor.<site>_house_activity` | Seconds since the last whole-house activity event, with the expected gap, last room, and rooms visited today |
 | `sensor.<site>_anomaly` | Count of open statistical alerts, listed in an attribute |
 | `sensor.<site>_device_health` | `ok` or the worst open health condition, with per-entity state |
 | `sensor.<site>_learning` | Learning progress as a percentage, with per-model confidence and days remaining |
@@ -81,7 +88,7 @@ in one category's list.
 
 | Entity | Description |
 |--------|-------------|
-| `switch.<site>_holiday_mode` | Pauses learning and suppresses welfare and statistical alerts while the occupant is away. Panic and device health still alert |
+| `switch.<site>_holiday_mode` | Pauses learning and suppresses welfare and statistical alerts while the household is away. Panic and device health still alert |
 | `select.<site>_snooze` | Suppresses welfare and statistical delivery for a chosen duration (1 hour, 2 hours, 4 hours, or 1 day). Panic and device health still alert; needs-attention events are held back and a `reminder` follows when the snooze ends |
 | `button.<site>_clear_panic` (`_acknowledge` on existing installs) | **Clear panic**: clears every open panic. Other alerts close on their own |
 | `button.<site>_test_alert` (`_test_notification` on existing installs) | **Test alert**: opens a test panic and fires a `behaviour_monitor_alert` event with `test: true`. The next refresh clears it, so its `cleared` event follows almost at once. Learned state is untouched |
@@ -90,7 +97,7 @@ in one category's list.
 
 | Service | Description |
 |---------|-------------|
-| `behaviour_monitor.enable_holiday_mode` | Pause learning and welfare alerts while the occupant is away |
+| `behaviour_monitor.enable_holiday_mode` | Pause learning and welfare alerts while the household is away |
 | `behaviour_monitor.disable_holiday_mode` | Resume learning and welfare alerts |
 | `behaviour_monitor.snooze` | Suppress welfare and statistical delivery for a duration (requires `duration`) |
 | `behaviour_monitor.clear_snooze` | Resume delivery immediately |
@@ -127,15 +134,15 @@ events immediately regardless of any suppression in effect, and is never
 treated as a silent-sensor candidate. A panic stays open until a person
 clears it with the Clear panic button or `behaviour_monitor.clear_alert`.
 
-## Where she is
+## Whereabouts
 
-Behaviour Monitor keeps track of where the person is, in plain terms, and
-raises a welfare alert when she has been still for longer than is normal for
-that place and time. It replaces the old whole-house inactivity alert, and it
-catches a fall in the day usually within about an hour and a half.
+Behaviour Monitor keeps track of where the household probably is and raises
+a welfare alert when there has been no movement for longer than is normal for
+that place and time. It catches a fall in the day usually within about an
+hour and a half, and doesn't treat an outing as a fall.
 
-With more than one person living there, the alerts are about the whole
-household: room sensors can't tell people apart. "Still at home" means no one
+Room sensors can't tell people apart, so with more than one person living
+there the alerts are about the whole household: "still at home" means no one
 has moved, and "out" means the house is empty. A fall by one person while
 another is moving about can't be detected from room sensors; panic buttons
 cover that.
@@ -145,41 +152,47 @@ cover that.
 The setup step asks for three lists. Each is optional, but without them the
 matching states can't be told apart.
 
-- **Outside doors**: the doors she goes out through. Without them the
-  integration can't tell that she is out, so a long outing looks like a fall.
-  Tick only real outside doors: not the fridge, a cupboard or an internal
-  door.
-- **Bedrooms**: the rooms she sleeps in. Rooms with "bedroom" in the name
-  are pre-ticked. Without them a night's sleep is judged in every room.
-- **Sitting appliances**: the TV, or a plug that shows she is sitting down
-  with something on. Quiet time with one on is allowed to run longer, so a
-  film isn't mistaken for a fall.
+- **Outside doors**: the doors that lead outside. Without them the
+  integration can't tell that the house is empty, so a long outing looks
+  like a fall. Tick only real outside doors: not the fridge, a cupboard or
+  an internal door, which would hold back fall alerts.
+- **Bedrooms**: the rooms people sleep in. Rooms with "bedroom" in the name
+  are pre-ticked, and are used when the list is left unset. If no room is a
+  bedroom, the night rules apply to every room.
+- **Sitting appliances**: the TV, or a plug that shows someone is sitting
+  down with something on. Quiet time with one on is allowed to run longer,
+  so a film isn't mistaken for a fall.
 
 ### States and alerts
 
 | State | Meaning |
 |---|---|
 | Home | Moving about indoors |
-| Home with TV on | Last seen in a room with a sitting appliance on |
-| Asleep | Last seen in a bedroom during her usual night |
-| Lying in | Last seen in a bedroom after the night ends, before the usual lie-in ends |
-| Out | An outside door opened and no indoor movement followed |
+| Home with TV on | Last movement in a room with a sitting appliance on |
+| Asleep | Last movement in a bedroom during the usual night |
+| Lying in | Last movement in a bedroom after the night ends, before the usual lie-in ends |
+| Out | An outside door opened and no indoor movement followed within 10 minutes |
 
 Welfare alerts have source `whereabouts` and one of four kinds:
 
 | Kind | Fires when |
 |---|---|
-| `still_at_home` | Home and still for longer than the home limit for that hour |
-| `still_tv` | Home with the TV on and still for 90 minutes |
-| `not_up` | Asleep, and not up an hour after her usual waking time. Also used after a lie-in, when she is still in bed 90 minutes after stirring |
-| `not_back` | House empty for longer than her longest outing so far, plus a quarter |
+| `still_at_home` | Home and no movement for longer than the home limit for that hour |
+| `still_tv` | Home with the TV on and no movement for 90 minutes |
+| `not_up` | Asleep, and no one up an hour after the usual waking time. Also used after a lie-in, with no movement 90 minutes after stirring |
+| `not_back` | House empty for longer than the longest outing so far, plus a quarter |
+
+Severity is medium when an alert opens and high at one and a half times the
+limit, or an hour past the deadline for `not_up` and `not_back`. An outside
+door opening while the house is out, or soon after someone left, counts as
+coming back.
 
 ### What it learns
 
 - the home limit for each hour of the day (between 45 and 60 minutes)
-- her usual waking time
-- when her night starts and ends
-- her longest outing
+- the usual waking time
+- when the night starts and ends
+- the longest outing
 
 Each needs 3 days of data. Trips of 24 hours or more are not learned as
 outings. A day's waking time counts once the day is over, and a return to bed
@@ -194,21 +207,9 @@ minutes. A longer outage restarts the count from when it ends, except in bed
 or out, where the original time is kept. Stretches of stillness cut short by a
 restart teach slightly shorter limits.
 
-### Upgrading to v8
-
-- The welfare alert with kind `inactivity` and source `house` is replaced by
-  source `whereabouts` and the four kinds above. Automations that match
-  `inactivity` must be changed. The notify blueprint needs nothing.
-- Welfare Status gains `where`, `where_since`, `last_room` and `limit_min`.
-- The "house quiet ratio" option is gone.
-- Set outside doors and sitting appliances after upgrading, in the
-  integration's options, and check the Bedrooms list in the same step.
-- The integration relearns from recorder history. Welfare alerts stay off
-  until 14 days are learned; with Home Assistant's default 10-day recorder
-  that is about 4 days of waiting. Panic buttons keep working throughout.
-- A sensor that stops reporting while still shown as available can cause
-  stillness alerts in the rooms it covered until it is fixed. If one of these
-  appears, the device health repair for that sensor is the likely cause.
+A sensor that stops reporting while still shown as available can cause
+stillness alerts in the rooms it covered until it is fixed. If one of these
+appears, the device health repair for that sensor is the likely cause.
 
 ## Notifications
 
@@ -283,14 +284,31 @@ panic fires `cleared` with `cleared_by: "user"`.
 
 ## Upgrading
 
-From the version that ships this change, Behaviour Monitor no longer sends
-notifications; import the blueprint to keep receiving them. The notify
+### Upgrading to v8
+
+- The welfare alert with kind `inactivity` and source `house` is replaced by
+  source `whereabouts` and the four kinds in [Whereabouts](#whereabouts).
+  Automations that match `inactivity` must be changed. The notify blueprint
+  needs nothing.
+- Welfare Status gains `where`, `where_since`, `last_room` and `limit_min`.
+- The "house quiet ratio" option is gone.
+- After upgrading, open the integration's options and, on the second step,
+  set the outside doors and sitting appliances and check the Bedrooms list.
+  Until outside doors are set, an outing raises "still at home".
+- The integration relearns from recorder history. Welfare alerts stay off
+  until 14 days are learned; with Home Assistant's default 10-day recorder
+  that is about 4 days of waiting. Panic buttons keep working throughout.
+- The config entry migrates to version 13.
+
+### Upgrading to v7
+
+From v7, Behaviour Monitor no longer sends notifications; import the blueprint to keep receiving them. The notify
 service and push options are removed, the Last Notification sensor is
 removed, and the Acknowledge button and `acknowledge` service are replaced by
 Clear panic and `clear_alert`. The config entry migrates to version 12, and
 a site that had a notify service gets a repair issue linking the blueprint.
 
-## Upgrading from v4
+### Upgrading from v4
 
 Learned data from v4 is discarded — the storage schema is bumped to a new
 major version, so nothing is carried forward.
