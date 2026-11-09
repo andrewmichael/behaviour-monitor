@@ -67,6 +67,9 @@ class WhereaboutsConfig:
     lie_in_latest_min: int = 13 * 60
     # The main sleep starts between these times (wrapping midnight).
     sleep_window: tuple[int, int] = (18 * 60, 4 * 60)
+    # A bedroom interval this long is sleep: it can start the night, and
+    # one before noon cancels the waking seen before it.
+    sleep_min_min: float = 60.0
     # Waking is the first activity at or after this time.
     waking_after_min: int = 4 * 60
     # An outing this long or longer is a trip away, not an outing.
@@ -143,7 +146,8 @@ class Whereabouts:
         # Learned, all keyed by ISO day.
         self._home: dict[str, dict[int, list[float]]] = {}
         self._outs: dict[str, list[float]] = {}
-        # Night key (the evening's date) -> (start, length in minutes).
+        # Night key (the evening's date) -> (onset, minutes to the end of
+        # the night's last sleep interval).
         self._sleeps: dict[str, tuple[datetime, float]] = {}
         # Day -> minutes after midnight of the first non-bedroom activity.
         self._wakes: dict[str, int] = {}
@@ -230,7 +234,9 @@ class Whereabouts:
         """Learn from ``iv``, whose length is known now that ``end`` came."""
         cfg = self._cfg
         length = (end - iv.start).total_seconds() / 60
-        out = iv.door is not None and length >= cfg.out_after_min
+        out = iv.where is Where.OUT or (
+            iv.door is not None and length >= cfg.out_after_min
+        )
         day = iso_day(iv.start.date())
         if out:
             if length < cfg.max_outing_min:
@@ -240,14 +246,25 @@ class Whereabouts:
             hours = self._home.setdefault(day, {})
             hours.setdefault(iv.start.hour, []).append(length)
         minute = iv.start.hour * 60 + iv.start.minute
-        if self.is_bedroom(iv.room) and _in_window(minute, *cfg.sleep_window):
+        if (
+            self.is_bedroom(iv.room)
+            and _in_window(minute, *cfg.sleep_window)
+            and length >= cfg.sleep_min_min
+        ):
+            # A night split by a bathroom trip keeps its first onset and
+            # stretches to the end of its last sleep interval.
             night = iv.start.date()
             if iv.start.hour < 12:
                 night -= timedelta(days=1)
             key = iso_day(night)
-            best = self._sleeps.get(key)
-            if best is None or length > best[1]:
-                self._sleeps[key] = (iv.start, length)
+            known = self._sleeps.get(key)
+            onset = iv.start if known is None else min(known[0], iv.start)
+            ends = (
+                [end]
+                if known is None
+                else [end, known[0] + timedelta(minutes=known[1])]
+            )
+            self._sleeps[key] = (onset, (max(ends) - onset).total_seconds() / 60)
 
     def _begin(self, iv: Interval) -> None:
         if self._interval is not None:
@@ -255,9 +272,14 @@ class Whereabouts:
         self._interval = iv
 
     def restart_clock(self, now: datetime) -> None:
-        """After a gap in polling: keep the state, count stillness from ``now``."""
-        if self._interval is not None:
-            self._interval = replace(self._interval, start=now)
+        """After a gap in polling: keep the state, count stillness from ``now``.
+
+        An outing already under way stays ``OUT``: the moved start would
+        otherwise put it back inside the door-then-movement window.
+        """
+        iv = self.current(now)
+        if iv is not None:
+            self._interval = replace(iv, start=now)
 
     def prune(self, before: date) -> None:
         """Forget days before ``before``."""
@@ -365,6 +387,7 @@ class Whereabouts:
             < timedelta(minutes=self._cfg.door_room_ignore_min)
         ):
             return
+        self._cancel_waking(ev.timestamp)
         self._note_waking(ev)
         if ev.kind is EventKind.APPLIANCE_ON and sitting:
             self._tvs_on[ev.entity_id] = ev.room
@@ -392,6 +415,21 @@ class Whereabouts:
                 tv,
             )
         )
+
+    def _cancel_waking(self, now: datetime) -> None:
+        """Back to bed for a long while before noon: she was not up after all.
+
+        The next activity outside a bedroom becomes the day's waking instead.
+        """
+        cfg = self._cfg
+        iv = self._interval
+        if iv is None or cfg.bedrooms == frozenset() or not self.is_bedroom(iv.room):
+            return
+        if iv.start.hour >= 12 or now - iv.start < timedelta(minutes=cfg.sleep_min_min):
+            return
+        day = iso_day(iv.start.date())
+        if self._wakes.get(day, 24 * 60) <= iv.start.hour * 60 + iv.start.minute:
+            del self._wakes[day]
 
     def _note_waking(self, ev: ActivityEvent) -> None:
         """Remember the day's first activity outside a bedroom after 04:00."""

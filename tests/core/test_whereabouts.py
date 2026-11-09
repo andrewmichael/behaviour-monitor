@@ -277,6 +277,27 @@ def test_learned_night_bounds_and_their_clamps():
     assert w.lie_in_end() == 10 * 60
 
 
+def test_night_onset_is_earliest_long_bedroom_interval_not_the_longest():
+    """A bathroom trip splits the night; bedtime is still the onset."""
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 22, 10), "Bedroom"))
+        w.record(_presence(D(day + 1, 0, 30), "Bathroom"))
+        w.record(_presence(D(day + 1, 0, 36), "Bedroom"))
+        w.record(_presence(D(day + 1, 7, 0), "Kitchen"))
+    assert w.night_start() == 1270  # 22:10 less an hour
+
+
+def test_a_long_return_to_bed_cancels_the_waking_candidate():
+    w = Whereabouts(CFG)
+    for day in (1, 2, 3):
+        w.record(_presence(D(day, 5, 0), "Bathroom"))
+        w.record(_presence(D(day, 5, 6), "Bedroom"))
+        w.record(_presence(D(day, 7, 0), "Kitchen"))
+    assert w.usual_waking_min() == 7 * 60
+    assert w.night_end() == 360
+
+
 def test_late_waking_clamps_night_end_and_lie_in_end():
     w = Whereabouts(CFG)
     for day, (h, m) in zip((1, 2, 3), ((10, 30), (11, 0), (11, 30))):
@@ -371,6 +392,16 @@ def test_restart_clock_keeps_state_and_moves_start():
         D(1, 20, 0),
     )
     Whereabouts(CFG).restart_clock(D(1, 20, 0))  # no interval: harmless
+
+
+def test_restart_clock_keeps_out_and_the_outing_counts():
+    w = Whereabouts(CFG)
+    w.record(_door(D(1, 10, 0)))
+    w.restart_clock(D(1, 10, 40))  # a long poll gap while she is out
+    iv = w.current(D(1, 10, 40))
+    assert (iv.where, iv.start) == (Where.OUT, D(1, 10, 40))
+    w.record(_presence(D(1, 10, 45), "Hall"))  # back five minutes later
+    assert w.to_dict()["outs"] == {"2026-11-01": [5.0]}
 
 
 def test_round_trip_and_prune():
