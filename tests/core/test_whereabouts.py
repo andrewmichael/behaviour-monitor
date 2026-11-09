@@ -467,6 +467,32 @@ def test_door_while_out_and_nothing_else_is_home():
     assert a.alert is not None and a.alert.kind == "still_at_home"
 
 
+def test_quick_return_through_the_door_counts_hall_presence():
+    w = Whereabouts(CFG)
+    w.record(_door(D(1, 10, 0)))
+    w.record(_door(D(1, 10, 4)))
+    w.record(_presence(D(1, 10, 4) + timedelta(seconds=30), "Hall"))
+    a = w.evaluate(D(1, 11, 4))
+    assert a.where is Where.HOME and a.alert is None
+    a = w.evaluate(D(1, 11, 5))
+    assert a.where is Where.HOME and a.since == D(1, 10, 4) + timedelta(seconds=30)
+    assert a.alert is not None and a.alert.kind == "still_at_home"
+    assert w.longest_out_min() is None and w.to_dict()["outs"] == {}
+
+
+def test_quick_return_through_the_door_and_nothing_else_is_home():
+    w = Whereabouts(CFG)
+    w.record(_door(D(1, 10, 0)))
+    w.record(_door(D(1, 10, 4)))
+    a = w.evaluate(D(1, 10, 20))
+    assert (a.where, a.room, a.since) == (Where.HOME, "Hall", D(1, 10, 4))
+    assert w.to_dict()["outs"] == {}
+    # A door from an ordinary interval still starts a door interval.
+    w.record(_presence(D(1, 10, 30), "Kitchen"))
+    w.record(_door(D(1, 10, 40)))
+    assert w.current(D(1, 10, 50)).where is Where.OUT
+
+
 def test_round_trip_and_prune():
     w = Whereabouts(CFG)
     _learn_nights(w)

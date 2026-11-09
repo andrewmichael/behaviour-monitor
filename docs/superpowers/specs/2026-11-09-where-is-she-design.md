@@ -316,4 +316,4 @@ passes `--fall-times`.
 
 ## Acceptance result (9 Nov 2026)
 
-Biddulph Road, 43 days of data, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 95% (124 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 5, of which 4 are explained by the truth file and 1 is unexplained (2026-10-29 still_at_home, 45 min, Kitchen). None fell inside a confirmed outing.
+Biddulph Road, 43 days of data, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 5, of which 4 are explained by the truth file and 1 is unexplained (2026-10-29 still_at_home, 45 min, Kitchen). None fell inside a confirmed outing.
