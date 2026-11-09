@@ -284,6 +284,23 @@ python scripts/export_influx.py --sidecar site.sidecar.json \
 restarts, Behaviour Monitor's own sensors) to a separate file. These exports
 are not anonymised; keep them out of git.
 
+### Scoring a change against real data
+
+`scripts/scorecard.py` replays a fixture through the current engine and
+scores it against a hand-written truth file of what really happened (outings,
+visitors, sensor faults, maintenance, real concerns, data gaps; the format is
+in the script's docstring). It reports welfare alerts the truth explains or
+doesn't, sensor faults caught or missed, restart storms, information-alert
+volume, panic presses, and injected falls: on ordinary days after learning it
+stops all activity at set times and measures how long welfare takes to alert.
+
+```bash
+python scripts/scorecard.py site.jsonl --truth site.truth.yaml \
+  --fall-times 10:00,15:00 --fall-days 10
+```
+
+Run it before and after a change to see the difference on real data.
+
 ## Development
 
 See [README-DEV.md](README-DEV.md) for complete development setup
