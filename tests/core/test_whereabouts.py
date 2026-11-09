@@ -343,6 +343,42 @@ def test_burst_end_with_an_older_rise_moves_the_start_but_keeps_the_room():
     assert w.current(S(10, 10)).room == "Hall"
 
 
+def test_a_sensor_stuck_on_cannot_clear_a_live_alert():
+    """Lounge held on from 08:00 clears at 11:10: activity there ended 08:10."""
+    w = Whereabouts(CFG)
+    w.record(_presence(T(8, 0), "Lounge"))
+    w.record(_presence(T(10, 0), "Kitchen"))
+    assert w.evaluate(T(11, 5)).alert.kind == "still_at_home"
+    w.record(_burst_end(T(11, 10), "Lounge", T(8, 0)))
+    r = w.evaluate(T(11, 10))
+    assert (r.room, r.since, r.deadline) == ("Kitchen", T(10, 0), T(11, 0))
+    assert r.alert.kind == "still_at_home"
+
+
+def test_a_long_burst_counts_activity_until_ten_minutes_after_its_last_rise():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    w.record(_burst_end(T(10, 40), "Kitchen", T(10, 20)))
+    assert w.current(T(10, 45)).start == T(10, 30)
+
+
+def test_a_normal_burst_moves_the_start_to_its_fall():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    w.record(_burst_end(T(10, 2), "Kitchen", T(10, 0)))
+    assert w.current(T(10, 5)).start == T(10, 2)
+
+
+def test_old_store_without_room_rise_takes_the_interval_start():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(10, 0), "Kitchen"))
+    data = w.to_dict()
+    del data["room_rise"]
+    old = Whereabouts.from_dict(data, CFG)
+    old.record(_burst_end(T(10, 3), "Lounge", T(9, 59)))  # rose before: no move
+    assert old.current(T(10, 5)).room == "Kitchen"
+
+
 # ------------------------------------------------------------------ learning
 
 

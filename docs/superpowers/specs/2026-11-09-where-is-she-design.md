@@ -115,9 +115,13 @@ closing are not activity.
   deadline for that interval is fixed then too.
 - **Burst ends.** A motion sensor re-triggered inside its debounce sends no
   new `PRESENCE`, so the end of a burst (`BURST_END`, at its last "off") is
-  activity too. A burst end later than the current interval's start begins a
-  new interval at that time, so stillness counts from the end of the
-  movement. The room follows the latest motion, not the latest sensor to
+  activity too, until the burst's activity time: its fall, but no later than
+  10 minutes after its last rise (`burst_activity_max_min`), so a sensor
+  stuck "on" for hours can't hide stillness. An activity time later than the
+  current interval's start begins a new interval at that time, so stillness
+  counts from the end of the movement; an earlier one is ignored, room
+  included. This errs towards alerting for a sensor that holds "on" through
+  long continuous motion. The room follows the latest motion, not the latest sensor to
   clear: it moves to the burst's room only when the burst's last rise is
   later than the rise of the activity that set the current room (ties keep
   the room), and the state is worked out afresh for the new start. On the
@@ -336,4 +340,4 @@ passes `--fall-times`.
 
 ## Acceptance result (9 Nov 2026)
 
-Biddulph Road, 44 days of data to the evening of 9 Nov, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 3, of which 2 are explained by the truth file (visitor) and 1 is unexplained (2026-10-29 05:00 still_at_home, 45 min, Kitchen, just after the recorder-purge gap). None fell inside a confirmed outing.
+Biddulph Road, 44 days of data to the evening of 9 Nov, 130 injected falls (08:00 to 20:00 hourly, 10 days): 130 of 130 caught, median 1h20m, 96% (125 of 130) within 100 minutes, worst 3h45m. Welfare alerts: 3, of which 2 are explained by the truth file (visitor) and 1 is unexplained (2026-10-29 05:00 still_at_home, 45 min, Kitchen, just after the recorder-purge gap). None fell inside a confirmed outing. Unchanged after capping a burst's activity at 10 minutes after its last rise.

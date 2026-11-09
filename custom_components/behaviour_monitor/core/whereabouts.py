@@ -54,6 +54,9 @@ class WhereaboutsConfig:
     out_after_min: float = 10.0
     # Presence in the door's own room this soon is her walking out.
     door_room_ignore_min: float = 2.0
+    # A burst is evidence of activity until its fall, but no later than this
+    # long after its last rise: a sensor stuck "on" must not hide stillness.
+    burst_activity_max_min: float = 10.0
     # Stillness allowances.
     home_floor_min: float = 45.0
     home_cap_min: float = 60.0
@@ -404,6 +407,10 @@ class Whereabouts:
             w._last_room = data.get("last_room")
             rise = data.get("room_rise")
             w._room_rise = datetime.fromisoformat(rise) if rise else None
+            if w._room_rise is None and w._last_room and w._interval:
+                # A store from before rises were kept: the interval's start
+                # is the best evidence of when the room was set.
+                w._room_rise = w._interval.start
             w._tvs_on = dict(data.get("tvs_on", {}))
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
@@ -421,7 +428,11 @@ class Whereabouts:
         return room in beds
 
     def record(self, ev: ActivityEvent) -> None:
-        """Feed one event; only presence, open and appliance events start intervals."""
+        """Feed one event.
+
+        Presence, open and appliance-on events start intervals, and so does a
+        burst end that brings newer activity (see ``_burst_end``).
+        """
         if self._interval is not None and ev.timestamp < self._interval.start:
             return
         if ev.kind is EventKind.BURST_END:
@@ -484,19 +495,26 @@ class Whereabouts:
         )
 
     def _burst_end(self, ev: ActivityEvent) -> None:
-        """A newer burst end: someone was moving until then.
+        """A burst end: someone was moving until its activity time.
 
-        Stillness counts from it. The room moves to the burst's room only if
-        the burst last rose after the motion that set the current room; ties
-        keep the current room. Not a waking. It closes the interval like any
-        activity, so a long stretch in bed before it still cancels the waking
-        seen before it.
+        The activity time is its fall, but no later than
+        ``burst_activity_max_min`` after its last rise, so a sensor stuck
+        "on" for hours can't move the clock. Only an activity time later than
+        the interval's start counts; stillness then counts from it. The room
+        moves to the burst's room only if the burst last rose after the
+        motion that set the current room; ties keep the current room. Not a
+        waking. It closes the interval like any activity, so a long stretch
+        in bed before it still cancels the waking seen before it.
         """
         iv = self._interval
-        if iv is not None and (iv.door is not None or ev.timestamp <= iv.start):
-            return
-        self._cancel_waking(ev.timestamp)
         rise = ev.last_rise or ev.timestamp
+        active = min(
+            ev.timestamp,
+            rise + timedelta(minutes=self._cfg.burst_activity_max_min),
+        )
+        if iv is not None and (iv.door is not None or active <= iv.start):
+            return
+        self._cancel_waking(active)
         if self._last_room is None or self._room_rise is None or rise > self._room_rise:
             self._last_room, self._room_rise = ev.room, rise
         room = self._last_room
@@ -506,8 +524,8 @@ class Whereabouts:
         tv = self._tv_on_in(room)
         self._begin(
             Interval(
-                ev.timestamp,
-                self._classify(ev.timestamp, room, tv),
+                active,
+                self._classify(active, room, tv),
                 room,
                 tv,
                 run_start=run,
