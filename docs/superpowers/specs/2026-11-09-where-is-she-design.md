@@ -95,8 +95,8 @@ already gets from the normaliser:
 |---|---|---|
 | `home` | any indoor activity (presence, appliance on, a door followed by indoor movement within 10 min) | after stillness exceeds the at-home limit for the current hour |
 | `home_tv` | `home`, and a sitting appliance (a TV) in the room where she was last seen is on | after 90 minutes of stillness |
-| `asleep` | last seen in a bedroom, from 20:00 until 05:00 | if no activity outside a bedroom by her usual waking time + 60 min |
-| `lying_in` | last seen in a bedroom between 05:00 and 11:00, outside `asleep` | after 90 minutes of stillness |
+| `asleep` | last seen in a bedroom during her learned night (fallback 20:00 to 05:00) | if no activity outside a bedroom by her usual waking time + 60 min |
+| `lying_in` | last seen in a bedroom after the night ends and before the lie-in ends (fallback 05:00 to 11:00) | after 90 minutes of stillness |
 | `out` | an outside door opens and no indoor movement follows within 10 min | if not back after her longest outing so far × 1.25 |
 
 "Activity" means a motion presence, a door opening, or an appliance turning on
@@ -117,7 +117,8 @@ closing are not activity.
   seen is on at the start of the interval. A TV turning off later neither
   resets stillness nor shortens the allowance.
 - **Out.** An outside door opening starts an `out` interval when no `PRESENCE`
-  follows within 10 minutes. Exception *(my call; the spike counted any
+  follows within 10 minutes. Only doors chosen as outside doors count; with
+  none chosen, `out` is never entered. Exception *(my call; the spike counted any
   room)*: presence in the door's own room within the first 2 minutes is her
   walking out and does not count. At Biddulph Road the side and back doors
   are in the utility room, which has no motion sensor, and the front door is
@@ -126,19 +127,27 @@ closing are not activity.
   then `home_tv`, then `home`. So a bedroom TV left on at night is `asleep`;
   a fall in the bedroom at 21:00 is only caught by `not_up` in the morning.
   The owner accepted "no alert for stillness in bed at night".
-- **Night and morning.**
-  - An interval that starts in a bedroom between 20:00 and 05:00 is `asleep`.
-    It lasts until the next activity, past 05:00 if she sleeps on. Its
-    deadline is her usual waking time + 60 minutes on the following morning
-    (the same morning if it started after midnight).
-  - An interval that starts in a bedroom between 05:00 and 11:00 is
+- **Night and morning.** The three boundaries (night start, night end, lie-in
+  end) are learned from her data; see "Learned values". Until learning
+  completes they are 20:00, 05:00 and 11:00.
+  - An interval that starts in a bedroom between night start and night end
+    is `asleep`. It lasts until the next activity, past night end if she
+    sleeps on. Its deadline is her usual waking time + 60 minutes on the
+    following morning (the same morning if it started after midnight).
+  - An interval that starts in a bedroom between night end and lie-in end is
     `lying_in`, with a 90-minute deadline. Activity in the bedroom after
-    05:00, or a trip to the bathroom and back, starts a new interval. The
+    night end, or a trip to the bathroom and back, starts a new interval. The
     `not_up` deadline doesn't apply to `lying_in`.
-  - From 11:00, a bedroom is treated like any room: `home` (a nap gets the
-    45–60 minute limit) or `home_tv`.
+  - From lie-in end, a bedroom is treated like any room: `home` (a nap gets
+    the 45–60 minute limit) or `home_tv`.
+  - **No bedrooms chosen** *(my call)*: the night rules apply to every room,
+    so an interval that starts anywhere between night start and night end is
+    `asleep`, and between night end and lie-in end is `lying_in`. Without
+    this, a site with no bedrooms set would raise a stillness alert every
+    night.
 - **Usual waking time** is learned from the first activity of the day outside
-  a bedroom after 04:00.
+  a bedroom after 04:00 (with no bedrooms chosen: the end of the main sleep,
+  below).
 
 ### Learned values (rolling, the same learning window as the other models)
 
@@ -149,28 +158,57 @@ closing are not activity.
   activity outside a bedroom after 04:00. Before learning, 09:00.
 - **Longest outing:** the longest `out` interval seen. Before any outing is
   seen, 4 hours.
-- **Bedrooms:** rooms whose name contains "bedroom" (case-insensitive).
-  There is no selector for now *(my call)*. At Biddulph Road: Front bedroom
-  and Back bedroom.
+- **Main sleep, per night:** the longest stillness interval that starts
+  between 18:00 and 04:00 in a bedroom (in any room if no bedrooms are
+  chosen).
+- **Night start:** the 5th percentile of main-sleep start times, minus 60
+  minutes, clamped to 18:00–01:00. Before learning, 20:00.
+- **Night end:** the 5th percentile of usual waking time (the earliest she
+  is normally up), minus 60 minutes, clamped to 03:00–09:00. Before
+  learning, 05:00.
+- **Lie-in end:** usual waking time (the 95th percentile above) + 2 hours,
+  clamped to night end + 2 hours at the earliest and 13:00 at the latest.
+  Before learning, 11:00.
+- The percentiles, offsets and clamps above are *my call*. They are chosen
+  so that Biddulph Road's learned values land close to the fixed 20:00,
+  05:00 and 11:00 the experiment used; the acceptance run checks that.
+  Shift workers and people who sleep in the day are out of scope: the
+  clamps keep the night in the night.
 - **Quiet gaps for the percentile:** the lengths of `home` intervals (not
   `home_tv`, `out`, `asleep` or `lying_in`), grouped by the hour each
   interval started, over the learning window.
 
 ### Configuration
 
-Two new optional lists in the options flow, as entity selectors:
+Three new lists in the config and options flows. All are optional, but the
+flow asks for them on their own step with a short explanation of what each
+one does, because welfare alerting is much better with them set:
 
-- **Outside doors:** contact sensors that lead outside. Default: every
-  contact sensor. At Biddulph Road all three contacts are outside doors.
+- **Outside doors:** contact sensors that lead outside (entity selector,
+  limited to the site's contact sensors). Default: none. With none chosen,
+  `out` is never detected, so an outing alerts as `still_at_home`; that errs
+  towards alerting rather than hiding a fall. A fridge, cupboard or internal
+  door must not be chosen, because it would hold back fall alerts. At
+  Biddulph Road all three contacts are outside doors.
+- **Bedrooms:** rooms used for sleeping (a selector over the rooms the
+  site's sensors are in). Default: the rooms whose name contains "bedroom"
+  (case-insensitive) are pre-ticked as a suggestion; the installer can
+  change them. At Biddulph Road: Front bedroom and Back bedroom.
 - **Sitting appliances:** plugs whose "on" means she is sitting nearby, such
-  as a TV. Default: none. At Biddulph Road: the back room TV
-  (`sensor.smart_plug_power`) and the front bedroom TV
-  (`sensor.front_bedroom_tv_power`).
+  as a TV (entity selector, limited to the site's appliance plugs). Default:
+  none. At Biddulph Road: the back room TV (`sensor.smart_plug_power`) and
+  the front bedroom TV (`sensor.front_bedroom_tv_power`).
+
+Existing installs get the same defaults on upgrade (no outside doors,
+bedrooms pre-ticked by name, no sitting appliances), so the config entry
+version is bumped with a migration. The release notes tell existing users to
+set outside doors and sitting appliances.
 
 Fixed values (not options, for now): 45/60-minute clamp, 90-minute TV
 allowance, 90-minute lie-in, 60 minutes after waking time, 10-minute "door
-then movement" window, outing × 1.25, night from 20:00 to 05:00, lie-in until
-11:00. They live together in one config dataclass so the scorecard can
+then movement" window, outing × 1.25, the fallback night (20:00 to 05:00,
+lie-in until 11:00), and the percentiles, offsets and clamps used to learn
+the night. They live together in one config dataclass so the scorecard can
 explore them.
 
 ### Alerts
@@ -206,6 +244,7 @@ today's house inactivity alert.
   she is `home` again. A missed return door event is harmless.
 - **Out with no exit door** (the 18 Oct case): she counts as `home` and may
   alert. That is accepted. It errs towards alerting.
+- **No outside doors chosen:** the same as above for every outing.
 
 ### Snapshot and sensors
 
@@ -224,9 +263,10 @@ for any schema change.
 
 ## Acceptance
 
-On the Biddulph Road fixture and truth file (local, not in git), with the
-same injected falls (every hour from 08:00 to 20:00, ordinary days after
-learning):
+On the Biddulph Road fixture and truth file (local, not in git), configured
+with its three outside doors, its two bedrooms and its two TVs, and with the
+night learned rather than fixed, with the same injected falls (every hour
+from 08:00 to 20:00, ordinary days after learning):
 
 - injected falls: median time to alert 90 min or less, and 90% within
   100 min;
@@ -242,16 +282,21 @@ passes `--fall-times`.
 
 ## Calls made in this design (not discussed with the owner)
 
-- Bedrooms come from room names only; no selector.
+- Bedrooms are a selector, pre-ticked from room names containing "bedroom".
+  With none chosen, the night rules apply to every room.
+- The night is learned (night start, night end, lie-in end) with the
+  percentiles, offsets and clamps in "Learned values"; 20:00, 05:00 and
+  11:00 until learning completes. Shift workers are out of scope.
 - Presence in the door's own room in the first 2 minutes after an outside
   door opens doesn't cancel `out`.
 - Lights and generic events don't count as activity for this alert.
 - Stillness keeps counting through a restart shorter than 30 minutes, and
   restarts after a longer gap. Welfare stays suppressed while fewer than
   half the sensors are live.
-- Outside doors default to every contact sensor; sitting appliances default
-  to none.
-- Lie-in allowance 90 minutes, night 20:00–05:00, lie-in until 11:00.
+- Outside doors and sitting appliances default to none; with no outside
+  doors, `out` is never detected. The three lists get their own step in the
+  config flow, and existing installs migrate with those defaults.
+- Lie-in allowance 90 minutes.
 - Severity becomes High at 1.5× the limit, or one hour past it for `not_up`
   and `not_back`.
 - Today's `house` / `inactivity` welfare alert is replaced, not kept
