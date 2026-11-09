@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.1] - 2026-11-09
+
+### Changed
+- Documentation: README describes whereabouts for any household and groups the upgrade notes [skip ci]
+
+### Fixed
+- doors, bedrooms and TVs are all tick lists, worded for any household
+
 ## [8.0.0] - 2026-11-09
 
 ### Added
