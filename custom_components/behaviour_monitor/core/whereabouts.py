@@ -8,7 +8,8 @@ automations switch lights and would keep resetting the clock, hiding a fall.
 
 An outside door is the one exception to "fixed at the start": whether she went
 out depends on what happens in the next ten minutes, so that interval reads as
-``HOME`` until it has been quiet that long and ``OUT`` afterwards.
+``HOME`` until it has been quiet that long and ``OUT`` afterwards. An outside
+door while she is out is her return, an ordinary interval in the door's room.
 """
 
 from __future__ import annotations
@@ -408,9 +409,14 @@ class Whereabouts:
         self._note_waking(ev)
         if ev.kind is EventKind.APPLIANCE_ON and sitting:
             self._tvs_on[ev.entity_id] = ev.room
-        if ev.kind is not EventKind.OPEN:
+        outside = ev.kind is EventKind.OPEN and ev.entity_id in self._cfg.outside_doors
+        # An outside door while she is out is her coming back: she is in
+        # the door's room, and presence there right after it is her.
+        now_iv = self.current(ev.timestamp)
+        returning = outside and now_iv is not None and now_iv.where is Where.OUT
+        if ev.kind is not EventKind.OPEN or returning:
             self._last_room = ev.room
-        if ev.kind is EventKind.OPEN and ev.entity_id in self._cfg.outside_doors:
+        if outside and not returning:
             self._door_room = ev.room
             self._begin(
                 Interval(

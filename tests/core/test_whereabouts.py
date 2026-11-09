@@ -443,6 +443,30 @@ def test_poll_gap_restart_keeps_asleep_and_out_anchored():
     assert w.current(D(1, 20, 5)).start == D(1, 20, 0)
 
 
+def test_door_while_out_is_her_return_and_hall_presence_counts():
+    w = Whereabouts(CFG)
+    w.record(_door(D(1, 10, 0)))
+    w.record(_door(D(1, 12, 0)))
+    w.record(_presence(D(1, 12, 0) + timedelta(seconds=40), "Hall"))
+    a = w.evaluate(D(1, 13, 1))
+    assert a.where is Where.HOME and a.room == "Hall"
+    assert a.alert is not None and a.alert.kind == "still_at_home"
+    assert w.to_dict()["outs"] == {"2026-11-01": [120.0]}
+
+
+def test_door_while_out_and_nothing_else_is_home():
+    w = Whereabouts(CFG)
+    w.record(_presence(D(1, 9, 0), "Kitchen"))
+    w.record(_door(D(1, 10, 0)))
+    w.record(_door(D(1, 12, 0)))
+    a = w.evaluate(D(1, 12, 30))
+    assert (a.where, a.room, a.since) == (Where.HOME, "Hall", D(1, 12, 0))
+    assert a.alert is None
+    a = w.evaluate(D(1, 13, 0))
+    assert a.where is Where.HOME
+    assert a.alert is not None and a.alert.kind == "still_at_home"
+
+
 def test_round_trip_and_prune():
     w = Whereabouts(CFG)
     _learn_nights(w)
