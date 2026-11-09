@@ -564,7 +564,7 @@ def mock_config_entry() -> MagicMock:
 
         def __init__(self):
             self.entry_id = "test_entry_id"
-            self.version = 12
+            self.version = 13
             self.title = "Test House"
             self.data = {
                 "site_name": "Test House",

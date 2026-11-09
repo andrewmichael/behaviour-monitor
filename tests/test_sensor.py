@@ -66,6 +66,12 @@ SNAP = {
         }
     },
     "chains": [{"name": "A → B", "rooms": ["A", "B"], "hop_median_s": [240.0]}],
+    "whereabouts": {
+        "where": "home_tv",
+        "where_since": NOW.isoformat(),
+        "last_room": "Test House Kitchen",
+        "limit_min": 90.0,
+    },
     "display_rooms": {"Test House Kitchen": "Kitchen"},
     "snoozed": True,
 }
@@ -104,6 +110,21 @@ def test_welfare_and_house_values_and_display_rooms():
         and h["rooms_today"] == ["Kitchen"]
         and h["expected_gap_s"] == 600.0
     )
+
+
+def test_welfare_status_exposes_whereabouts_attributes():
+    attrs = _desc("welfare_status").extra_attrs_fn(MagicMock(), SNAP)
+    assert attrs["where"] == "home_tv"
+    assert attrs["where_since"] == NOW.isoformat()
+    assert attrs["last_room"] == "Kitchen"
+    assert attrs["limit_min"] == 90.0
+    empty = _desc("welfare_status").extra_attrs_fn(MagicMock(), {})
+    assert (
+        empty["where"],
+        empty["where_since"],
+        empty["last_room"],
+        empty["limit_min"],
+    ) == (None, None, None, None)
 
 
 def test_welfare_status_snoozed_defaults_to_false():

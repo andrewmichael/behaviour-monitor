@@ -1,6 +1,7 @@
 # tests/test_config_flow.py
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,12 +14,16 @@ from custom_components.behaviour_monitor.config_flow import (
     validate_categories,
 )
 from custom_components.behaviour_monitor.const import (
+    CONF_BEDROOMS,
     CONF_CONTACT_ENTITIES,
     CONF_LEARNING_DAYS,
     CONF_MOTION_DEBOUNCE_S,
     CONF_MOTION_ENTITIES,
+    CONF_OUTSIDE_DOORS,
     CONF_PANIC_ENTITIES,
+    CONF_PLUG_ENTITIES,
     CONF_SITE_NAME,
+    CONF_SITTING_APPLIANCES,
     OPTION_DEFAULTS,
 )
 
@@ -45,17 +50,133 @@ def test_entity_specs_from_data_in_category_order():
     ]
 
 
+NO_LISTS = {CONF_OUTSIDE_DOORS: [], CONF_BEDROOMS: [], CONF_SITTING_APPLIANCES: []}
+
+
+def _hass() -> MagicMock:
+    hass = MagicMock()
+    hass.states.get = lambda eid: None
+    return hass
+
+
+def _rooms(areas: dict[str, str]) -> None:
+    """Put each entity in an area of the given name in the shared mock registry."""
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(None)
+    reg.entities.clear()
+    reg.devices.clear()
+    reg.areas.clear()
+    for eid, name in areas.items():
+        reg.entities[eid] = SimpleNamespace(area_id=f"a_{eid}", device_id=None)
+        reg.areas[f"a_{eid}"] = SimpleNamespace(name=name)
+
+
+class _Key(str):
+    """A schema key that remembers the default it was given."""
+
+    default = None
+
+
+def _keyed(key, default=None, **kwargs):
+    k = _Key(key)
+    k.default = default
+    return k
+
+
+def _defaults(schema) -> dict:
+    return {str(k): k.default for k in schema if isinstance(k, _Key)}
+
+
 @pytest.mark.asyncio
-async def test_user_step_shows_form_then_creates_entry():
+async def test_user_step_then_whereabouts_step_creates_entry_with_lists():
     flow = BehaviourMonitorConfigFlow()
-    flow.hass = MagicMock()
+    flow.hass = _hass()
     result = await flow.async_step_user(None)
     assert result["type"] == "form" and result["step_id"] == "user"
     result = await flow.async_step_user({**GOOD})
+    assert result["type"] == "form" and result["step_id"] == "whereabouts"
+    result = await flow.async_step_whereabouts(
+        {
+            CONF_OUTSIDE_DOORS: ["binary_sensor.d"],
+            CONF_BEDROOMS: ["Back Bedroom"],
+            CONF_SITTING_APPLIANCES: [],
+        }
+    )
     assert result["type"] == "create_entry"
     assert result["title"] == "Biddulph Road"
     assert result["data"][CONF_MOTION_ENTITIES] == ["binary_sensor.k"]
-    assert flow.VERSION == 12
+    assert CONF_OUTSIDE_DOORS not in result["data"]
+    options = result["options"]
+    assert options[CONF_OUTSIDE_DOORS] == ["binary_sensor.d"]
+    assert options[CONF_BEDROOMS] == ["Back Bedroom"]
+    assert options[CONF_SITTING_APPLIANCES] == []
+    assert options[CONF_LEARNING_DAYS] == OPTION_DEFAULTS[CONF_LEARNING_DAYS]
+    assert flow.VERSION == 13
+
+
+@pytest.mark.asyncio
+async def test_bedrooms_default_to_rooms_named_bedroom(monkeypatch):
+    from custom_components.behaviour_monitor import config_flow
+
+    _rooms(
+        {
+            "binary_sensor.k": "Kitchen",
+            "binary_sensor.d": "Biddulph Road Hall",
+            "binary_sensor.p": "Back Bedroom",
+        }
+    )
+    selects: list[dict] = []
+    monkeypatch.setattr(config_flow.vol, "Optional", _keyed)
+    monkeypatch.setattr(
+        config_flow, "SelectSelectorConfig", lambda **kw: selects.append(kw) or kw
+    )
+    flow = BehaviourMonitorConfigFlow()
+    flow.hass = _hass()
+    result = await flow.async_step_user({**GOOD})
+    defaults = _defaults(result["data_schema"])
+    assert defaults[CONF_BEDROOMS] == ["Back Bedroom"]
+    assert defaults[CONF_OUTSIDE_DOORS] == []
+    assert defaults[CONF_SITTING_APPLIANCES] == []
+    # Values are the raw room names; labels drop the site-name prefix.
+    assert selects[-1]["options"] == [
+        {"value": "Back Bedroom", "label": "Back Bedroom"},
+        {"value": "Biddulph Road Hall", "label": "Hall"},
+        {"value": "Kitchen", "label": "Kitchen"},
+    ]
+    assert selects[-1]["multiple"] is True
+
+
+@pytest.mark.asyncio
+async def test_options_flow_whereabouts_step_rejects_door_not_contact():
+    entry = MagicMock()
+    entry.data = {**GOOD, CONF_PLUG_ENTITIES: ["sensor.tv_power"]}
+    entry.options = {}
+    flow = BehaviourMonitorOptionsFlow(entry)
+    flow.hass = _hass()
+    result = await flow.async_step_init(dict(entry.data))
+    assert result["type"] == "form" and result["step_id"] == "whereabouts"
+    result = await flow.async_step_whereabouts(
+        {**NO_LISTS, CONF_OUTSIDE_DOORS: ["binary_sensor.k"]}
+    )
+    assert result["type"] == "form" and result["step_id"] == "whereabouts"
+    assert result["errors"] == {CONF_OUTSIDE_DOORS: "door_not_contact"}
+    result = await flow.async_step_whereabouts(
+        {**NO_LISTS, CONF_SITTING_APPLIANCES: ["binary_sensor.d"]}
+    )
+    assert result["errors"] == {CONF_SITTING_APPLIANCES: "appliance_not_plug"}
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    result = await flow.async_step_whereabouts(
+        {
+            CONF_OUTSIDE_DOORS: ["binary_sensor.d"],
+            CONF_BEDROOMS: [],
+            CONF_SITTING_APPLIANCES: ["sensor.tv_power"],
+        }
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_OUTSIDE_DOORS] == ["binary_sensor.d"]
+    assert result["data"][CONF_SITTING_APPLIANCES] == ["sensor.tv_power"]
+    assert result["data"][CONF_BEDROOMS] == []
 
 
 @pytest.mark.asyncio
@@ -76,7 +197,7 @@ async def test_options_flow_updates_data_and_options():
     entry.data = dict(GOOD)
     entry.options = {}
     flow = BehaviourMonitorOptionsFlow(entry)
-    flow.hass = MagicMock()
+    flow.hass = _hass()
     result = await flow.async_step_init(None)
     assert result["type"] == "form" and result["step_id"] == "init"
     result = await flow.async_step_init(
@@ -86,6 +207,8 @@ async def test_options_flow_updates_data_and_options():
             CONF_LEARNING_DAYS: 21,
         }
     )
+    assert result["step_id"] == "whereabouts"
+    result = await flow.async_step_whereabouts(dict(NO_LISTS))
     assert result["type"] == "create_entry"
     assert result["data"][CONF_LEARNING_DAYS] == 21
     assert (
@@ -98,6 +221,7 @@ async def test_options_flow_updates_data_and_options():
         "binary_sensor.b",
     ]
     assert CONF_LEARNING_DAYS not in kwargs["data"]
+    assert CONF_OUTSIDE_DOORS not in kwargs["data"]
 
 
 @pytest.mark.asyncio
@@ -106,12 +230,13 @@ async def test_options_flow_clearing_a_category_persists_empty_list():
     entry.data = dict(GOOD)
     entry.options = {}
     flow = BehaviourMonitorOptionsFlow(entry)
-    flow.hass = MagicMock()
+    flow.hass = _hass()
     submitted = {
         CONF_SITE_NAME: GOOD[CONF_SITE_NAME],
         CONF_MOTION_ENTITIES: GOOD[CONF_MOTION_ENTITIES],
     }
-    result = await flow.async_step_init(submitted)
+    await flow.async_step_init(submitted)
+    result = await flow.async_step_whereabouts(dict(NO_LISTS))
     assert result["type"] == "create_entry"
     kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
     assert kwargs["data"][CONF_CONTACT_ENTITIES] == []
@@ -143,3 +268,4 @@ def test_options_form_has_attention_severity_and_no_push_options():
     names = _field_names(_options_schema({}))
     assert "attention_min_severity" in names
     assert not {"push_repeat_s", "push_min_severity", "notify_service"} & names
+    assert "house_low_ratio" not in names

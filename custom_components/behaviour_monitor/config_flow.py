@@ -1,5 +1,5 @@
 # custom_components/behaviour_monitor/config_flow.py
-"""Config flow: site name, notify service, six category lists; options for tuning."""
+"""Config flow: site name, six category lists, whereabouts lists; tuning options."""
 
 from __future__ import annotations
 
@@ -24,15 +24,19 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CATEGORY_CONF_KEYS,
+    CONF_BEDROOMS,
     CONF_CHAIN_WINDOW_S,
+    CONF_CONTACT_ENTITIES,
     CONF_DRIFT_SENSITIVITY,
     CONF_HEALTH_GRACE_S,
-    CONF_HOUSE_LOW_RATIO,
     CONF_LEARNING_DAYS,
     CONF_ATTENTION_MIN_SEVERITY,
     CONF_MOTION_DEBOUNCE_S,
+    CONF_OUTSIDE_DOORS,
+    CONF_PLUG_ENTITIES,
     CONF_PLUG_MARGIN_W,
     CONF_SITE_NAME,
+    CONF_SITTING_APPLIANCES,
     CONF_TIMING_PROMOTE_DAYS,
     CONF_WINDOW_DAYS,
     CONFIG_VERSION,
@@ -41,6 +45,9 @@ from .const import (
     SENSITIVITY_OPTIONS,
     SEVERITY_OPTIONS,
 )
+from .rooms import bedroom_suggestions, display_room, resolve_room
+
+WHEREABOUTS_KEYS = (CONF_OUTSIDE_DOORS, CONF_BEDROOMS, CONF_SITTING_APPLIANCES)
 
 _CATEGORY_DOMAINS: dict[str, list[str] | None] = {
     "motion": ["binary_sensor"],
@@ -141,9 +148,6 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
                     options=SEVERITY_OPTIONS, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
-            vol.Required(
-                CONF_HOUSE_LOW_RATIO, default=d(CONF_HOUSE_LOW_RATIO)
-            ): _number(CONF_HOUSE_LOW_RATIO, 1.5, 10, 0.5),
             vol.Required(CONF_CHAIN_WINDOW_S, default=d(CONF_CHAIN_WINDOW_S)): _number(
                 CONF_CHAIN_WINDOW_S, 120, 3600, 30, "s"
             ),
@@ -161,6 +165,73 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _whereabouts_schema(
+    hass: Any, data: dict[str, Any], current: dict[str, Any]
+) -> vol.Schema:
+    """Outside doors and sitting appliances from the site's contacts and plugs,
+    and bedrooms from the rooms its sensors are in."""
+    site = str(data.get(CONF_SITE_NAME, ""))
+    rooms = {resolve_room(hass, eid)[0] for eid, _ in entity_specs_from_data(data)}
+    saved = current.get(CONF_BEDROOMS)
+    bedrooms = (
+        bedroom_suggestions(rooms)
+        if saved is None
+        else [room for room in saved if room in rooms]
+    )
+    room_options = sorted(
+        ({"value": r, "label": display_room(site, r)} for r in rooms),
+        key=lambda o: (o["label"].lower(), o["value"]),
+    )
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_OUTSIDE_DOORS,
+                default=list(current.get(CONF_OUTSIDE_DOORS) or []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    multiple=True,
+                    include_entities=list(data.get(CONF_CONTACT_ENTITIES) or []),
+                )
+            ),
+            vol.Optional(CONF_BEDROOMS, default=bedrooms): SelectSelector(
+                SelectSelectorConfig(
+                    options=room_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.LIST,
+                )
+            ),
+            vol.Optional(
+                CONF_SITTING_APPLIANCES,
+                default=list(current.get(CONF_SITTING_APPLIANCES) or []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    multiple=True,
+                    include_entities=list(data.get(CONF_PLUG_ENTITIES) or []),
+                )
+            ),
+        }
+    )
+
+
+def validate_whereabouts(
+    data: dict[str, Any], user_input: dict[str, Any]
+) -> dict[str, str]:
+    """Errors for a door that is not a contact or an appliance that is not a
+    plug, which a list left over from before the categories changed can hold."""
+    errors: dict[str, str] = {}
+    contacts = set(data.get(CONF_CONTACT_ENTITIES) or [])
+    plugs = set(data.get(CONF_PLUG_ENTITIES) or [])
+    if not set(user_input.get(CONF_OUTSIDE_DOORS) or []) <= contacts:
+        errors[CONF_OUTSIDE_DOORS] = "door_not_contact"
+    if not set(user_input.get(CONF_SITTING_APPLIANCES) or []) <= plugs:
+        errors[CONF_SITTING_APPLIANCES] = "appliance_not_plug"
+    return errors
+
+
+def _whereabouts_options(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {key: list(user_input.get(key) or []) for key in WHEREABOUTS_KEYS}
+
+
 def _merged_schema(current: dict[str, Any]) -> Any:
     setup, options = _setup_schema(current), _options_schema(current)
     if hasattr(setup, "schema") and hasattr(options, "schema"):
@@ -173,7 +244,11 @@ def _merged_schema(current: dict[str, Any]) -> Any:
 
 def _split_input(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (entry data, entry options) from a merged form submission."""
-    data = {k: v for k, v in user_input.items() if k not in OPTION_DEFAULTS}
+    data = {
+        k: v
+        for k, v in user_input.items()
+        if k not in OPTION_DEFAULTS and k not in WHEREABOUTS_KEYS
+    }
     for key in CATEGORY_CONF_KEYS.values():
         data[key] = list(user_input.get(key) or [])
     options = {k: user_input.get(k, dflt) for k, dflt in OPTION_DEFAULTS.items()}
@@ -182,6 +257,10 @@ def _split_input(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str, 
 
 class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = CONFIG_VERSION
+
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
+        self._options: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -192,16 +271,34 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
             if err:
                 errors["base"] = err
             else:
-                data, options = _split_input(user_input)
+                self._data, self._options = _split_input(user_input)
                 await self.async_set_unique_id(
-                    f"{DOMAIN}_{data[CONF_SITE_NAME].strip().lower()}"
+                    f"{DOMAIN}_{self._data[CONF_SITE_NAME].strip().lower()}"
                 )
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=data[CONF_SITE_NAME], data=data, options=options
-                )
+                return await self.async_step_whereabouts()
         return self.async_show_form(
             step_id="user", data_schema=_setup_schema(user_input or {}), errors=errors
+        )
+
+    async def async_step_whereabouts(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = validate_whereabouts(self._data, user_input)
+            if not errors:
+                return self.async_create_entry(
+                    title=self._data[CONF_SITE_NAME],
+                    data=self._data,
+                    options={**self._options, **_whereabouts_options(user_input)},
+                )
+        return self.async_show_form(
+            step_id="whereabouts",
+            data_schema=_whereabouts_schema(
+                self.hass, self._data, {**self._options, **(user_input or {})}
+            ),
+            errors=errors,
         )
 
     @staticmethod
@@ -213,6 +310,8 @@ class BehaviourMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
 class BehaviourMonitorOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: Any) -> None:
         self._entry = config_entry
+        self._data: dict[str, Any] = {}
+        self._options: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -227,8 +326,30 @@ class BehaviourMonitorOptionsFlow(OptionsFlow):
             if err:
                 errors["base"] = err
             else:
-                data, options = _split_input(merged)
-                self.hass.config_entries.async_update_entry(self._entry, data=data)
-                return self.async_create_entry(title="", data=options)
+                self._data, self._options = _split_input(merged)
+                return await self.async_step_whereabouts()
         schema = _merged_schema(current)
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+
+    async def async_step_whereabouts(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Shown after init. The entry data is written only here, so leaving
+        the flow at this step changes nothing."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = validate_whereabouts(self._data, user_input)
+            if not errors:
+                self.hass.config_entries.async_update_entry(
+                    self._entry, data=self._data
+                )
+                return self.async_create_entry(
+                    title="",
+                    data={**self._options, **_whereabouts_options(user_input)},
+                )
+        current = {**self._entry.options, **(user_input or {})}
+        return self.async_show_form(
+            step_id="whereabouts",
+            data_schema=_whereabouts_schema(self.hass, self._data, current),
+            errors=errors,
+        )

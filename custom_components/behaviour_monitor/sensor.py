@@ -76,6 +76,10 @@ SENSOR_DESCRIPTIONS: tuple[BehaviourMonitorSensorDescription, ...] = (
             "attention": _rendered_alerts(d, "attention"),
             "information": _rendered_alerts(d, "information"),
             "snoozed": bool(d.get("snoozed", False)),
+            "where": d.get("whereabouts", {}).get("where"),
+            "where_since": d.get("whereabouts", {}).get("where_since"),
+            "last_room": _disp(d, d.get("whereabouts", {}).get("last_room")),
+            "limit_min": d.get("whereabouts", {}).get("limit_min"),
         },
     ),
     BehaviourMonitorSensorDescription(

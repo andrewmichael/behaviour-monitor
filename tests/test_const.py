@@ -28,7 +28,6 @@ def test_option_defaults_match_spec():
         "window_days": 28,
         "health_grace_s": 900,
         "attention_min_severity": "medium",
-        "house_low_ratio": 3,
         "chain_window_s": 1800,
         "timing_promote_days": 7,
         "drift_sensitivity": "medium",
@@ -36,7 +35,7 @@ def test_option_defaults_match_spec():
 
 
 def test_versions_and_services():
-    assert const.CONFIG_VERSION == 12 and const.STORAGE_VERSION == 11
+    assert const.CONFIG_VERSION == 13 and const.STORAGE_VERSION == 11
     assert const.VERSION == "5.0.0"
     assert const.SERVICE_CLEAR_ALERT == "clear_alert"
     assert const.SERVICE_RESET_LEARNING == "reset_learning"
@@ -53,3 +52,11 @@ def test_notification_migration_constants():
     assert not hasattr(const, "CONF_NOTIFY_SERVICE")
     assert not hasattr(const, "CONF_PUSH_REPEAT_S")
     assert not hasattr(const, "CONF_PUSH_MIN_SEVERITY")
+
+
+def test_whereabouts_option_keys():
+    assert const.CONF_OUTSIDE_DOORS == "outside_doors"
+    assert const.CONF_SITTING_APPLIANCES == "sitting_appliances"
+    assert const.CONF_BEDROOMS == "bedrooms"
+    assert const.LEGACY_CONF_HOUSE_LOW_RATIO == "house_low_ratio"
+    assert not hasattr(const, "CONF_HOUSE_LOW_RATIO")

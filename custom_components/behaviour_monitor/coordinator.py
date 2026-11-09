@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from .config_flow import entity_specs_from_data
 from .const import (
+    CONF_BEDROOMS,
     CONF_SITE_NAME,
     DOMAIN,
     EVENT_ALERT,
@@ -37,6 +38,7 @@ from .const import (
 from .core.alert_router import DeliveryAction
 from .core.engine import SCHEMA_VERSION, Engine, EngineConfig, EntitySpec
 from .core.events import UNAVAILABLE_STATES, Category
+from .rooms import display_room, resolve_room
 
 try:
     from homeassistant.components.recorder import get_instance as recorder_get_instance
@@ -143,49 +145,19 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def display_room(self, room: str) -> str:
         """Strip a leading site name so "Test House Kitchen" reads as "Kitchen"."""
-        prefix = self._site.strip().lower()
-        low = room.lower()
-        if (
-            prefix
-            and low.startswith(prefix)
-            and len(room) > len(prefix)
-            and room[len(prefix)].isspace()
-        ):
-            return room[len(prefix) :].strip()
-        return room
+        return display_room(self._site, room)
 
     # ---------------------------------------------------------------- rooms
 
     def _resolve_specs(self) -> tuple[list[EntitySpec], dict[str, str | None]]:
         """Build the entity specs and remember which area each room came from."""
-        ent_reg = er.async_get(self.hass)
-        dev_reg = dr.async_get(self.hass)
-        area_reg = ar.async_get(self.hass)
         specs: list[EntitySpec] = []
         area_ids: dict[str, str | None] = {}
         for entity_id, category in entity_specs_from_data(self._entry.data):
-            room, area_id = self._room_for(entity_id, ent_reg, dev_reg, area_reg)
+            room, area_id = resolve_room(self.hass, entity_id)
             specs.append(EntitySpec(entity_id, Category(category), room))
             area_ids[entity_id] = area_id
         return specs, area_ids
-
-    def _room_for(
-        self, entity_id: str, ent_reg: Any, dev_reg: Any, area_reg: Any
-    ) -> tuple[str, str | None]:
-        """Resolve a room name, and the area id it came from if it had one."""
-        entry = ent_reg.async_get(entity_id)
-        area_id = getattr(entry, "area_id", None)
-        if not area_id and getattr(entry, "device_id", None):
-            device = dev_reg.async_get(entry.device_id)
-            area_id = getattr(device, "area_id", None)
-        if area_id:
-            area = area_reg.async_get_area(area_id)
-            if area is not None and getattr(area, "name", None):
-                return str(area.name), str(area_id)
-        state = self.hass.states.get(entity_id)
-        if state is not None and state.attributes.get("friendly_name"):
-            return str(state.attributes["friendly_name"]), None
-        return entity_id, None
 
     async def _async_registry_updated(self, event: Any) -> None:
         """Re-resolve rooms, telling a renamed area apart from a moved entity.
@@ -198,6 +170,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         new_specs, new_area_ids = self._resolve_specs()
         old_rooms = {s.entity_id: s.room for s in self._specs}
+        renamed: dict[str, str] = {}
         for spec in new_specs:
             entity_id = spec.entity_id
             if old_rooms.get(entity_id, spec.room) == spec.room:
@@ -205,6 +178,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             old_area = self._area_ids.get(entity_id)
             if old_area is not None and old_area == new_area_ids.get(entity_id):
                 self._engine.rename_room(old_rooms[entity_id], spec.room)
+                renamed[old_rooms[entity_id]] = spec.room
             # A move, or a room that never came from an area, changes only this
             # entity; set_entities below updates its room in place and the
             # room-keyed chains are left alone.
@@ -212,6 +186,24 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._area_ids = new_area_ids
         self._engine.set_entities(self._specs)
         await self._saver.async_call()
+        self._rename_bedrooms(renamed)
+
+    def _rename_bedrooms(self, renamed: dict[str, str]) -> None:
+        """Carry a renamed area over into the bedrooms option.
+
+        Unset bedrooms are left unset, since the engine then picks rooms by
+        name. Updating the entry reloads it, which is acceptable for a rename.
+        """
+        bedrooms = self._entry.options.get(CONF_BEDROOMS)
+        if bedrooms is None or not any(room in renamed for room in bedrooms):
+            return
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options={
+                **self._entry.options,
+                CONF_BEDROOMS: [renamed.get(room, room) for room in bedrooms],
+            },
+        )
 
     # ------------------------------------------------------------- lifecycle
 

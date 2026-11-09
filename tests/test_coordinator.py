@@ -53,11 +53,11 @@ def _store_router(coordinator, alerts: list[Alert]) -> None:
     coordinator._store._stored_version = coordinator._store.version
 
 
-def _inactivity() -> Alert:
+def _still_at_home() -> Alert:
     return Alert(
         AlertClass.WELFARE,
-        "house",
-        "inactivity",
+        "whereabouts",
+        "still_at_home",
         Severity.HIGH,
         "No activity",
         NOW - timedelta(hours=1),
@@ -189,7 +189,7 @@ async def test_events_held_until_started_then_restart_reminders(coordinator, moc
     from homeassistant.core import CoreState
 
     mock_hass.state = CoreState.starting
-    _store_router(coordinator, [_inactivity()])
+    _store_router(coordinator, [_still_at_home()])
     await coordinator.async_setup()
     with patch(
         "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
@@ -206,7 +206,10 @@ async def test_events_held_until_started_then_restart_reminders(coordinator, moc
     started_listener = listens[0][1]
     await started_listener(None)
     types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
-    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    assert types == [
+        ("opened", None, "panic"),
+        ("reminder", "restart", "still_at_home"),
+    ]
     # Once started, events go straight out.
     await coordinator.async_test_panic()
     assert _fired(mock_hass)[-1]["test"] is True
@@ -223,7 +226,7 @@ async def test_started_during_setup_releases_held_events(coordinator, mock_hass)
     )
 
     mock_hass.state = CoreState.starting
-    _store_router(coordinator, [_inactivity()])
+    _store_router(coordinator, [_still_at_home()])
     coordinator._store._data["entity_ids"].remove("binary_sensor.panic")
 
     async def boot(_ids):
@@ -247,7 +250,10 @@ async def test_started_during_setup_releases_held_events(coordinator, mock_hass)
         await coordinator.async_setup()
     mock_hass.bus.async_listen_once.assert_not_called()
     types = [(d["type"], d.get("reason"), d["kind"]) for d in _fired(mock_hass)]
-    assert types == [("opened", None, "panic"), ("reminder", "restart", "inactivity")]
+    assert types == [
+        ("opened", None, "panic"),
+        ("reminder", "restart", "still_at_home"),
+    ]
     await coordinator.async_test_panic()
     assert _fired(mock_hass)[-1]["test"] is True
 
@@ -264,11 +270,13 @@ async def test_reload_while_running_sends_one_reminder_per_attention_alert(
         "missed",
         NOW - timedelta(hours=1),
     )
-    _store_router(coordinator, [_inactivity(), stat])
+    _store_router(coordinator, [_still_at_home(), stat])
     await coordinator.async_setup()
     mock_hass.bus.async_listen_once.assert_not_called()
     reminders = [d for d in _fired(mock_hass) if d["type"] == "reminder"]
-    assert [(r["reason"], r["kind"]) for r in reminders] == [("restart", "inactivity")]
+    assert [(r["reason"], r["kind"]) for r in reminders] == [
+        ("restart", "still_at_home")
+    ]
     await coordinator._async_update_data()
     assert len([d for d in _fired(mock_hass) if d["type"] == "reminder"]) == 1
 
@@ -304,8 +312,8 @@ async def test_delivery_actions_map_to_events_issues_and_logbook(
     coordinator._started = True
     welfare = Alert(
         AlertClass.WELFARE,
-        "house",
-        "inactivity",
+        "whereabouts",
+        "still_at_home",
         Severity.HIGH,
         "No activity in Test House Kitchen",
         NOW,
@@ -346,9 +354,9 @@ async def test_delivery_actions_map_to_events_issues_and_logbook(
             "id": "w1",
             "group": "attention",
             "class": "welfare",
-            "kind": "inactivity",
+            "kind": "still_at_home",
             "severity": "high",
-            "source": "house",
+            "source": "whereabouts",
             "room": "Test House Kitchen",
             "message": "No activity in Kitchen",
             "raised_at": NOW.isoformat(),
@@ -492,6 +500,38 @@ async def test_registry_update_reresolves_rooms(coordinator, mock_hass):
     rooms = {s.entity_id: s.room for s in coordinator.entity_specs}
     assert rooms["binary_sensor.bed_motion"] == "Test House Kitchen"
     assert "Back Bedroom" not in set(rooms.values())
+
+
+@pytest.mark.asyncio
+async def test_area_rename_renames_bedroom_option(
+    coordinator, mock_hass, mock_config_entry
+):
+    """A renamed bedroom area keeps its place in the bedrooms option."""
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    from homeassistant.helpers import entity_registry as er
+
+    mock_config_entry.options = {"learning_days": 10, "bedrooms": ["Bedroom", "Den"]}
+    reg = er.async_get(mock_hass)
+    reg.areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_called_once_with(
+        mock_config_entry,
+        options={"learning_days": 10, "bedrooms": ["Back Bedroom", "Den"]},
+    )
+
+    # A rename of a room that is not a bedroom leaves the option alone.
+    mock_hass.config_entries.async_update_entry.reset_mock()
+    mock_config_entry.options = {"bedrooms": ["Back Bedroom"]}
+    reg.areas["a_kitchen"] = SimpleNamespace(name="Test House Scullery")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_not_called()
+
+    # Unset bedrooms stay unset: the engine applies the name rule itself.
+    mock_config_entry.options = {}
+    reg.areas["a_bed"] = SimpleNamespace(name="Front Bedroom")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -649,7 +689,12 @@ async def test_bootstrap_replays_all_entities_in_time_order(coordinator):
 @pytest.mark.asyncio
 async def test_bootstrap_actions_are_queued_for_delivery(coordinator):
     alert = Alert(
-        AlertClass.WELFARE, "house", "inactivity", Severity.HIGH, "No activity", NOW
+        AlertClass.WELFARE,
+        "whereabouts",
+        "still_at_home",
+        Severity.HIGH,
+        "No activity",
+        NOW,
     )
     action = DeliveryAction("event", alert, event="opened", alert_id="a1")
     instance = _recorder_instance({})
