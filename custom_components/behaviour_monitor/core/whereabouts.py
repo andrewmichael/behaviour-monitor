@@ -299,6 +299,18 @@ class Whereabouts:
             return
         self._interval = replace(iv, start=now)
 
+    def rename_room(self, old: str, new: str) -> None:
+        """Follow a renamed room in the remembered rooms and interval."""
+
+        def ren(room: str | None) -> str | None:
+            return new if room == old else room
+
+        self._last_room = ren(self._last_room)
+        self._door_room = ren(self._door_room)
+        self._tvs_on = {e: new if r == old else r for e, r in self._tvs_on.items()}
+        if self._interval is not None:
+            self._interval = replace(self._interval, room=ren(self._interval.room))
+
     def prune(self, before: date) -> None:
         """Forget days before ``before``."""
         cutoff = iso_day(before)

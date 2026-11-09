@@ -528,9 +528,10 @@ def test_poll_gap_after_noon_keeps_an_open_not_up():
     e.poll(day + timedelta(days=1, hours=12, minutes=21))
     assert [a.kind for a in _open_where(e)] == ["not_up"]
     snap = e.snapshot(day + timedelta(days=1, hours=12, minutes=21))
-    assert snap["whereabouts"]["where_since"] == (
-        day + timedelta(hours=22, minutes=30)
-    ).isoformat()
+    assert (
+        snap["whereabouts"]["where_since"]
+        == (day + timedelta(hours=22, minutes=30)).isoformat()
+    )
 
 
 def test_poll_gap_while_out_keeps_the_time_she_left():
@@ -549,3 +550,21 @@ def test_poll_gap_while_out_keeps_the_time_she_left():
     a = e._where.evaluate(day + timedelta(days=1))
     assert a.deadline == ten + timedelta(minutes=240 * 1.25)
     assert "left by the" in a.alert.explanation and "at 10:00" in a.alert.explanation
+
+
+def test_rename_room_renames_whereabouts_rooms():
+    day = MON + timedelta(days=15)
+    e = _door_engine()
+    e._where._tvs_on = {"sensor.tv": "Kitchen"}
+    e.handle_state("binary_sensor.side_door", "off", "on", day + timedelta(hours=10))
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=10, minutes=5))
+    e.handle_state(
+        "binary_sensor.side_door", "on", "off", day + timedelta(hours=10, minutes=6)
+    )
+    e._where._door_room = "Kitchen"
+    e.rename_room("Kitchen", "Scullery")
+    w = e._where.to_dict()
+    assert w["last_room"] == "Scullery"
+    assert w["door_room"] == "Scullery"
+    assert w["tvs_on"] == {"sensor.tv": "Scullery"}
+    assert w["interval"]["room"] == "Scullery"

@@ -452,9 +452,7 @@ async def test_poll_saves_the_store_at_most_every_five_minutes(coordinator):
         coordinator, "_bootstrap_entities", new=AsyncMock()
     ):
         await coordinator.async_setup()
-    with patch.object(
-        coordinator._store, "async_save", new=AsyncMock()
-    ) as save:
+    with patch.object(coordinator._store, "async_save", new=AsyncMock()) as save:
         with patch(now, return_value=NOW + timedelta(minutes=1)):
             await coordinator._async_update_data()
         save.assert_not_called()
@@ -464,9 +462,10 @@ async def test_poll_saves_the_store_at_most_every_five_minutes(coordinator):
         with patch(now, return_value=NOW + timedelta(minutes=7)):
             await coordinator._async_update_data()
         save.assert_awaited_once()
-    assert save.await_args.args[0]["engine"]["meta"]["last_poll"] == (
-        NOW + timedelta(minutes=6)
-    ).isoformat()
+    assert (
+        save.await_args.args[0]["engine"]["meta"]["last_poll"]
+        == (NOW + timedelta(minutes=6)).isoformat()
+    )
 
 
 @pytest.mark.asyncio

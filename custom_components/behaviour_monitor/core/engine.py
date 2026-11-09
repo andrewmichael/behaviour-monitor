@@ -142,6 +142,7 @@ class Engine:
 
     def rename_room(self, old: str, new: str) -> None:
         self._chains.rename_room(old, new)
+        self._where.rename_room(old, new)
         self._specs = {
             k: EntitySpec(v.entity_id, v.category, new if v.room == old else v.room)
             for k, v in self._specs.items()

@@ -73,19 +73,29 @@ def _rooms(areas: dict[str, str]) -> None:
 
 
 class _Key(str):
-    """A schema key that remembers the default it was given."""
+    """A schema key that remembers the default and description it was given."""
 
     default = None
+    description = None
 
 
-def _keyed(key, default=None, **kwargs):
+def _keyed(key, default=None, description=None, **kwargs):
     k = _Key(key)
     k.default = default
+    k.description = description
     return k
 
 
 def _defaults(schema) -> dict:
     return {str(k): k.default for k in schema if isinstance(k, _Key)}
+
+
+def _suggested(schema) -> dict:
+    return {
+        str(k): (k.description or {}).get("suggested_value")
+        for k in schema
+        if isinstance(k, _Key)
+    }
 
 
 @pytest.mark.asyncio
@@ -134,10 +144,16 @@ async def test_bedrooms_default_to_rooms_named_bedroom(monkeypatch):
     flow = BehaviourMonitorConfigFlow()
     flow.hass = _hass()
     result = await flow.async_step_user({**GOOD})
-    defaults = _defaults(result["data_schema"])
-    assert defaults[CONF_BEDROOMS] == ["Back Bedroom"]
-    assert defaults[CONF_OUTSIDE_DOORS] == []
-    assert defaults[CONF_SITTING_APPLIANCES] == []
+    # Suggested, not defaults: a default would refill a list the user cleared.
+    suggested = _suggested(result["data_schema"])
+    assert suggested[CONF_BEDROOMS] == ["Back Bedroom"]
+    assert suggested[CONF_OUTSIDE_DOORS] == []
+    assert suggested[CONF_SITTING_APPLIANCES] == []
+    assert _defaults(result["data_schema"]) == {
+        CONF_BEDROOMS: None,
+        CONF_OUTSIDE_DOORS: None,
+        CONF_SITTING_APPLIANCES: None,
+    }
     # Values are the raw room names; labels drop the site-name prefix.
     assert selects[-1]["options"] == [
         {"value": "Back Bedroom", "label": "Back Bedroom"},
@@ -177,6 +193,33 @@ async def test_options_flow_whereabouts_step_rejects_door_not_contact():
     assert result["data"][CONF_OUTSIDE_DOORS] == ["binary_sensor.d"]
     assert result["data"][CONF_SITTING_APPLIANCES] == ["sensor.tv_power"]
     assert result["data"][CONF_BEDROOMS] == []
+
+
+@pytest.mark.asyncio
+async def test_options_flow_clearing_whereabouts_lists_saves_empty_lists(
+    monkeypatch,
+):
+    """A cleared list is left out of the submission and must save as []."""
+    from custom_components.behaviour_monitor import config_flow
+
+    monkeypatch.setattr(config_flow.vol, "Optional", _keyed)
+    entry = MagicMock()
+    entry.data = {**GOOD, CONF_PLUG_ENTITIES: ["sensor.tv_power"]}
+    entry.options = {
+        CONF_OUTSIDE_DOORS: ["binary_sensor.d"],
+        CONF_BEDROOMS: ["Kitchen"],
+        CONF_SITTING_APPLIANCES: ["sensor.tv_power"],
+    }
+    flow = BehaviourMonitorOptionsFlow(entry)
+    flow.hass = _hass()
+    result = await flow.async_step_init(dict(entry.data))
+    assert _suggested(result["data_schema"])[CONF_OUTSIDE_DOORS] == ["binary_sensor.d"]
+    assert _defaults(result["data_schema"])[CONF_OUTSIDE_DOORS] is None
+    result = await flow.async_step_whereabouts({})
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_OUTSIDE_DOORS] == []
+    assert result["data"][CONF_BEDROOMS] == []
+    assert result["data"][CONF_SITTING_APPLIANCES] == []
 
 
 @pytest.mark.asyncio

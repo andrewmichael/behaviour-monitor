@@ -169,7 +169,11 @@ def _whereabouts_schema(
     hass: Any, data: dict[str, Any], current: dict[str, Any]
 ) -> vol.Schema:
     """Outside doors and sitting appliances from the site's contacts and plugs,
-    and bedrooms from the rooms its sensors are in."""
+    and bedrooms from the rooms its sensors are in.
+
+    Current values are suggested rather than defaults: a default would refill
+    a list the user cleared, and a cleared list must save as [].
+    """
     site = str(data.get(CONF_SITE_NAME, ""))
     rooms = {resolve_room(hass, eid)[0] for eid, _ in entity_specs_from_data(data)}
     saved = current.get(CONF_BEDROOMS)
@@ -186,14 +190,18 @@ def _whereabouts_schema(
         {
             vol.Optional(
                 CONF_OUTSIDE_DOORS,
-                default=list(current.get(CONF_OUTSIDE_DOORS) or []),
+                description={
+                    "suggested_value": list(current.get(CONF_OUTSIDE_DOORS) or [])
+                },
             ): EntitySelector(
                 EntitySelectorConfig(
                     multiple=True,
                     include_entities=list(data.get(CONF_CONTACT_ENTITIES) or []),
                 )
             ),
-            vol.Optional(CONF_BEDROOMS, default=bedrooms): SelectSelector(
+            vol.Optional(
+                CONF_BEDROOMS, description={"suggested_value": bedrooms}
+            ): SelectSelector(
                 SelectSelectorConfig(
                     options=room_options,
                     multiple=True,
@@ -202,7 +210,9 @@ def _whereabouts_schema(
             ),
             vol.Optional(
                 CONF_SITTING_APPLIANCES,
-                default=list(current.get(CONF_SITTING_APPLIANCES) or []),
+                description={
+                    "suggested_value": list(current.get(CONF_SITTING_APPLIANCES) or [])
+                },
             ): EntitySelector(
                 EntitySelectorConfig(
                     multiple=True,
