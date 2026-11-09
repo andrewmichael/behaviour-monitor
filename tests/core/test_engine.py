@@ -513,3 +513,39 @@ def test_schema_3_round_trip_keeps_whereabouts_state():
     e2.poll(day + timedelta(hours=10, minutes=30))
     e2.poll(day + timedelta(hours=10, minutes=46))
     assert [a.kind for a in _open_where(e2)] == ["still_at_home"]
+
+
+def test_poll_gap_after_noon_keeps_an_open_not_up():
+    day = MON + timedelta(days=15)
+    e = _door_engine()
+    _pulse(e, "binary_sensor.bed", day + timedelta(hours=22, minutes=30))
+    t = day + timedelta(hours=22, minutes=35)
+    while t <= day + timedelta(days=1, hours=11, minutes=50):
+        e.poll(t)
+        t += timedelta(minutes=5)
+    assert [a.kind for a in _open_where(e)] == ["not_up"]
+    e.poll(day + timedelta(days=1, hours=12, minutes=20))  # a 30 minute gap
+    e.poll(day + timedelta(days=1, hours=12, minutes=21))
+    assert [a.kind for a in _open_where(e)] == ["not_up"]
+    snap = e.snapshot(day + timedelta(days=1, hours=12, minutes=21))
+    assert snap["whereabouts"]["where_since"] == (
+        day + timedelta(hours=22, minutes=30)
+    ).isoformat()
+
+
+def test_poll_gap_while_out_keeps_the_time_she_left():
+    day = MON + timedelta(days=15)
+    ten = day + timedelta(hours=10)
+    e = _door_engine()
+    e.poll(ten - timedelta(minutes=1))
+    e.handle_state("binary_sensor.side_door", "off", "on", ten)
+    e.handle_state("binary_sensor.side_door", "on", "off", ten + timedelta(seconds=30))
+    for m in range(5, 31, 5):
+        e.poll(ten + timedelta(minutes=m))
+    noon = day + timedelta(hours=12)
+    e.poll(noon)  # a 90 minute gap while she is out
+    w = e.snapshot(noon)["whereabouts"]
+    assert w["where"] == "out" and w["where_since"] == ten.isoformat()
+    a = e._where.evaluate(day + timedelta(days=1))
+    assert a.deadline == ten + timedelta(minutes=240 * 1.25)
+    assert "left by the" in a.alert.explanation and "at 10:00" in a.alert.explanation

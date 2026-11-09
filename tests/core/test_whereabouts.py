@@ -424,6 +424,25 @@ def test_restart_clock_keeps_out_and_the_outing_counts():
     assert w.to_dict()["outs"] == {"2026-11-01": [5.0]}
 
 
+def test_poll_gap_restart_keeps_asleep_and_out_anchored():
+    w = Whereabouts(CFG)
+    w.record(_presence(D(1, 22, 30), "Bedroom"))
+    w.restart_clock(D(2, 12, 20), keep_anchored=True)
+    assert w.current(D(2, 12, 21)).start == D(1, 22, 30)
+    assert w.evaluate(D(2, 12, 21)).alert.kind == "not_up"
+
+    w = Whereabouts(CFG)
+    w.record(_door(D(1, 10, 0)))
+    w.restart_clock(D(1, 12, 0), keep_anchored=True)
+    iv = w.current(D(1, 12, 0))
+    assert (iv.where, iv.start) == (Where.OUT, D(1, 10, 0))
+
+    w = Whereabouts(CFG)
+    w.record(_tv(D(1, 19, 0), "Lounge"))
+    w.restart_clock(D(1, 20, 0), keep_anchored=True)
+    assert w.current(D(1, 20, 5)).start == D(1, 20, 0)
+
+
 def test_round_trip_and_prune():
     w = Whereabouts(CFG)
     _learn_nights(w)

@@ -279,15 +279,24 @@ class Whereabouts:
             self._close(self._interval, iv.start)
         self._interval = iv
 
-    def restart_clock(self, now: datetime) -> None:
-        """After a gap in polling: keep the state, count stillness from ``now``.
+    def restart_clock(self, now: datetime, keep_anchored: bool = False) -> None:
+        """Keep the state and count stillness from ``now``.
 
         An outing already under way stays ``OUT``: the moved start would
         otherwise put it back inside the door-then-movement window.
+
+        ``keep_anchored`` is for a gap in polling: ``ASLEEP`` and ``OUT``
+        keep their start, since their deadline is the next morning or the
+        time she left, not a stretch of stillness. The end of a holiday
+        restarts every state.
         """
         iv = self.current(now)
-        if iv is not None:
-            self._interval = replace(iv, start=now)
+        if iv is None:
+            return
+        if keep_anchored and iv.where in (Where.ASLEEP, Where.OUT):
+            self._interval = iv
+            return
+        self._interval = replace(iv, start=now)
 
     def prune(self, before: date) -> None:
         """Forget days before ``before``."""

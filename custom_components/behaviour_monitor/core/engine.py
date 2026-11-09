@@ -260,7 +260,7 @@ class Engine:
             and now - self._last_poll >= POLL_GAP
             and not self._holiday_just_ended
         ):
-            self._where.restart_clock(now)
+            self._where.restart_clock(now, keep_anchored=True)
         self._last_poll = now
 
         if self._holiday:
