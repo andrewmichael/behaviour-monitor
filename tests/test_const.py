@@ -1,5 +1,8 @@
 """Tests for constants module."""
 
+import json
+from pathlib import Path
+
 from custom_components.behaviour_monitor import const
 
 
@@ -37,7 +40,10 @@ def test_option_defaults_match_spec():
 
 def test_versions_and_services():
     assert const.CONFIG_VERSION == 13 and const.STORAGE_VERSION == 11
-    assert const.VERSION == "5.0.0"
+    # The release workflow only writes manifest.json, so the version shown as
+    # the device firmware must come from there or it goes stale.
+    manifest = Path(const.__file__).with_name("manifest.json")
+    assert const.VERSION == json.loads(manifest.read_text())["version"]
     assert const.SERVICE_CLEAR_ALERT == "clear_alert"
     assert const.SERVICE_RESET_LEARNING == "reset_learning"
     assert const.SERVICE_TEST_PANIC == "test_panic"
