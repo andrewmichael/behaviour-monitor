@@ -52,6 +52,8 @@ from custom_components.behaviour_monitor.core.engine import (  # noqa: E402
 from custom_components.behaviour_monitor.core.events import Category  # noqa: E402
 
 HOLIDAY_KINDS = {"away", "gap"}
+CARD_KINDS = ("not_yet_today", "trip_missed", "unusual_now")
+NIGHT_KINDS = ("night_downstairs", "night_door")
 EXPLAINS_WELFARE = {"out", "away", "visitor", "maintenance", "gap"}
 PUSH_EVENTS = {"opened", "escalated", "reminder"}
 STORM_MIN_SENSORS = 5
@@ -257,6 +259,7 @@ def score_welfare(tl: list[dict[str, Any]], truth: list[Truth]) -> dict[str, Any
             )
     return {
         "alerts": len(first_push),
+        "night_pushes": sum(r["kind"] in NIGHT_KINDS for r in first_push.values()),
         "explained": dict(explained),
         "unexplained": unexplained,
         "concerns": len(concerns),
@@ -411,6 +414,7 @@ def render(r: dict[str, Any]) -> str:
         f" {s['events']} events",
         "",
         f"WELFARE (would push)          {w['alerts']}",
+        f"  night pushes                {w['night_pushes']}",
         f"  explained by truth          {sum(w['explained'].values())}"
         + (f"  {w['explained']}" if w["explained"] else ""),
         f"  unexplained                 {len(w['unexplained'])}",
@@ -443,7 +447,7 @@ def render(r: dict[str, Any]) -> str:
     out += [
         f"  top {k}: " + ", ".join(f"{src} {n}" for src, n in v)
         for k, v in i["top_sources"].items()
-        if k in ("routine_missed", "drift")
+        if k in CARD_KINDS or k == "drift"
     ]
     out += [
         "",

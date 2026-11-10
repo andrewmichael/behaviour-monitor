@@ -63,13 +63,14 @@ def test_welfare_alerts_are_explained_caught_or_unexplained():
             aid="a2",
         ),
         _ev(T0 + timedelta(days=3), "opened", "attention", "inactivity", aid="a3"),
+        _ev(T0 + timedelta(days=5), "opened", "attention", "night_door", aid="n1"),
     ]
     w = sc.score_welfare(tl, truth)
-    assert w["alerts"] == 3
+    assert w["alerts"] == 4 and w["night_pushes"] == 1
     assert w["explained"] == {"out": 1}
     assert w["concerns_caught"] == 1 and w["concerns"] == 1
     assert w["concern_latency_min"] == [90]
-    assert [a["id"] for a in w["unexplained"]] == ["a3"]
+    assert [a["id"] for a in w["unexplained"]] == ["a3", "n1"]
 
 
 def test_sensor_fault_caught_with_latency_and_restart_storms():
@@ -112,16 +113,48 @@ def test_sensor_fault_caught_with_latency_and_restart_storms():
 
 def test_information_counts_and_top_sources():
     tl = [
-        _ev(T0, "opened", "information", "routine_missed", "binary_sensor.a", "r1"),
-        _ev(T0, "opened", "information", "routine_missed", "binary_sensor.a", "r2"),
-        _ev(T0, "opened", "information", "routine_missed", "binary_sensor.b", "r3"),
+        _ev(T0, "opened", "information", "not_yet_today", "binary_sensor.a", "r1"),
+        _ev(T0, "opened", "information", "not_yet_today", "binary_sensor.a", "r2"),
+        _ev(T0, "opened", "information", "unusual_now", "binary_sensor.b", "r3"),
         _ev(T0, "opened", "information", "drift", "count:x", "d1"),
         _ev(T0, "cleared", "information", "drift", "count:x", "d1"),
     ]
     i = sc.score_information(tl, days=2.0)
     assert i["opened"] == 4 and i["per_day"] == 2.0
-    assert i["by_kind"] == {"routine_missed": 3, "drift": 1}
-    assert i["top_sources"]["routine_missed"][0] == ["binary_sensor.a", 2]
+    assert i["by_kind"] == {"not_yet_today": 2, "unusual_now": 1, "drift": 1}
+    assert i["top_sources"]["not_yet_today"][0] == ["binary_sensor.a", 2]
+    text = sc.render(
+        {
+            "span": {"first": "x", "last": "y", "days_with_data": 2, "events": 0},
+            "welfare": {
+                "alerts": 0,
+                "night_pushes": 0,
+                "explained": {},
+                "unexplained": [],
+                "concerns": 0,
+                "concerns_caught": 0,
+                "concern_latency_min": [],
+            },
+            "health": {
+                "opened": 0,
+                "by_kind": {},
+                "faults": [],
+                "restart_storms": 0,
+                "storm_openings": 0,
+            },
+            "information": i,
+            "panic": {"presses": 0, "opened": 0, "pressed_again": 0},
+            "falls": {
+                "injected": 0,
+                "caught": 0,
+                "median_min": None,
+                "worst_min": None,
+                "cases": [],
+            },
+        }
+    )
+    assert "top not_yet_today: binary_sensor.a 2" in text
+    assert "top unusual_now: binary_sensor.b 1" in text
 
 
 def test_end_to_end_on_synthetic_fixture_with_injected_falls(tmp_path):

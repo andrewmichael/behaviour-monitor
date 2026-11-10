@@ -46,16 +46,21 @@ make clean-all    # Remove venv and all generated files
 
 - `core/` is a pure Python package (stdlib only): `normaliser`, `house_model`,
   `entity_routine`, `chain_model`, `drift_detector`, `health_tracker`,
-  `whereabouts`, `alert_router`, wired by `engine.Engine`. Spec:
-  `docs/superpowers/specs/2026-09-20-generic-welfare-core-design.md`.
+  `whereabouts`, `unusual` (with `night`), `alert_router`, wired by
+  `engine.Engine`. Spec:
+  `docs/superpowers/specs/2026-09-20-generic-welfare-core-design.md`;
+  the unusual and night kinds:
+  `docs/superpowers/specs/2026-11-10-really-unusual-design.md`.
 - `coordinator.py` is the only module that imports both Home Assistant and
   `core`. It resolves rooms from areas, feeds state changes to the engine,
   polls it once a minute and performs the delivery actions it returns.
 - Three alert classes: welfare (`behaviour_monitor_alert` events, split into
   attention and information groups), device health (repair issues),
-  statistical (sensor attribute and logbook). The integration sends no
+  statistical (sensor attribute and logbook). Welfare includes the
+  `night_downstairs` and `night_door` pushes; statistical includes the
+  `not_yet_today`, `trip_missed` and `unusual_now` cards. The integration sends no
   pushes; `blueprints/automation/behaviour_monitor/notify.yaml` does.
-- Config entry version is 13.
+- Config entry version is 14.
 - Learned state persists in `.storage/behaviour_monitor.{entry_id}.json`
   (store version 11) as `Engine.to_dict()`.
 
