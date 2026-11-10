@@ -31,6 +31,7 @@ def test_option_defaults_match_spec():
         "chain_window_s": 1800,
         "timing_promote_days": 7,
         "drift_sensitivity": "medium",
+        "low_battery_pct": 20,
     }
 
 

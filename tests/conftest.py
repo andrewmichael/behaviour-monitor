@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import sys
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -224,6 +225,23 @@ def _setup_ha_mocks():
         mod.async_get = lambda hass, _r=_registry: _r
         setattr(mock_ha_helpers, mod_name, mod)
         sys.modules[f"homeassistant.helpers.{mod_name}"] = mod
+
+    def _entries_for_device(registry, device_id, include_disabled_entities=False):
+        """Registry entries on a device, each with its entity_id filled in."""
+        return [
+            SimpleNamespace(
+                **{
+                    "entity_id": eid,
+                    "device_class": None,
+                    "original_device_class": None,
+                    **vars(entry),
+                }
+            )
+            for eid, entry in registry.entities.items()
+            if getattr(entry, "device_id", None) == device_id
+        ]
+
+    mock_ha_helpers.entity_registry.async_entries_for_device = _entries_for_device
     mock_ha_helpers.entity_registry.EVENT_ENTITY_REGISTRY_UPDATED = (
         "entity_registry_updated"
     )

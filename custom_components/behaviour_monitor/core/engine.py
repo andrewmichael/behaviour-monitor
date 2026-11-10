@@ -72,7 +72,10 @@ class EngineConfig:
             drift=DriftConfig(
                 sensitivity=str(o.get("drift_sensitivity", "medium")), window_days=wd
             ),
-            health=HealthConfig(grace_s=float(o.get("health_grace_s", 900))),
+            health=HealthConfig(
+                grace_s=float(o.get("health_grace_s", 900)),
+                low_battery_pct=float(o.get("low_battery_pct", 20)),
+            ),
             router=RouterConfig(
                 attention_min_severity=Severity(
                     str(o.get("attention_min_severity", "medium"))
@@ -192,9 +195,16 @@ class Engine:
             # user set deliberately. Resetting what was learned must not
             # silently take the site off holiday or cancel a snooze.
             holiday, snooze_until = self._holiday, self._snooze_until
+            # Open alerts are not learning. Dropping them would lose an open
+            # panic with no cleared event, and the blueprint would repeat it
+            # with nothing left that can stop it. Alerts that depended on the
+            # learning close at the next poll with a cleared event.
+            router = self._router
             self.__init__(self._cfg, specs)  # type: ignore[misc]
             self._holiday = holiday
             self._snooze_until = snooze_until
+            self._router = router
+            self._resume_battery_alerts()
             return
         s = self._specs.get(entity_id)
         if s is None:
@@ -232,6 +242,14 @@ class Engine:
                 continue
             self._learn(ev)
         return actions
+
+    def record_battery(self, entity_id: str, level: float, ts: datetime) -> None:
+        """Battery level of a monitored entity's device. Never needs learning."""
+        self._health.record_battery(entity_id, level, ts)
+
+    def forget_battery(self, entity_id: str) -> None:
+        """The entity no longer has a battery sensor; its alert clears."""
+        self._health.clear_battery(entity_id)
 
     def _learn(self, ev: ActivityEvent) -> None:
         if self._holiday:
@@ -298,6 +316,7 @@ class Engine:
 
         learned = confidence(self._days_seen(), self._cfg.learning_days) >= 1.0
         alerts: list[Alert] = []
+        names = self.drift_names()
         alerts.extend(
             self._health.evaluate(
                 now,
@@ -307,12 +326,12 @@ class Engine:
                 # until it means something.
                 self._routines.longest_gap if learned else _no_gap,
                 self._house.last_activity,
+                names=lambda eid: names.get(eid, eid),
             )
         )
         # On holiday nothing is suppressed for want of sensors: nothing is
         # raised at all, so the site must not read as degraded either.
         live = 1.0 if self._holiday else self._health.live_fraction(now)
-        names = self.drift_names()
         where = self._where.evaluate(now, live, names=lambda eid: names.get(eid, eid))
         if learned and not self._holiday:
             if where.alert is not None:
@@ -580,7 +599,20 @@ class Engine:
             e._drift.remove_prefix(f"open:{eid}")
             e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
+        e._resume_battery_alerts()
         return e
+
+    def _resume_battery_alerts(self) -> None:
+        """Battery levels are not stored, and the battery sensor may not have
+        a reading yet after a restart or a reset. An open alert carries its
+        own last level, so neither clears it nor raises a new one."""
+        for a in self._router.open_alerts:
+            if a.cls is AlertClass.HEALTH and a.kind == "battery_low":
+                try:
+                    level = float(a.details["level"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                self._health.resume_battery_alert(a.source, level)
 
 
 _NOUNS: dict[Category, str] = {

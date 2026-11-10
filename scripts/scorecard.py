@@ -17,6 +17,12 @@ data. `what` is one of:
   concern                something genuinely wrong; welfare should alert
   gap                    no data (e.g. recorder purge); replayed as holiday
 `away` and `gap` are replayed with holiday mode on, as a real site would be.
+
+Restart storms in recorder CSV exports are mostly an export artefact: the
+export can keep a sensor's "unavailable" row at a Home Assistant restart but
+drop the "back to normal" row a second later, so the sensor looks offline
+for hours. Live, the outage lasts under a second and the health grace period
+absorbs it. InfluxDB exports keep both rows.
 """
 
 from __future__ import annotations

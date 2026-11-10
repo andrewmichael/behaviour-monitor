@@ -96,6 +96,7 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._entry = entry
         self._site: str = str(entry.data.get(CONF_SITE_NAME, "Behaviour Monitor"))
         self._specs, self._area_ids = self._resolve_specs()
+        self._batteries = self._resolve_batteries()
         options = {**OPTION_DEFAULTS, **entry.options}
         if options.get(CONF_BEDROOMS) is None:
             # Unset bedrooms are the rooms named "bedroom"; none of them means
@@ -169,6 +170,54 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             area_ids[entity_id] = area_id
         return specs, area_ids
 
+    def _resolve_batteries(self) -> dict[str, list[str]]:
+        """Map each battery sensor to the monitored entities on its device.
+
+        The battery is the first sensor on the entity's device, by entity id,
+        whose device class is battery. Entities without a device or without a
+        battery sensor have none.
+        """
+        reg = er.async_get(self.hass)
+        out: dict[str, list[str]] = {}
+        for spec in self._specs:
+            entry = reg.async_get(spec.entity_id)
+            device_id = getattr(entry, "device_id", None)
+            if not device_id:
+                continue
+            batteries = sorted(
+                e.entity_id
+                for e in er.async_entries_for_device(reg, device_id)
+                if e.entity_id.split(".", 1)[0] == "sensor"
+                and (e.device_class or e.original_device_class) == "battery"
+            )
+            if batteries:
+                out.setdefault(batteries[0], []).append(spec.entity_id)
+        return out
+
+    def _record_battery(self, battery_id: str, state: Any, now: datetime) -> None:
+        """Feed a numeric battery reading; anything else leaves the last level."""
+        if state is None:
+            return
+        try:
+            level = float(state.state)
+        except (TypeError, ValueError):
+            return
+        if level != level:  # NaN
+            return
+        for entity_id in self._batteries.get(battery_id, []):
+            self._engine.record_battery(entity_id, level, now)
+
+    def _forget_unmapped_batteries(self) -> None:
+        """Drop the level of every entity that no longer has a battery sensor.
+
+        Otherwise a removed or re-paired battery sensor would leave its alert
+        open for good, and every restart would reopen it from the store.
+        """
+        mapped = {eid for ids in self._batteries.values() for eid in ids}
+        for spec in self._specs:
+            if spec.entity_id not in mapped:
+                self._engine.forget_battery(spec.entity_id)
+
     async def _async_registry_updated(self, event: Any) -> None:
         """Re-resolve rooms, telling a renamed area apart from a moved entity.
 
@@ -194,7 +243,9 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # room-keyed chains are left alone.
         self._specs = new_specs
         self._area_ids = new_area_ids
+        self._batteries = self._resolve_batteries()
         self._engine.set_entities(self._specs)
+        self._forget_unmapped_batteries()
         await self._saver.async_call()
         self._rename_bedrooms(renamed)
 
@@ -274,6 +325,10 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # start, not a failed setup.
                 _LOGGER.exception("Could not replay history; learning from now on")
             await self._save()
+        now = dt_util.now()
+        for battery_id in self._batteries:
+            self._record_battery(battery_id, self.hass.states.get(battery_id), now)
+        self._forget_unmapped_batteries()
         self._schedule_flush()
         self._unsubs.append(
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._handle_state_changed)
@@ -416,6 +471,8 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _handle_state_changed(self, event: Event) -> None:
         entity_id = event.data.get("entity_id", "")
+        if entity_id in self._batteries:
+            self._record_battery(entity_id, event.data.get("new_state"), dt_util.now())
         if entity_id not in {s.entity_id for s in self._specs}:
             return
         new = event.data.get("new_state")

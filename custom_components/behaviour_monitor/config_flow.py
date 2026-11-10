@@ -29,6 +29,7 @@ from .const import (
     CONF_CONTACT_ENTITIES,
     CONF_DRIFT_SENSITIVITY,
     CONF_HEALTH_GRACE_S,
+    CONF_LOW_BATTERY_PCT,
     CONF_LEARNING_DAYS,
     CONF_ATTENTION_MIN_SEVERITY,
     CONF_MOTION_DEBOUNCE_S,
@@ -141,6 +142,9 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_HEALTH_GRACE_S, default=d(CONF_HEALTH_GRACE_S)): _number(
                 CONF_HEALTH_GRACE_S, 60, 7200, 30, "s"
             ),
+            vol.Required(
+                CONF_LOW_BATTERY_PCT, default=d(CONF_LOW_BATTERY_PCT)
+            ): _number(CONF_LOW_BATTERY_PCT, 5, 50, 1, "%"),
             vol.Required(
                 CONF_ATTENTION_MIN_SEVERITY, default=d(CONF_ATTENTION_MIN_SEVERITY)
             ): SelectSelector(

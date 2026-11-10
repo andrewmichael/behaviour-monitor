@@ -658,3 +658,121 @@ def test_walk_back_to_bed_through_the_normaliser_stays_asleep():
     assert (w["where"], w["last_room"]) == ("asleep", "Bedroom")
     assert w["where_since"] == at(0, 1, 15).isoformat()
     assert _open_where(e) == []
+
+
+def _battery_actions(acts: list) -> list:
+    return [a for a in acts if a.alert is not None and a.alert.kind == "battery_low"]
+
+
+def test_low_battery_is_a_health_repair_while_learning_and_learned():
+    """Device health does not wait for learning, holiday or snooze."""
+    e = _engine()
+    e.record_battery("binary_sensor.panic", 12.0, MON)
+    acts = _battery_actions(e.poll(MON + timedelta(minutes=1)))
+    assert {a.action for a in acts} == {"repair_create", "event"}
+    (ev,) = [a for a in acts if a.action == "event"]
+    assert ev.group == "health" and ev.alert.severity is Severity.HIGH
+    assert ev.alert.details == {"room": "Hall", "level": 12.0}
+    assert ev.alert.explanation == "Hall panic button: battery low (12%)"
+    e.record_battery("binary_sensor.panic", 100.0, MON + timedelta(minutes=2))
+    acts = _battery_actions(e.poll(MON + timedelta(minutes=3)))
+    assert "repair_delete" in {a.action for a in acts}
+
+    e = _engine()
+    _train(e)
+    now = MON + timedelta(days=15, minutes=2)
+    e.holiday = True
+    e.snooze_until = now + timedelta(hours=1)
+    e.record_battery("binary_sensor.kit", 15.0, now)
+    acts = _battery_actions(e.poll(now))
+    assert "repair_create" in {a.action for a in acts}
+    assert "battery" not in str(e.to_dict()["health"])
+
+
+def test_low_battery_threshold_comes_from_options():
+    e = _engine(low_battery_pct=30)
+    e.record_battery("binary_sensor.kit", 28.0, MON)
+    assert _battery_actions(e.poll(MON))
+    assert EngineConfig.from_options({}).health.low_battery_pct == 20.0
+
+
+def test_restart_without_a_reading_neither_clears_nor_raises_battery_alert():
+    """Levels are not stored, so an open alert's own level carries it over."""
+    e = _engine()
+    e.record_battery("binary_sensor.panic", 12.0, MON)
+    e.poll(MON)
+    # Still open inside the hysteresis band when Home Assistant restarts.
+    e.record_battery("binary_sensor.panic", 22.0, MON)
+    e.poll(MON)
+    e2 = Engine.from_dict(e.to_dict(), EngineConfig.from_options({}), ENTS)
+    assert not _battery_actions(e2.poll(MON + timedelta(minutes=1)))
+    assert any(a.kind == "battery_low" for a in e2._router.open_alerts)
+    # A real reading still clears it, with the usual hysteresis.
+    e2.record_battery("binary_sensor.panic", 24.0, MON + timedelta(minutes=2))
+    assert not _battery_actions(e2.poll(MON + timedelta(minutes=2)))
+    e2.record_battery("binary_sensor.panic", 25.0, MON + timedelta(minutes=3))
+    acts = _battery_actions(e2.poll(MON + timedelta(minutes=3)))
+    assert "repair_delete" in {a.action for a in acts}
+
+
+def test_forget_battery_clears_the_alert():
+    e = _engine()
+    e.record_battery("binary_sensor.kit", 10.0, MON)
+    e.poll(MON)
+    e.forget_battery("binary_sensor.kit")
+    acts = _battery_actions(e.poll(MON + timedelta(minutes=1)))
+    assert "repair_delete" in {a.action for a in acts}
+
+
+def test_restored_battery_alert_closes_when_the_threshold_was_lowered():
+    e = _engine()
+    e.record_battery("binary_sensor.kit", 18.0, MON)
+    e.poll(MON)
+    e2 = Engine.from_dict(
+        e.to_dict(), EngineConfig.from_options({"low_battery_pct": 10}), ENTS
+    )
+    acts = _battery_actions(e2.poll(MON + timedelta(minutes=1)))
+    assert "repair_delete" in {a.action for a in acts}
+
+
+def test_full_reset_keeps_an_open_panic_until_it_is_cleared():
+    """Resetting learning must not drop a panic without a cleared event, or the
+    blueprint keeps repeating it with nothing left that can stop it."""
+    e = _engine()
+    _train(e, days=5)
+    now = MON + timedelta(days=5)
+    e.handle_state("binary_sensor.panic", "off", "on", now)
+
+    e.reset()
+
+    assert [a.kind for a in e._router.open_alerts] == ["panic"]
+    assert not [a for a in e.poll(now + timedelta(minutes=1)) if a.event == "cleared"]
+    cleared = e.clear_panic(None, now + timedelta(minutes=2))
+    assert [(a.event, a.cleared_by) for a in cleared] == [("cleared", "user")]
+
+
+def test_full_reset_clears_learned_alerts_with_cleared_events():
+    """Alerts that depended on what was learned close properly, not silently."""
+    e = _engine()
+    _train(e, days=15)
+    now = MON + timedelta(days=15, hours=14)
+    opened = [a for a in e.poll(now) if a.event == "opened"]
+    assert opened, "training should leave a welfare alert open"
+
+    e.reset()
+
+    cleared = {
+        a.alert.key for a in e.poll(now + timedelta(minutes=1)) if a.event == "cleared"
+    }
+    assert {a.alert.key for a in opened} <= cleared
+
+
+def test_full_reset_keeps_a_low_battery_alert():
+    e = _engine()
+    e.record_battery("binary_sensor.panic", 12.0, MON)
+    assert _battery_actions(e.poll(MON))
+
+    e.reset()
+
+    assert not _battery_actions(e.poll(MON + timedelta(minutes=1)))
+    assert [a.kind for a in e._router.open_alerts] == ["battery_low"]

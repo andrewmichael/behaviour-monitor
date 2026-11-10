@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -347,3 +347,22 @@ def test_options_form_has_attention_severity_and_no_push_options():
     assert "attention_min_severity" in names
     assert not {"push_repeat_s", "push_min_severity", "notify_service"} & names
     assert "house_low_ratio" not in names
+
+
+def test_options_form_has_low_battery_level_defaulting_to_20():
+    from custom_components.behaviour_monitor import config_flow
+
+    defaults: dict = {}
+
+    def required(key, default=None):
+        defaults[key] = default
+        return key
+
+    with patch.object(config_flow.vol, "Required", side_effect=required), patch.object(
+        config_flow, "_number", wraps=config_flow._number
+    ) as number:
+        config_flow._options_schema({})
+        assert defaults["low_battery_pct"] == 20
+        number.assert_any_call("low_battery_pct", 5, 50, 1, "%")
+        config_flow._options_schema({"low_battery_pct": 35})
+        assert defaults["low_battery_pct"] == 35
