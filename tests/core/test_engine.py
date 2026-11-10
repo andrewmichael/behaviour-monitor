@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from custom_components.behaviour_monitor.core.alerts import (
@@ -11,6 +15,7 @@ from custom_components.behaviour_monitor.core.engine import (
     EntitySpec,
 )
 from custom_components.behaviour_monitor.core.events import Category
+from custom_components.behaviour_monitor.core.unusual import UnusualConfig
 
 MON = datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc)
 ENTS = [
@@ -126,7 +131,13 @@ def test_daytime_silence_raises_welfare_after_training():
     ]
     assert pushes and pushes[0].alert.kind == "still_at_home"
     snap = e.snapshot(quiet + timedelta(minutes=260))
-    assert snap["welfare"]["status"] in ("medium", "high")
+    # Bed, bathroom and kettle not used yet today, and she hasn't been out:
+    # those signs escalate the stillness one step.
+    assert snap["welfare"]["status"] in ("high", "critical")
+    escalated = [
+        a for a in snap["welfare"]["attention"] if "routine sign" in a["explanation"]
+    ]
+    assert escalated
     assert "Kitchen" in snap["house"]["last_room"]
 
 
@@ -483,7 +494,7 @@ def test_snapshot_has_whereabouts_block():
     now = day + timedelta(hours=10, minutes=5)
     e.poll(now)
     w = e.snapshot(now)["whereabouts"]
-    assert set(w) == {"where", "where_since", "last_room", "limit_min"}
+    assert set(w) == {"where", "where_since", "last_room", "limit_min", "night_since"}
     assert w["where"] == "home" and w["last_room"] == "Kitchen"
     # The pulse's burst ended at 10:01: stillness counts from there.
     assert w["where_since"] == (day + timedelta(hours=10, minutes=1)).isoformat()
@@ -493,6 +504,7 @@ def test_snapshot_has_whereabouts_block():
         "where_since": None,
         "last_room": None,
         "limit_min": None,
+        "night_since": None,
     }
 
 
@@ -776,3 +788,223 @@ def test_full_reset_keeps_a_low_battery_alert():
 
     assert not _battery_actions(e.poll(MON + timedelta(minutes=1)))
     assert [a.kind for a in e._router.open_alerts] == ["battery_low"]
+
+
+# ------------------------------------------------------------ really unusual
+
+UNUSUAL_KINDS = {"not_yet_today", "trip_missed", "unusual_now"}
+
+
+def _unusual_open(e: Engine) -> list[Alert]:
+    return [a for a in e._router.open_alerts if a.kind in UNUSUAL_KINDS]
+
+
+def _day_without_kettle(e: Engine, day: datetime, until_h: int = 10) -> list:
+    """The usual morning with no kettle, polled each 10 min until ``until_h``."""
+    _pulse(e, "binary_sensor.bed", day + timedelta(hours=7), learn_only=False)
+    _pulse(e, "binary_sensor.bath", day + timedelta(hours=7, minutes=4), False)
+    acts: list = []
+    t = day + timedelta(hours=7, minutes=8)
+    while t <= day + timedelta(hours=until_h):
+        _pulse(e, "binary_sensor.kit", t, learn_only=False)
+        acts += e.poll(t + timedelta(minutes=2))
+        t += timedelta(minutes=10)
+    return acts
+
+
+def test_from_options_reads_unusual_settings():
+    cfg = EngineConfig.from_options(
+        {
+            "upstairs_rooms": ["Landing", "Bedroom"],
+            "night_trip_min": 45,
+            "learning_days": 10,
+            "window_days": 21,
+        }
+    ).unusual
+    assert cfg.upstairs == frozenset({"Landing", "Bedroom"})
+    assert cfg.night_trip_min == 45.0
+    assert (cfg.min_days, cfg.window_days) == (10, 21)
+    default = EngineConfig.from_options({}).unusual
+    assert default.upstairs == frozenset() and default.night_trip_min == 30.0
+
+
+def test_unusual_alerts_flow_through_poll_after_learning():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    acts = _day_without_kettle(e, MON + timedelta(days=15))
+    logged = [
+        a.alert for a in acts if a.action == "log" and a.alert.kind == "not_yet_today"
+    ]
+    assert [a.source for a in logged] == ["sensor.kettle"]
+    a = logged[0]
+    assert (a.cls, a.severity) == (AlertClass.STATISTICAL, Severity.LOW)
+    assert a.explanation.startswith("Kitchen plug not used yet today")
+    assert a.details["went_out_today"] is False
+
+
+def test_no_unusual_alerts_while_learning_or_on_holiday():
+    # Unusual has learned enough after 5 days; the engine has not.
+    cfg = replace(
+        EngineConfig.from_options({"learning_days": 14}),
+        unusual=UnusualConfig(min_days=3),
+    )
+    e = Engine(cfg, ENTS)
+    _train(e, days=5)
+    _day_without_kettle(e, MON + timedelta(days=5))
+    assert _unusual_open(e) == []
+
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    e.holiday = True
+    _day_without_kettle(e, MON + timedelta(days=15))
+    assert _unusual_open(e) == []
+
+
+def _go_up(e: Engine, day: datetime) -> datetime:
+    """Kitchen at 22:00, bedroom at 22:03: going up. Returns the going-up."""
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=22), learn_only=False)
+    up = day + timedelta(hours=22, minutes=3)
+    _pulse(e, "binary_sensor.bed", up, learn_only=False)
+    return up
+
+
+def test_holiday_nights_not_learned_and_night_cleared_on_return():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    day = MON + timedelta(days=15)
+
+    # A night begins before the holiday does.
+    up = _go_up(e, day)
+    e.poll(day + timedelta(hours=22, minutes=45))
+    assert e._unusual.night_since == up
+    assert (
+        e.snapshot(day + timedelta(hours=22, minutes=45))["whereabouts"]["night_since"]
+        == up.isoformat()
+    )
+    nights = e._unusual.to_dict()["night"]["nights"]
+
+    e.holiday = True
+    # Nothing on holiday is learned: not tonight's trip, not tomorrow's night.
+    _pulse(e, "binary_sensor.kit", day + timedelta(hours=23), learn_only=False)
+    for h in range(1, 48):
+        e.poll(day + timedelta(hours=23) + timedelta(hours=h))
+    second = day + timedelta(days=1)
+    _go_up(e, second)
+    _day_without_kettle(e, second + timedelta(days=1), until_h=9)
+    assert e._unusual.to_dict()["night"]["nights"] == nights
+    assert e._unusual.night_since == up
+
+    # Back from holiday: the interrupted night is dropped, not finalised.
+    e.holiday = False
+    back = day + timedelta(days=3, hours=12)
+    e.poll(back)
+    assert e._unusual.night_since is None
+    assert e._unusual.to_dict()["night"]["nights"] == nights
+    assert e.snapshot(back)["whereabouts"]["night_since"] is None
+
+
+def test_old_store_without_unusual_keeps_learning_and_flags_rebuild():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    data = e.to_dict()
+    assert "unusual" in data
+    e_new = Engine.from_dict(data, e._cfg, ENTS)
+    assert not e_new.needs_unusual_history
+    assert e_new._unusual.to_dict() == e._unusual.to_dict()
+
+    data.pop("unusual")
+    old = Engine.from_dict(data, e._cfg, ENTS)
+    now = MON + timedelta(days=15, minutes=1)
+    assert old.snapshot(now)["learning"]["days_seen"] == 15
+    assert old.needs_unusual_history
+    assert old._unusual.to_dict()["active"] == []
+    assert not _engine().needs_unusual_history
+    assert not Engine.from_dict({"junk": 1}, e._cfg, ENTS).needs_unusual_history
+
+
+def _outing_rows(days: int) -> list[tuple[datetime, str, str | None, str]]:
+    """The usual day as recorder rows, with a side door outing 10:00 to 11:00."""
+    rows: list[tuple[datetime, str, str | None, str]] = []
+
+    def pulse(eid: str, ts: datetime) -> None:
+        rows.append((ts, eid, "off", "on"))
+        rows.append((ts + timedelta(seconds=60), eid, "on", "off"))
+
+    for d in range(days):
+        day = MON + timedelta(days=d)
+        pulse("binary_sensor.bed", day + timedelta(hours=7))
+        pulse("binary_sensor.bath", day + timedelta(hours=7, minutes=4))
+        pulse("binary_sensor.kit", day + timedelta(hours=7, minutes=8))
+        rows.append((day + timedelta(hours=7, minutes=9), "sensor.kettle", "0", "2800"))
+        rows.append(
+            (day + timedelta(hours=7, minutes=11), "sensor.kettle", "2800", "0")
+        )
+        for h in (10, 11):
+            door = day + timedelta(hours=h)
+            rows.append((door, "binary_sensor.side_door", "off", "on"))
+            rows.append(
+                (door + timedelta(seconds=30), "binary_sensor.side_door", "on", "off")
+            )
+        t = day + timedelta(hours=11, minutes=2)
+        while t < day + timedelta(hours=21):
+            pulse("binary_sensor.kit", t)
+            t += timedelta(minutes=30)
+        pulse("binary_sensor.bed", day + timedelta(hours=21, minutes=10))
+    rows.append((MON, "sensor.not_monitored", "off", "on"))
+    return sorted(rows, key=lambda r: r[0])
+
+
+def test_rebuild_unusual_from_rows_learns_without_alerts():
+    cfg = EngineConfig.from_options(
+        {"learning_days": 14, "outside_doors": ["binary_sensor.side_door"]}
+    )
+    ents = ENTS + [DOOR]
+    rows = _outing_rows(15)
+    # The reference engine learned the same rows live.
+    ref = Engine(cfg, ents)
+    for d in range(15):
+        day = MON + timedelta(days=d)
+        for ts, eid, old, new in rows:
+            if day <= ts < day + timedelta(days=1):
+                ref.handle_state(eid, old, new, ts, learn_only=True)
+        ref.poll(day + timedelta(hours=23, minutes=59))
+    now = MON + timedelta(days=15, minutes=1)
+    ref.poll(now)
+    assert ref._where.out_spans((MON + timedelta(days=3)).date())
+
+    data = ref.to_dict()
+    data.pop("unusual")
+    # An old store kept no outing spans either.
+    data["whereabouts"].pop("out_spans", None)
+    e = Engine.from_dict(data, cfg, ents)
+    assert e.needs_unusual_history
+    before = e.to_dict()
+    e.rebuild_unusual(rows, now)
+    assert not e.needs_unusual_history
+    assert e._unusual.to_dict()["first"] == ref._unusual.to_dict()["first"]
+    assert e._unusual.to_dict()["active"] == ref._unusual.to_dict()["active"]
+    assert e._unusual.to_dict()["night"]["nights"] == (
+        ref._unusual.to_dict()["night"]["nights"]
+    )
+    assert e._where.out_spans((MON + timedelta(days=3)).date()) == (
+        ref._where.out_spans((MON + timedelta(days=3)).date())
+    )
+    after = e.to_dict()
+    for key in ("normaliser", "house", "routines", "chains", "drift", "health"):
+        assert after[key] == before[key], key
+    assert after["router"] == before["router"]
+    assert e.poll(now + timedelta(minutes=1)) == []
+
+
+def test_reset_entity_forgets_unusual_learning():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    assert "sensor.kettle" in e._unusual.to_dict()["first"]
+    e.reset("sensor.kettle")
+    assert "sensor.kettle" not in e._unusual.to_dict()["first"]
+    assert "binary_sensor.kit" in e._unusual.to_dict()["first"]
+    _day_without_kettle(e, MON + timedelta(days=15))
+    assert _unusual_open(e) == []
+
+    e.set_entities(ENTS[:3])
+    assert set(e._unusual.to_dict()["first"]) <= {s.entity_id for s in ENTS[:3]}

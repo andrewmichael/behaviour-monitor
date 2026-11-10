@@ -17,6 +17,7 @@ from .health_tracker import HealthConfig, HealthTracker
 from .house_model import HouseConfig, HouseModel
 from .normaliser import Normaliser, NormaliserConfig
 from .slots import confidence, iso_day
+from .unusual import Unusual, UnusualConfig
 from .whereabouts import Whereabouts, WhereaboutsConfig
 
 # 2: chain pairs, steps and chains are keyed by three-hour time bucket,
@@ -50,6 +51,7 @@ class EngineConfig:
     health: HealthConfig = field(default_factory=HealthConfig)
     router: RouterConfig = field(default_factory=RouterConfig)
     whereabouts: WhereaboutsConfig = field(default_factory=WhereaboutsConfig)
+    unusual: UnusualConfig = field(default_factory=UnusualConfig)
     learning_days: int = 14
     window_days: int = 28
 
@@ -89,6 +91,12 @@ class EngineConfig:
                     frozenset(o["bedrooms"]) if o.get("bedrooms") is not None else None
                 ),
             ),
+            unusual=UnusualConfig(
+                upstairs=frozenset(o.get("upstairs_rooms") or ()),
+                night_trip_min=float(o.get("night_trip_min", 30)),
+                min_days=ld,
+                window_days=wd,
+            ),
             learning_days=ld,
             window_days=wd,
         )
@@ -106,6 +114,10 @@ class Engine:
         self._health = HealthTracker(config.health)
         self._router = AlertRouter(config.router)
         self._where = Whereabouts(config.whereabouts)
+        self._unusual = Unusual(config.unusual)
+        # Set when a store from before the unusual learning was loaded: the
+        # coordinator rebuilds it from the recorder with rebuild_unusual.
+        self.needs_unusual_history = False
         self._last_poll: datetime | None = None
         self._holiday = False
         self._holiday_just_ended = False
@@ -127,6 +139,7 @@ class Engine:
         for eid in removed:
             self._routines.remove(eid)
             self._health.remove(eid)
+            self._unusual.remove(eid)
             self._normaliser.forget(eid)
             self._drift.remove_prefix(f"count:{eid}")
             self._drift.remove_prefix(f"open:{eid}")
@@ -136,6 +149,7 @@ class Engine:
             if old is not None and old.category != s.category:
                 self._routines.remove(eid)
                 self._health.remove(eid)
+                self._unusual.remove(eid)
                 self._normaliser.forget(eid)
                 added.add(eid)
             self._routines.add(eid, s.category, s.room)
@@ -165,6 +179,10 @@ class Engine:
         value = bool(value)
         if self._holiday and not value:
             self._holiday_just_ended = True
+            # Nothing was recorded on holiday, so the night in progress when
+            # it began is stale. Drop it now, before a burst still open from
+            # the holiday is flushed and ends it as if it were learned.
+            self._unusual.clear_night()
         self._holiday = value
 
     @property
@@ -211,6 +229,7 @@ class Engine:
             return
         self._routines.remove(entity_id)
         self._routines.add(entity_id, s.category, s.room)
+        self._unusual.remove(entity_id)
         self._normaliser.forget(entity_id)
         for p in ("count:", "open:", "dwell:"):
             self._drift.remove_prefix(f"{p}{entity_id}")
@@ -261,6 +280,8 @@ class Engine:
                 self._today, self._today_count = ev.timestamp.date(), 0
             self._today_count += 1
         self._house.record(ev)
+        # Unusual reads where she was before this event moves her.
+        self._unusual.record(ev, self._where)
         self._where.record(ev)
         self._routines.record(ev)
         self._chains.record(ev)
@@ -309,6 +330,7 @@ class Engine:
                 cutoff = now.date() - timedelta(days=self._cfg.window_days)
                 self._house.prune(cutoff)
                 self._where.prune(cutoff)
+                self._unusual.prune(cutoff)
                 self._routines.prune(cutoff)
                 self._chains.prune(cutoff)
                 self._drift.prune(cutoff)
@@ -333,11 +355,24 @@ class Engine:
         # raised at all, so the site must not read as degraded either.
         live = 1.0 if self._holiday else self._health.live_fraction(now)
         where = self._where.evaluate(now, live, names=lambda eid: names.get(eid, eid))
+        # Evaluated on every poll off holiday, so nights end and trips close
+        # on time while still learning; raised only once learned.
+        unusual: list[Alert] = []
+        if not self._holiday:
+            unusual = self._unusual.evaluate(
+                now,
+                self._where,
+                self._routines,
+                down=self._health.down_today(now),
+                names=lambda eid: names.get(eid, eid),
+                categories={eid: s.category for eid, s in self._specs.items()},
+            )
         if learned and not self._holiday:
             if where.alert is not None:
                 alerts.append(where.alert)
             alerts.extend(self._routines.evaluate(now))
             alerts.extend(self._chains.evaluate(now))
+            alerts.extend(unusual)
             alerts.extend(self._last_stat)
         self._degraded = where.degraded
         return self._router.submit(
@@ -351,6 +386,9 @@ class Engine:
         multi-day poll gap walks past with genuinely nothing recorded), so an
         empty day never gets written into drift as a false zero.
         """
+        self._unusual.finalise_day(
+            day, self._specs.keys(), active=bool(self._house.rooms_visited(day))
+        )
         if self._house.rooms_visited(day):
             for eid, count in self._routines.daily_counts(day).items():
                 self._drift.record(
@@ -447,6 +485,11 @@ class Engine:
                 "where_since": w.since.isoformat() if w.since else None,
                 "last_room": w.room,
                 "limit_min": w.limit_min,
+                "night_since": (
+                    self._unusual.night_since.isoformat()
+                    if self._unusual.night_since
+                    else None
+                ),
             },
             "anomalies": [
                 a.to_dict() for a in open_alerts if a.cls is AlertClass.STATISTICAL
@@ -512,6 +555,7 @@ class Engine:
             "normaliser": self._normaliser.to_dict(),
             "house": self._house.to_dict(),
             "whereabouts": self._where.to_dict(),
+            "unusual": self._unusual.to_dict(),
             "routines": self._routines.to_dict(),
             "chains": self._chains.to_dict(),
             "drift": self._drift.to_dict(),
@@ -555,6 +599,12 @@ class Engine:
         e._routines = EntityRoutineModel.from_dict(
             data.get("routines", {}), config.routine
         )
+        # A store from before the unusual learning keeps everything else;
+        # the coordinator rebuilds this part from the recorder.
+        if "unusual" in data:
+            e._unusual = Unusual.from_dict(data["unusual"], config.unusual)
+        else:
+            e.needs_unusual_history = True
         e._chains = ChainModel.from_dict(data.get("chains", {}), config.chain)
         e._drift = DriftDetector.from_dict(data.get("drift", {}), config.drift)
         e._health = HealthTracker.from_dict(data.get("health", {}), config.health)
@@ -590,10 +640,13 @@ class Engine:
         # holds, which cls(config, entities) already set to the new entity
         # list, so a no-longer-configured entity restored into the freshly
         # loaded models would never be dropped without this.
-        orphans = set(e._routines.entity_ids) - {s.entity_id for s in entities}
+        orphans = (set(e._routines.entity_ids) | set(e._unusual._first)) - {
+            s.entity_id for s in entities
+        }
         for eid in orphans:
             e._routines.remove(eid)
             e._health.remove(eid)
+            e._unusual.remove(eid)
             e._normaliser.forget(eid)
             e._drift.remove_prefix(f"count:{eid}")
             e._drift.remove_prefix(f"open:{eid}")
@@ -601,6 +654,56 @@ class Engine:
         e.set_entities(entities)
         e._resume_battery_alerts()
         return e
+
+    # ------------------------------------------------------------- rebuild
+
+    def rebuild_unusual(
+        self, rows: list[tuple[datetime, str, str | None, str]], now: datetime
+    ) -> None:
+        """Relearn the unusual model and outing spans from recorder rows.
+
+        Rows are (timestamp, entity_id, old_state, new_state), as the
+        bootstrap builds them. They replay in time order through a scratch
+        normaliser and whereabouts into a fresh model; nothing else is
+        touched and nothing is raised.
+        """
+        normaliser = Normaliser(self._cfg.normaliser)
+        where = Whereabouts(self._cfg.whereabouts)
+        unusual = Unusual(self._cfg.unusual)
+        active: set[date] = set()
+
+        def feed(ev: ActivityEvent | HealthEvent) -> None:
+            if isinstance(ev, HealthEvent) or ev.bypass:
+                return
+            if ev.is_activity:
+                active.add(ev.timestamp.date())
+            unusual.record(ev, where)
+            where.record(ev)
+
+        first: date | None = None
+        for ts, entity_id, old, new in sorted(rows, key=lambda r: r[0]):
+            spec = self._specs.get(entity_id)
+            if spec is None:
+                continue
+            if first is None:
+                first = ts.date()
+            for ev in normaliser.handle(
+                entity_id, spec.category, spec.room, old, new, ts
+            ):
+                feed(ev)
+        for ev in normaliser.flush(now):
+            feed(ev)
+        if first is not None:
+            day = first
+            while day < now.date():
+                unusual.finalise_day(day, self._specs.keys(), active=day in active)
+                day += timedelta(days=1)
+        cutoff = now.date() - timedelta(days=self._cfg.window_days)
+        unusual.prune(cutoff)
+        where.prune(cutoff)
+        self._where.adopt_out_spans(where._out_spans)
+        self._unusual = unusual
+        self.needs_unusual_history = False
 
     def _resume_battery_alerts(self) -> None:
         """Battery levels are not stored, and the battery sensor may not have
