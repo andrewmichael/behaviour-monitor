@@ -168,6 +168,9 @@ class Whereabouts:
         # Learned, all keyed by ISO day.
         self._home: dict[str, dict[int, list[float]]] = {}
         self._outs: dict[str, list[float]] = {}
+        # Day -> (start minute, end minute) of each closed outing that began
+        # that day, minutes after local midnight, end clipped to 1440.
+        self._out_spans: dict[str, list[tuple[int, int]]] = {}
         # Night key (the evening's date) -> (onset, minutes to the end of
         # the night's last sleep interval).
         self._sleeps: dict[str, tuple[datetime, float]] = {}
@@ -272,6 +275,12 @@ class Whereabouts:
         if out:
             if length < cfg.max_outing_min:
                 self._outs.setdefault(day, []).append(length)
+                start_min = iv.start.hour * 60 + iv.start.minute
+                if end.date() == iv.start.date():
+                    end_min = end.hour * 60 + end.minute
+                else:
+                    end_min = 1440
+                self._out_spans.setdefault(day, []).append((start_min, end_min))
             return
         if iv.where is Where.HOME:
             hours = self._home.setdefault(day, {})
@@ -338,6 +347,7 @@ class Whereabouts:
         cutoff = iso_day(before)
         self._home = {d: v for d, v in self._home.items() if d >= cutoff}
         self._outs = {d: v for d, v in self._outs.items() if d >= cutoff}
+        self._out_spans = {d: v for d, v in self._out_spans.items() if d >= cutoff}
         self._sleeps = {d: v for d, v in self._sleeps.items() if d >= cutoff}
         self._wakes = {d: v for d, v in self._wakes.items() if d >= cutoff}
 
@@ -351,6 +361,9 @@ class Whereabouts:
                 for d, hours in self._home.items()
             },
             "outs": {d: list(v) for d, v in self._outs.items()},
+            "out_spans": {
+                d: [[a, b] for a, b in v] for d, v in self._out_spans.items()
+            },
             "sleeps": {
                 d: [s.isoformat(), length] for d, (s, length) in self._sleeps.items()
             },
@@ -412,6 +425,10 @@ class Whereabouts:
                 # is the best evidence of when the room was set.
                 w._room_rise = w._interval.start
             w._tvs_on = dict(data.get("tvs_on", {}))
+            w._out_spans = {
+                d: [(int(a), int(b)) for a, b in v]
+                for d, v in data.get("out_spans", {}).items()
+            }
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
         return w
@@ -558,6 +575,22 @@ class Whereabouts:
         day = iso_day(ev.timestamp.date())
         if day not in self._wakes or minute < self._wakes[day]:
             self._wakes[day] = minute
+
+    def out_spans(self, day: date) -> list[tuple[int, int]]:
+        """Closed outings that began on ``day``: (start, end) minutes."""
+        return list(self._out_spans.get(iso_day(day), []))
+
+    def adopt_out_spans(self, spans: dict[str, list[tuple[int, int]]]) -> None:
+        """Replace the stored outing spans (used when history is rebuilt)."""
+        self._out_spans = {d: list(v) for d, v in spans.items()}
+
+    def is_out(self, now: datetime) -> bool:
+        iv = self.current(now)
+        return iv is not None and iv.where is Where.OUT
+
+    def sitting_rooms(self) -> set[str]:
+        """Rooms with a sitting appliance on."""
+        return set(self._tvs_on.values())
 
     def current(self, now: datetime) -> Interval | None:
         """The interval in force at ``now``, or None before any activity."""
