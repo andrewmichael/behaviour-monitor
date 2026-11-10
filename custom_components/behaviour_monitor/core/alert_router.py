@@ -14,6 +14,9 @@ ATTENTION = "attention"
 INFORMATION = "information"
 HEALTH = "health"
 
+# Internal signs: they feed escalation but are never opened or published.
+HIDDEN_KINDS = frozenset({"routine_missed", "chain_stall"})
+
 
 @dataclass(frozen=True)
 class RouterConfig:
@@ -87,9 +90,14 @@ class AlertRouter:
         snoozed: bool = False,
         holiday: bool = False,
     ) -> list[DeliveryAction]:
-        incoming = self._combine(
-            [a for a in alerts if not (holiday and a.cls is not AlertClass.HEALTH)], now
-        )
+        incoming = [
+            a
+            for a in self._combine(
+                [a for a in alerts if not (holiday and a.cls is not AlertClass.HEALTH)],
+                now,
+            )
+            if a.kind not in HIDDEN_KINDS
+        ]
         actions: list[DeliveryAction] = []
         seen: set[str] = set()
         for alert in incoming:
@@ -191,15 +199,15 @@ class AlertRouter:
                 if a.cls is AlertClass.STATISTICAL and a.kind == "chain_stall"
             }
         )
-        notes = sorted(
-            {
-                a.key
-                for a in alerts
-                if a.cls is AlertClass.STATISTICAL
-                and a.kind == "routine_missed"
-                and a.details.get("fired_today")
-            }
-        )
+        by_source: dict[str, str] = {}
+        for a in sorted(alerts, key=lambda a: a.key):
+            if a.cls is not AlertClass.STATISTICAL:
+                continue
+            if (a.kind == "routine_missed" and a.details.get("fired_today")) or (
+                a.kind == "not_yet_today" and a.details.get("went_out_today") is False
+            ):
+                by_source.setdefault(a.source, a.key)
+        notes = sorted(by_source.values())
         signs = stalls + notes
         escalates = bool(stalls) or len(notes) >= 2
         out = list(alerts)
@@ -222,18 +230,6 @@ class AlertRouter:
                     where.explanation + f" and {len(signs)} routine sign(s) missed",
                     where.raised_at,
                     {**where.details, "escalated_by": signs},
-                )
-            )
-        elif where is None and len(signs) >= 2:
-            out.append(
-                Alert(
-                    AlertClass.WELFARE,
-                    "house",
-                    "routine_agreement",
-                    Severity.LOW,
-                    f"{len(signs)} routine signs missed at the same time",
-                    now,
-                    {"notes": signs},
                 )
             )
         for a in alerts:
@@ -319,7 +315,11 @@ class AlertRouter:
         actions = [self._event(o, "cleared")]
         if o.alert.cls is AlertClass.HEALTH:
             actions.append(DeliveryAction("repair_delete", o.alert))
-        elif o.alert.cls is AlertClass.STATISTICAL and not suppress:
+        elif (
+            o.alert.cls is AlertClass.STATISTICAL
+            and not suppress
+            and o.alert.kind not in HIDDEN_KINDS
+        ):
             actions.append(DeliveryAction("log_clear", o.alert))
         return actions
 
