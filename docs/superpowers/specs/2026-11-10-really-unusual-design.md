@@ -230,8 +230,8 @@ come down: night-room activity within 5 min (`went_up_within_min`) before
 the trip's first day-room activity. Day-room activity during the night
 without it means someone was still downstairs (one partner up, the other
 reading quietly with the TV off). The night is cancelled: nothing is
-recorded for it, the trip and door state are cleared, and bedtime is looked
-for again from that activity.
+recorded for it, the trip state is cleared (an open night door stays open,
+see below), and bedtime is looked for again from that activity.
 
 **Controller's rulings (second fix wave):**
 - During the night only motion counts as day-room activity for trips, the
@@ -245,6 +245,15 @@ for again from that activity.
   (the fall, but no later than the last rise plus `burst_activity_max_min`).
   A bedroom sensor held on while someone is in bed falls as they leave. It
   does nothing else: it doesn't start a trip or count as going up.
+- **Controller's ruling (third fix wave):** the normaliser only sends a
+  burst end on a poll after its 90 s debounce, so the bedroom's burst end
+  arrives after the first kitchen presence. Downstairs motion with no
+  coming-down therefore waits `came_down_grace_min` (3 min) before the
+  night is cancelled. If a night-room burst end arrives in that time and its
+  activity time is within `went_up_within_min` before the motion, it is the
+  coming-down, and the motion starts a trip at its own time. Otherwise the
+  first event or poll at or after motion + grace cancels as before. The
+  waiting state is kept in the store.
 
 **Evidence from the replay** (40 evenings):
 - Requiring the TV off prevented 40 false bedtimes: someone sitting still
@@ -269,19 +278,20 @@ ends when there has been night-room activity and no day-room activity for
 - **`night_door`:** fires when an outside door opens during the night,
   unless the whereabouts state was OUT at the time. In that case it's someone
   coming home late: a return, not a night event.
-- **Controller's ruling (final review, amended in the second fix wave):**
-  a night door is held for `door_hold_min` (15 min). Any night-room
-  activity after the door and inside the hold drops it: someone went back
-  to bed. A dropped door is not learned, so it can't make later doors
-  normal. Otherwise `night_door` opens when the hold ends, with `raised_at`
-  the door time plus the hold. A door with nothing indoors after it
-  therefore pushes at +15 min. A door still held when morning starts is
-  dropped.
-- **Owner's decision (second fix wave):** a held door followed by movement
-  downstairs with nobody having come down stays silent. It reads as someone
-  coming home: the night is cancelled and the door dropped. An intruder
-  coming in while everyone is asleep looks the same, and the owner accepts
-  that in exchange for never pushing on a late return.
+- **Owner's decision (third fix wave; replaces the door hold of the final
+  review, the second wave's "any night-room activity drops the held door"
+  and its "door then downstairs stays silent" decision):** the owner doesn't
+  live at the property. Pushes go to their phone remotely, and the
+  occupants are elderly. Late returns and going out at night are unlikely,
+  and a missed night event matters more than an occasional push that
+  wasn't needed. So a night door pushes at once, with `raised_at` the door
+  time, unless the house was OUT just before it or a door in that hour ±1
+  is normal (more than 10% of at least 14 learned nights). Its hour is
+  recorded in the night as before. It clears at night-room activity after
+  the door, at the night's end, or after `unusual_ttl_min` (120 min). It
+  outlives a cancelled night: the push has gone, so it doesn't clear at
+  once. `door_hold_min` is gone; stores that carry the hold state still
+  load.
 
 Both are suppressed when they're normal for this house, which the owner
 agreed: "if someone always lets the dog out at 23:30, that's learned".
@@ -426,10 +436,10 @@ gap: 26 days. The truth file's gap now ends at the first data after it
 the same, fixed, scripts on the same data.
 
 Re-run after the final-review rulings (data resuming, outings across
-midnight, the night door hold and the coming-down rule) and the second fix
-wave (motion only at night, a night-room burst end as the coming-down, any
-night-room activity dropping a held door). "Before the final fixes" is this
-branch at 2c0da9d. "First final-fix run" is 33dfd90.
+midnight, the coming-down rule), the second fix wave (motion only at night,
+a night-room burst end as the coming-down) and the third (the night door
+pushes at once, a 3-minute grace for a late burst end). "Before the final
+fixes" is this branch at 2c0da9d; "first final-fix run" is 33dfd90.
 
 | Figure | Target | Baseline (main) | Before the final fixes | First final-fix run | This branch |
 |---|---|---|---|---|---|
@@ -448,7 +458,10 @@ branch at 2c0da9d. "First final-fix run" is 33dfd90.
 | Nights cancelled (coming-down rule) | | | | 18 on 16 evenings | 1 |
 | Evenings cancelled and never recorded | | | | 10 | 0 |
 
-All card and push targets are met. The cards in the window:
+All card and push targets are met. Night pushes stay at 0 because no
+outside door opened during any night in the data: the three small-hours
+openings (27 Sep 04:58, 28 Sep 05:46, 29 Sep 05:54) came after the night
+had ended. The cards in the window:
 
 - 15 Oct 20:15, back door not used yet today (usually by 15:42). It wasn't
   used at all that day.
@@ -463,8 +476,7 @@ the 18 cancels were the back room TV plug drawing 16–18 W for about two
 minutes in the small hours. Nobody was downstairs; it looks like a standby
 wake. With motion only at night, one cancel is left: front room motion at
 23:25 on 23 Sep, 10 minutes after bedroom motion. The night started again
-later that evening and was recorded. No night door was confirmed on any
-night.
+later that evening and was recorded.
 
 The first run, before the fixes, gave 14 cards (12 `not_yet_today`, 1
 `trip_missed`, 1 `unusual_now`). Four causes were found:

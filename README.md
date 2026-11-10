@@ -244,12 +244,13 @@ pushed.
 | `unusual_now` | An entity fires in an hour where it never fired on any learned day, an hour either side included | 2 hours later, or the day ends |
 
 Two are welfare alerts with source `night`, medium severity, in the
-`attention` group, so the notify blueprint pushes them:
+`attention` group, so the notify blueprint pushes them to the phone of
+whoever set up the notifications:
 
 | Kind | Fires when | Clears when |
 |---|---|---|
 | `night_downstairs` | A night trip has lasted the night-time downstairs alert (default 30 minutes) | Only night rooms are active again, or morning starts |
-| `night_door` | An outside door opened during the night 15 minutes ago. It is held for those 15 minutes: any movement in a night room drops it (someone let the cat out and went back to bed). A door with nothing indoors after it pushes when the 15 minutes are up. Movement downstairs with nobody having come down first is treated as someone coming home and stays silent. A door while the house was out is never a night door. A door still held when morning starts is dropped | Night-room activity follows, or morning starts |
+| `night_door` | An outside door opens during the night. It pushes at once, unless the house was out just before (that's someone coming home) or a door at that hour is normal for the house | Night-room activity after the door, the night ends, or 2 hours pass. It stays open even if the night is then dropped |
 
 Night starts when someone goes from a day room to a night room (the bedrooms
 and upstairs rooms) within 5 minutes, the day rooms then stay quiet for 30
@@ -257,11 +258,13 @@ minutes and no sitting appliance in a day room is on. It can't start before
 the learned night start. It ends at the first day-room activity after the
 learned waking time. A night trip is motion in a day room during the night
 that follows night-room activity within 5 minutes (someone came down; a
-bedroom sensor clearing as they leave counts); it ends after 5 minutes of
-night rooms only. Downstairs motion with no one coming down means someone
-was still up: that night is dropped and night starts again when they go up.
+bedroom sensor clearing as they leave counts, even when that arrives up to
+3 minutes after the downstairs motion); it ends after 5 minutes of night
+rooms only. Downstairs motion with no one coming down means someone was
+still up: that night is dropped and night starts again when they go up.
 During the night only motion counts downstairs, so a TV's standby wake or
-an automated light doesn't start a trip or drop the night. Both pushes need 14 learned nights,
+an automated light doesn't start a trip or drop the night. Both pushes
+need 14 learned nights,
 and each stays quiet when it is normal for the house: a long trip on more
 than 10% of nights, or a door opening within an hour of that time on more
 than 10% of nights. Holiday mode stops both and snooze holds them.
