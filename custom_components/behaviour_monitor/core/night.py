@@ -82,6 +82,8 @@ class NightWatch:
         # Going up, outside night.
         self._last_day_at: datetime | None = None
         self._went_up_at: datetime | None = None
+        # The latest night-room activity, in or out of night.
+        self._last_night_at: datetime | None = None
         # The night in progress.
         self.night_since: datetime | None = None
         self._trip_start: datetime | None = None
@@ -102,37 +104,60 @@ class NightWatch:
             room is not None and room in self._cfg.upstairs
         )
 
+    def _activity_at(self, ev: ActivityEvent, where: Whereabouts) -> datetime | None:
+        """When ``ev`` shows someone active, or None if it doesn't.
+
+        A burst end counts at its fall, but no later than the burst's last
+        rise plus ``burst_activity_max_min``, as in ``Whereabouts``: a held-on
+        motion sensor sends one presence and then only its burst end.
+        """
+        if ev.kind is EventKind.BURST_END:
+            rise = ev.last_rise or ev.timestamp
+            cap = _utc(rise) + timedelta(minutes=where.burst_activity_max_min)
+            if _utc(ev.timestamp) <= cap:
+                return ev.timestamp
+            return cap.astimezone(ev.timestamp.tzinfo)
+        return ev.timestamp if ev.is_activity else None
+
+    def _went_up(self, night_at: datetime, day_at: datetime | None) -> bool:
+        """Night-room activity this soon after day-room activity: going up."""
+        return (
+            day_at is not None
+            and 0 <= _since(night_at, day_at) <= self._cfg.went_up_within_min
+        )
+
     def record(self, ev: ActivityEvent, where: Whereabouts) -> None:
         """Feed one event, before ``where`` records it."""
-        if not ev.is_activity:
+        ts = self._activity_at(ev, where)
+        if ts is None:
             return
-        ts = ev.timestamp
         self._advance(ts, where)
         door = ev.kind is EventKind.OPEN and ev.entity_id in where.outside_doors
         night_room = not door and self._night_room(ev.room, where)
+        if ev.kind is EventKind.BURST_END and night_room:
+            return  # only a day-room burst end is evidence of being downstairs
         day_room = not door and not night_room
-        if self.night_since is not None and day_room and self._is_morning(ts, where):
+        if (
+            self.night_since is not None
+            and not night_room
+            and self._is_morning(ts, where)
+        ):
             self._end_night()
         if self.night_since is None:
             if day_room:
-                self._last_day_at = ts
-                self._went_up_at = None
-            elif (
-                night_room
-                and self._went_up_at is None
-                and self._last_day_at is not None
-                and 0 <= _since(ts, self._last_day_at) <= self._cfg.went_up_within_min
-            ):
-                self._went_up_at = ts
+                self._day_outside_night(ts)
+            elif night_room:
+                self._last_night_at = ts
+                if self._went_up_at is None and self._went_up(ts, self._last_day_at):
+                    self._went_up_at = ts
             return
+        if not _after(ts, self.night_since):
+            return  # a late burst end from before the night began
         if day_room:
-            if self._trip_start is None:
-                self._trip_start = ts
-                self._trip_up_at = None
-            self._trip_last_day = ts
-            self._trip_room = ev.room
+            self._day_in_night(ts, ev.room)
         elif night_room:
-            if self._trip_last_day is not None and _after(ts, self._trip_last_day):
+            self._last_night_at = ts
+            if self._trip_start is not None and self._went_up(ts, self._trip_last_day):
                 self._trip_up_at = ts
             if self._door_at is not None and _after(ts, self._door_at):
                 self._door_at = None
@@ -141,6 +166,37 @@ class NightWatch:
             self._doors.append(ts.hour)
             self._door_at = ts
             self._door_entity = ev.entity_id
+
+    def _day_outside_night(self, ts: datetime) -> None:
+        if self._last_day_at is None or _after(ts, self._last_day_at):
+            self._last_day_at = ts
+        if self._went_up_at is not None and not _after(self._went_up_at, ts):
+            self._went_up_at = None
+        # A burst end can arrive after the night-room activity it preceded.
+        if (
+            self._went_up_at is None
+            and self._last_night_at is not None
+            and _after(self._last_night_at, ts)
+            and self._went_up(self._last_night_at, self._last_day_at)
+        ):
+            self._went_up_at = self._last_night_at
+
+    def _day_in_night(self, ts: datetime, room: str) -> None:
+        if self._trip_start is None:
+            self._trip_start = ts
+            self._trip_up_at = None
+        if self._trip_last_day is None or _after(ts, self._trip_last_day):
+            self._trip_last_day = ts
+            self._trip_room = room
+        if self._trip_up_at is not None and not _after(self._trip_up_at, ts):
+            self._trip_up_at = None  # downstairs again: the same trip goes on
+        if (
+            self._trip_up_at is None
+            and self._last_night_at is not None
+            and _after(self._last_night_at, ts)
+            and self._went_up(self._last_night_at, self._trip_last_day)
+        ):
+            self._trip_up_at = self._last_night_at
 
     def _is_morning(self, ts: datetime, where: Whereabouts) -> bool:
         assert self.night_since is not None
@@ -158,7 +214,6 @@ class NightWatch:
                 self._trip_start is not None
                 and self._trip_last_day is not None
                 and self._trip_up_at is not None
-                and _after(self._trip_up_at, self._trip_last_day)
                 and _since(now, self._trip_last_day) >= cfg.trip_end_quiet_min
             ):
                 self._close_trip()
@@ -200,6 +255,7 @@ class NightWatch:
     def clear(self) -> None:
         """Drop the night in progress; finalised nights are kept."""
         self._last_day_at = self._went_up_at = self.night_since = None
+        self._last_night_at = None
         self._trip_start = self._trip_last_day = self._trip_up_at = None
         self._trip_room = ""
         self._door_at = None
@@ -236,8 +292,9 @@ class NightWatch:
             return []
         enough = cfg.night_normal_fraction * len(learned)
         out: list[Alert] = []
-        start = self._trip_start
-        if start is not None and _since(now, start) >= cfg.night_trip_min:
+        start, last = self._trip_start, self._trip_last_day
+        span = 0.0 if start is None or last is None else _since(last, start)
+        if start is not None and span >= cfg.night_trip_min:
             long_trips = sum(r.trip >= cfg.night_trip_min for r in learned)
             if long_trips <= enough:
                 raised = _utc(start) + timedelta(minutes=cfg.night_trip_min)
@@ -249,7 +306,7 @@ class NightWatch:
                         severity=Severity.MEDIUM,
                         explanation=(
                             "Someone has been downstairs for "
-                            f"{int(_since(now, start))} min during the night "
+                            f"{int(span)} min during the night "
                             f"(since {start:%H:%M}, in the {self._trip_room})"
                         ),
                         raised_at=raised.astimezone(start.tzinfo),
@@ -285,6 +342,7 @@ class NightWatch:
         return {
             "last_day_at": _iso(self._last_day_at),
             "went_up_at": _iso(self._went_up_at),
+            "last_night_at": _iso(self._last_night_at),
             "night_since": _iso(self.night_since),
             "trip_start": _iso(self._trip_start),
             "trip_last_day": _iso(self._trip_last_day),
@@ -308,6 +366,7 @@ class NightWatch:
             raise TypeError("night state must be a mapping")
         n._last_day_at = _dt(data["last_day_at"])
         n._went_up_at = _dt(data["went_up_at"])
+        n._last_night_at = _dt(data.get("last_night_at"))
         n.night_since = _dt(data["night_since"])
         n._trip_start = _dt(data["trip_start"])
         n._trip_last_day = _dt(data["trip_last_day"])

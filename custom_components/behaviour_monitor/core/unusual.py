@@ -114,7 +114,10 @@ class Unusual:
     # ------------------------------------------------------------ learning
 
     def record(self, ev: ActivityEvent, where: Whereabouts) -> None:
-        """Feed one event, before ``where`` records it."""
+        """Feed any event, before ``where`` records it.
+
+        Night tracking also uses burst ends; the card kinds use activity only.
+        """
         self._night.record(ev, where)
         if not ev.is_activity:
             return

@@ -593,6 +593,11 @@ class Whereabouts:
         """The chosen outside doors."""
         return self._cfg.outside_doors
 
+    @property
+    def burst_activity_max_min(self) -> float:
+        """How long after its last rise a burst still counts as activity."""
+        return self._cfg.burst_activity_max_min
+
     def sitting_rooms(self) -> set[str]:
         """Rooms with a sitting appliance on."""
         return set(self._tvs_on.values())
