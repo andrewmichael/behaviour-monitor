@@ -1,11 +1,17 @@
-"""Constants for the Behaviour Monitor integration (v5)."""
+"""Constants for the Behaviour Monitor integration."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Final
 
 DOMAIN: Final = "behaviour_monitor"
-VERSION: Final = "5.0.0"
+# The release workflow writes the version into manifest.json only, so read it
+# from there rather than keep a second copy that goes stale.
+VERSION: Final = json.loads(
+    (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+)["version"]
 CONFIG_VERSION: Final = 13
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 11
