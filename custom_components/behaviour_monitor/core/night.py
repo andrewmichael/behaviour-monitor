@@ -154,7 +154,7 @@ class NightWatch:
         if not _after(ts, self.night_since):
             return  # a late burst end from before the night began
         if day_room:
-            self._day_in_night(ts, ev.room)
+            self._day_in_night(ts, ev.room, ev.kind is EventKind.BURST_END)
         elif night_room:
             self._last_night_at = ts
             if self._trip_start is not None and self._went_up(ts, self._trip_last_day):
@@ -181,7 +181,17 @@ class NightWatch:
         ):
             self._went_up_at = self._last_night_at
 
-    def _day_in_night(self, ts: datetime, room: str) -> None:
+    def _day_in_night(self, ts: datetime, room: str, burst: bool) -> None:
+        last = self._trip_last_day
+        if (
+            not burst  # a burst end is motion held since its presence
+            and self._trip_start is not None
+            and last is not None
+            and _since(ts, last) >= self._cfg.bedtime_quiet_min
+        ):
+            # Downstairs was quiet this long: they went back unseen, and
+            # this is a new trip.
+            self._close_trip()
         if self._trip_start is None:
             self._trip_start = ts
             self._trip_up_at = None

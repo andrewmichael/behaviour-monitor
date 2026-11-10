@@ -447,9 +447,8 @@ class NightSite:
 
     def trip(self, eve: date, h: int, m: int, length: int, room=KITCHEN) -> None:
         start = self.t(eve, h, m)
-        self.feed(room, start)
-        if length:
-            self.feed(room, start + timedelta(minutes=length))
+        for k in [*range(0, length, 5), length]:  # moving about downstairs
+            self.feed(room, start + timedelta(minutes=k))
         self.feed(BED, start + timedelta(minutes=length + 1))
 
     def door(self, eve: date, h: int, m: int, eid: str = KDOOR) -> None:
@@ -677,8 +676,8 @@ def test_regular_long_trip_is_learned_normal():
     _night_house(s, trips={0: 40, 10: 40})
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
-    s.feed(KITCHEN, s.t(EVE, 2, 0))
-    s.feed(KITCHEN, s.t(EVE, 2, 30))
+    for m in (0, 10, 20, 30):
+        s.feed(KITCHEN, s.t(EVE, 2, m))
     assert [a.kind for a in s.ev(s.t(EVE, 2, 30))] == ["night_downstairs"]
 
 
@@ -691,6 +690,7 @@ def test_no_push_before_14_nights():
         assert s.u.night_since is not None
         s.feed(KITCHEN, s.t(EVE, 2, 0))
         s.feed(FRONT, s.t(EVE, 2, 1))
+        s.feed(KITCHEN, s.t(EVE, 2, 15))
         s.feed(KITCHEN, s.t(EVE, 2, 30))
         kinds_ = {a.kind for a in s.ev(s.t(EVE, 2, 30))}
         assert kinds_ == (set(NIGHT_KINDS) if pushed else set())
@@ -972,3 +972,16 @@ def test_night_door_clears_at_morning_and_morning_door_is_not_night():
     assert s.ev(s.t(EVE, 6, 11)) == []
     assert s.u.night_since is None
     assert s.nights()[iso_day(EVE)]["doors"] == []
+
+
+def test_two_blips_far_apart_are_two_trips():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KITCHEN, s.t(EVE, 2, 0))
+    s.feed(KITCHEN, s.t(EVE, 2, 40))  # 40 min of quiet downstairs: a new trip
+    assert s.u.to_dict()["night"]["trip_start"] == s.t(EVE, 2, 40).isoformat()
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 4, 0)))
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["trip"] == 0.0
