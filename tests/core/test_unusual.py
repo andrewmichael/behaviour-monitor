@@ -167,18 +167,49 @@ def test_not_yet_today_went_out_flag():
 
     s = Site(doors=frozenset({DOOR}))
     train_kettle(s, STEADY)
-    s.feed(DOOR, at(FRI, 7, 0))
-    s.feed(HALL, at(FRI, 7, 40))
+    s.feed(DOOR, at(FRI, 6, 0))
+    s.feed(HALL, at(FRI, 7, 20))
     assert s.w.out_spans(FRI)
-    [a] = kettle(s.ev(now))
+    [a] = kettle(s.ev(now))  # back 07:20, so 08:20 is before the 08:36 due
     assert a.details["went_out_today"] is True
 
+
+def test_not_yet_today_held_while_out():
+    now = mins(FRI, STEADY_DUE)
     s = Site(doors=frozenset({DOOR}))
     train_kettle(s, STEADY)
+    s.feed(HALL, at(FRI, 6, 30))
     s.feed(DOOR, at(FRI, 8, 0))
     assert s.w.is_out(now)
-    [a] = kettle(s.ev(now))
+    assert kettle(s.ev(now)) == []
+    assert kettle(s.ev(at(FRI, 11))) == []
+
+
+def _out_until_1122() -> Site:
+    s = Site(doors=frozenset({DOOR}))
+    train_kettle(s, STEADY)
+    s.feed(HALL, at(FRI, 6, 30))
+    s.feed(DOOR, at(FRI, 8, 0))
+    s.feed(DOOR, at(FRI, 11, 22))  # the door opening home ends the outing
+    s.feed(HALL, at(FRI, 11, 23))
+    assert not s.w.is_out(at(FRI, 11, 24))
+    [(_, back)] = s.w.out_spans(FRI)
+    assert back == 11 * 60 + 22
+    return s
+
+
+def test_not_yet_today_after_return_waits_allowance():
+    # Due at 08:36 normally; back home at 11:22, so not before 12:22.
+    s = _out_until_1122()
+    assert kettle(s.ev(at(FRI, 11, 30))) == []
+    s.feed(KETTLE, at(FRI, 11, 38))
+    assert kettle(s.ev(at(FRI, 12, 30))) == []
+
+    s = _out_until_1122()
+    assert kettle(s.ev(mins(FRI, 12 * 60 + 21))) == []
+    [a] = kettle(s.ev(mins(FRI, 12 * 60 + 22)))
     assert a.details["went_out_today"] is True
+    assert a.raised_at == mins(FRI, 12 * 60 + 22)
 
 
 # -------------------------------------------------------------- trip_missed
@@ -226,6 +257,28 @@ def test_trip_missed_learns_weekday_window_and_fires_after_slack():
     train_house(s, 28, FRI, friday_out=True)
     s.feed(DOOR, at(FRI, 13))
     assert kinds(s.ev(at(FRI, 14, 30)), "trip_missed") == []
+
+
+def test_zero_length_trip_window_is_not_learned():
+    # Four Fridays with 15-minute outings at 13:00, 14:00, 14:30 and 15:30.
+    # With the 60-minute slack, 13:30-15:15 is "out" on 3 of 4 Fridays, but
+    # the outings never overlap, so the window has no core and isn't learned.
+    s = Site(doors=frozenset({DOOR}))
+    fridays = [FRI - timedelta(days=7 * k) for k in (4, 3, 2, 1)]
+    starts = [13 * 60, 14 * 60, 14 * 60 + 30, 15 * 60 + 30]
+    for i in range(28):
+        d = FRI - timedelta(days=28 - i)
+        s.feed(HALL, at(d, 7))
+        if d in fridays:
+            start = starts[fridays.index(d)]
+            s.feed(DOOR, mins(d, start))
+            s.feed(HALL, mins(d, start + 15))
+            assert s.w.out_spans(d) == [(start, start + 15)]
+        s.feed(HALL, at(d, 18))
+        s.end(d)
+    s.feed(HALL, at(FRI, 7))
+    assert s.u._outing_windows(FRI, s.w) == []
+    assert kinds(s.ev(at(FRI, 23)), "trip_missed") == []
 
 
 def test_trip_missed_needs_four_days_and_doors():

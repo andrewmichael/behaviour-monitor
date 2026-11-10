@@ -206,8 +206,14 @@ class Unusual:
         learned = self._learned_days(today)
         if len(learned) < cfg.min_days:
             return []
+        if where.is_out(now):
+            return []  # held while the house is out
         now_min = _minute(now)
-        went_out = bool(where.out_spans(today)) or where.is_out(now)
+        spans = where.out_spans(today)
+        went_out = bool(spans)
+        # After an outing, wait at least the allowance floor from the return.
+        returns = [end for _, end in spans if end <= now_min]
+        back_by = max(returns) + cfg.allowance_floor_min if returns else 0.0
         out: list[Alert] = []
         for eid, days in self._first.items():
             if eid in down or categories.get(eid) is Category.PANIC:
@@ -219,7 +225,7 @@ class Unusual:
                 continue
             usual = _quantile(uses, 0.9)
             allowance = max(cfg.allowance_floor_min, usual - _quantile(uses, 0.5))
-            due = usual + allowance
+            due = max(usual + allowance, back_by)
             if now_min < due:
                 continue
             routine = routines.get(eid)
@@ -276,7 +282,11 @@ class Unusual:
                 windows[-1] = (windows[-1][0], (b + 1) * step)
             else:
                 windows.append((b * step, (b + 1) * step))
-        return windows
+        # Each window carries the slack on both sides. One whose core, the
+        # outing itself, is shorter than a bin came from outings that never
+        # overlapped in time, so it isn't a usual outing.
+        slack = cfg.trip_slack_min
+        return [(lo, hi) for lo, hi in windows if (hi - slack) - (lo + slack) >= step]
 
     def _trips_missed(self, now: datetime, where: Whereabouts) -> list[Alert]:
         cfg = self._cfg

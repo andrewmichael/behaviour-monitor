@@ -226,3 +226,11 @@ def test_down_today_includes_recovered_entity():
     _down(t, "binary_sensor.k", T0.replace(hour=8, minute=10), available=True)
     assert "binary_sensor.k" in t.down_today(T0.replace(hour=13))
     assert t.down_today(T0 + timedelta(days=1)) == set()
+
+
+def test_down_today_includes_outage_from_yesterday_that_ended_today():
+    t = _tracker()
+    _down(t, "binary_sensor.k", T0.replace(hour=23, minute=40) - timedelta(days=1))
+    _down(t, "binary_sensor.k", T0.replace(hour=9, minute=4), available=True)
+    assert "binary_sensor.k" in t.down_today(T0.replace(hour=14, minute=20))
+    assert t.down_today(T0 + timedelta(days=1)) == set()

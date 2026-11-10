@@ -36,8 +36,9 @@ class _EntityHealth:
     # Not persisted: the battery sensor is read again at startup.
     battery: float | None = None
     battery_low: bool = False
-    # Not persisted: when it last went down; a restart forgets it.
+    # Not persisted: when it last went down and came back; a restart forgets them.
     last_down: datetime | None = None
+    last_up: datetime | None = None
 
 
 def _dt(v: str | None) -> datetime | None:
@@ -74,6 +75,8 @@ class HealthTracker:
         if e is None:
             return
         if event.available:
+            if e.down_since is not None:
+                e.last_up = event.timestamp
             e.down_since = None
         elif e.down_since is None:
             e.down_since = event.timestamp
@@ -186,12 +189,15 @@ class HealthTracker:
         }
 
     def down_today(self, now: datetime) -> set[str]:
-        """Entities down now, or that went down at any time on ``now.date()``."""
+        """Entities down now, or down at any time on ``now.date()``: an outage
+        that began yesterday and ended today counts."""
+        today = now.date()
         return {
             eid
             for eid, e in self._ent.items()
             if e.down_since is not None
-            or (e.last_down is not None and e.last_down.date() == now.date())
+            or (e.last_down is not None and e.last_down.date() == today)
+            or (e.last_up is not None and e.last_up.date() == today)
         }
 
     def live_fraction(self, now: datetime) -> float:
