@@ -1,0 +1,328 @@
+"""Night: when the house has gone to bed, long night trips and night doors.
+
+Night starts when someone goes up (day-room activity, then night-room
+activity within a few minutes), the downstairs then stays quiet with no
+sitting appliance on, and that going-up lies inside the learned night. It
+ends at the first day-room activity at or after the learned night end.
+
+All bounds come from ``Whereabouts.night_start()`` and ``night_end()``;
+everything else is event sequence. Elapsed times use UTC subtraction so
+they stay right across a clock change; times of day use local wall time.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
+
+from .alerts import Alert, AlertClass, Severity
+from .events import ActivityEvent, EventKind
+from .slots import iso_day
+from .whereabouts import Whereabouts
+
+if TYPE_CHECKING:
+    from .unusual import UnusualConfig
+
+_NOON = 720
+_DAY_MIN = 1440
+
+
+def _utc(ts: datetime) -> datetime:
+    return ts.astimezone(timezone.utc)
+
+
+def _since(later: datetime, earlier: datetime) -> float:
+    """Minutes from ``earlier`` to ``later``, correct across a clock change."""
+    return (_utc(later) - _utc(earlier)).total_seconds() / 60
+
+
+def _after(a: datetime, b: datetime) -> bool:
+    return _utc(a) > _utc(b)
+
+
+def _minute(ts: datetime) -> int:
+    return ts.hour * 60 + ts.minute
+
+
+def _from_noon(minute: int) -> int:
+    return (minute - _NOON) % _DAY_MIN
+
+
+def _night_key(ts: datetime) -> date:
+    """The evening a moment belongs to: before noon is the previous evening."""
+    day = ts.date()
+    return day - timedelta(days=1) if _minute(ts) < _NOON else day
+
+
+def _dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("timestamps must be ISO strings")
+    return datetime.fromisoformat(value)
+
+
+def _iso(ts: datetime | None) -> str | None:
+    return None if ts is None else ts.isoformat()
+
+
+@dataclass
+class _NightRecord:
+    trip: float
+    doors: list[int]
+
+
+class NightWatch:
+    """Tracks the night in progress and learns what is normal at night."""
+
+    def __init__(self, config: UnusualConfig) -> None:
+        self._cfg = config
+        # Going up, outside night.
+        self._last_day_at: datetime | None = None
+        self._went_up_at: datetime | None = None
+        # The night in progress.
+        self.night_since: datetime | None = None
+        self._trip_start: datetime | None = None
+        self._trip_last_day: datetime | None = None
+        self._trip_up_at: datetime | None = None
+        self._trip_room: str = ""
+        self._door_at: datetime | None = None
+        self._door_entity: str | None = None
+        self._trip_max: float = 0.0
+        self._doors: list[int] = []
+        # Finalised nights, keyed by the evening's ISO date.
+        self._nights: dict[str, _NightRecord] = {}
+
+    # ------------------------------------------------------------ learning
+
+    def _night_room(self, room: str | None, where: Whereabouts) -> bool:
+        return where.is_bedroom(room) or (
+            room is not None and room in self._cfg.upstairs
+        )
+
+    def record(self, ev: ActivityEvent, where: Whereabouts) -> None:
+        """Feed one event, before ``where`` records it."""
+        if not ev.is_activity:
+            return
+        ts = ev.timestamp
+        self._advance(ts, where)
+        door = ev.kind is EventKind.OPEN and ev.entity_id in where.outside_doors
+        night_room = not door and self._night_room(ev.room, where)
+        day_room = not door and not night_room
+        if self.night_since is not None and day_room and self._is_morning(ts, where):
+            self._end_night()
+        if self.night_since is None:
+            if day_room:
+                self._last_day_at = ts
+                self._went_up_at = None
+            elif (
+                night_room
+                and self._went_up_at is None
+                and self._last_day_at is not None
+                and 0 <= _since(ts, self._last_day_at) <= self._cfg.went_up_within_min
+            ):
+                self._went_up_at = ts
+            return
+        if day_room:
+            if self._trip_start is None:
+                self._trip_start = ts
+                self._trip_up_at = None
+            self._trip_last_day = ts
+            self._trip_room = ev.room
+        elif night_room:
+            if self._trip_last_day is not None and _after(ts, self._trip_last_day):
+                self._trip_up_at = ts
+            if self._door_at is not None and _after(ts, self._door_at):
+                self._door_at = None
+                self._door_entity = None
+        elif not where.is_out(ts):
+            self._doors.append(ts.hour)
+            self._door_at = ts
+            self._door_entity = ev.entity_id
+
+    def _is_morning(self, ts: datetime, where: Whereabouts) -> bool:
+        assert self.night_since is not None
+        morning = _night_key(self.night_since) + timedelta(days=1)
+        end = where.night_end(morning)
+        return (ts.date(), _minute(ts)) >= (morning, end)
+
+    def _advance(self, now: datetime, where: Whereabouts) -> None:
+        cfg = self._cfg
+        if self.night_since is not None:
+            if _since(now, self.night_since) >= cfg.night_max_h * 60:
+                self._end_night()
+                return
+            if (
+                self._trip_start is not None
+                and self._trip_last_day is not None
+                and self._trip_up_at is not None
+                and _after(self._trip_up_at, self._trip_last_day)
+                and _since(now, self._trip_last_day) >= cfg.trip_end_quiet_min
+            ):
+                self._close_trip()
+            return
+        up = self._went_up_at
+        if up is None or _since(now, up) < cfg.bedtime_quiet_min:
+            return
+        if self._last_day_at is not None and _after(self._last_day_at, up):
+            return
+        if any(not self._night_room(r, where) for r in where.sitting_rooms()):
+            return
+        end = where.night_end(_night_key(up) + timedelta(days=1))
+        if not (
+            _from_noon(where.night_start()) <= _from_noon(_minute(up)) < _from_noon(end)
+        ):
+            return
+        self.night_since = up
+        self._went_up_at = None
+        self._trip_max = 0.0
+        self._doors = []
+
+    def _close_trip(self) -> None:
+        if self._trip_start is not None and self._trip_last_day is not None:
+            length = _since(self._trip_last_day, self._trip_start)
+            self._trip_max = max(self._trip_max, length)
+        self._trip_start = self._trip_last_day = self._trip_up_at = None
+        self._trip_room = ""
+
+    def _end_night(self) -> None:
+        """Finalise the night in progress under its evening's date."""
+        assert self.night_since is not None
+        self._close_trip()
+        key = iso_day(_night_key(self.night_since))
+        self._nights[key] = _NightRecord(
+            round(self._trip_max, 1), sorted(set(self._doors))
+        )
+        self.clear()
+
+    def clear(self) -> None:
+        """Drop the night in progress; finalised nights are kept."""
+        self._last_day_at = self._went_up_at = self.night_since = None
+        self._trip_start = self._trip_last_day = self._trip_up_at = None
+        self._trip_room = ""
+        self._door_at = None
+        self._door_entity = None
+        self._trip_max = 0.0
+        self._doors = []
+
+    def remove(self, entity_id: str) -> None:
+        if self._door_entity == entity_id:
+            self._door_at = None
+            self._door_entity = None
+
+    def prune(self, before: date) -> None:
+        cutoff = iso_day(before)
+        self._nights = {k: r for k, r in self._nights.items() if k >= cutoff}
+
+    # ---------------------------------------------------------- evaluation
+
+    def _learned(self, now: datetime) -> list[_NightRecord]:
+        hi = _night_key(now)
+        lo = iso_day(hi - timedelta(days=self._cfg.window_days))
+        return [r for k, r in self._nights.items() if lo <= k < iso_day(hi)]
+
+    def evaluate(
+        self, now: datetime, where: Whereabouts, names: Callable[[str], str]
+    ) -> list[Alert]:
+        """The night pushes open at ``now``."""
+        cfg = self._cfg
+        self._advance(now, where)
+        if self.night_since is None:
+            return []
+        learned = self._learned(now)
+        if len(learned) < cfg.min_days:
+            return []
+        enough = cfg.night_normal_fraction * len(learned)
+        out: list[Alert] = []
+        start = self._trip_start
+        if start is not None and _since(now, start) >= cfg.night_trip_min:
+            long_trips = sum(r.trip >= cfg.night_trip_min for r in learned)
+            if long_trips <= enough:
+                raised = _utc(start) + timedelta(minutes=cfg.night_trip_min)
+                out.append(
+                    Alert(
+                        cls=AlertClass.WELFARE,
+                        source="night",
+                        kind="night_downstairs",
+                        severity=Severity.MEDIUM,
+                        explanation=(
+                            "Someone has been downstairs for "
+                            f"{int(_since(now, start))} min during the night "
+                            f"(since {start:%H:%M}, in the {self._trip_room})"
+                        ),
+                        raised_at=raised.astimezone(start.tzinfo),
+                        details={"room": self._trip_room, "since": f"{start:%H:%M}"},
+                    )
+                )
+        t = self._door_at
+        if t is not None and self._door_entity is not None:
+            h = t.hour
+            near = sum(
+                any((d - h) % 24 in (0, 1, 23) for d in r.doors) for r in learned
+            )
+            if near <= enough:
+                out.append(
+                    Alert(
+                        cls=AlertClass.WELFARE,
+                        source="night",
+                        kind="night_door",
+                        severity=Severity.MEDIUM,
+                        explanation=(
+                            f"{names(self._door_entity)} opened during the night "
+                            f"at {t:%H:%M}"
+                        ),
+                        raised_at=t,
+                        details={"door": self._door_entity, "at": f"{t:%H:%M}"},
+                    )
+                )
+        return out
+
+    # --------------------------------------------------------- persistence
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "last_day_at": _iso(self._last_day_at),
+            "went_up_at": _iso(self._went_up_at),
+            "night_since": _iso(self.night_since),
+            "trip_start": _iso(self._trip_start),
+            "trip_last_day": _iso(self._trip_last_day),
+            "trip_up_at": _iso(self._trip_up_at),
+            "trip_room": self._trip_room,
+            "door_at": _iso(self._door_at),
+            "door_entity": self._door_entity,
+            "trip_max": self._trip_max,
+            "doors": list(self._doors),
+            "nights": {
+                k: {"trip": r.trip, "doors": list(r.doors)}
+                for k, r in sorted(self._nights.items())
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, config: UnusualConfig) -> "NightWatch":
+        """Restore; raises on bad data so the caller can start fresh."""
+        n = cls(config)
+        if not isinstance(data, dict):
+            raise TypeError("night state must be a mapping")
+        n._last_day_at = _dt(data["last_day_at"])
+        n._went_up_at = _dt(data["went_up_at"])
+        n.night_since = _dt(data["night_since"])
+        n._trip_start = _dt(data["trip_start"])
+        n._trip_last_day = _dt(data["trip_last_day"])
+        n._trip_up_at = _dt(data["trip_up_at"])
+        n._trip_room = str(data["trip_room"])
+        n._door_at = _dt(data["door_at"])
+        door = data["door_entity"]
+        n._door_entity = None if door is None else str(door)
+        n._trip_max = float(data["trip_max"])
+        n._doors = [int(h) for h in data["doors"]]
+        nights: dict[str, _NightRecord] = {}
+        for k, r in data["nights"].items():
+            date.fromisoformat(k)
+            nights[str(k)] = _NightRecord(
+                float(r["trip"]), [int(h) for h in r["doors"]]
+            )
+        n._nights = nights
+        return n

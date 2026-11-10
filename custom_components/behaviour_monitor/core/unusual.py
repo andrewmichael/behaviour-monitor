@@ -8,6 +8,9 @@
 
 Every time of day comes from learned values; the clock is always an
 argument. All three are STATISTICAL and LOW, so they are never pushed.
+
+The two night pushes, ``night_downstairs`` and ``night_door``, live in
+``night.NightWatch``; ``Unusual`` feeds it and returns its alerts.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from typing import Any
 from .alerts import Alert, AlertClass, Severity
 from .entity_routine import EntityRoutineModel
 from .events import ActivityEvent, Category
+from .night import NightWatch
 from .slots import iso_day
 from .whereabouts import Whereabouts, _quantile
 
@@ -55,7 +59,17 @@ class UnusualConfig:
     # Learned days needed, and how far back they are taken from.
     min_days: int = 14
     window_days: int = 28
-    # Night parts (used by the night tracking).
+    # Night: going up is night-room activity this soon after day-room
+    # activity; night starts after this long with no day-room activity; a
+    # night trip ends this long after its last day-room activity once
+    # someone is back in a night room; a night longer than this ends anyway.
+    went_up_within_min: float = 5.0
+    bedtime_quiet_min: float = 30.0
+    trip_end_quiet_min: float = 5.0
+    night_max_h: float = 20.0
+    # A long trip, or a door in an hour (±1), is normal on more than this
+    # share of learned nights.
+    night_normal_fraction: float = 0.10
     night_trip_min: float = 30.0
     upstairs: frozenset[str] = frozenset()
 
@@ -86,11 +100,22 @@ class Unusual:
         # Today's first activity per (entity, hour), for unusual_now.
         self._hours_day: str | None = None
         self._hours: dict[str, dict[int, datetime]] = {}
+        self._night = NightWatch(config)
+
+    @property
+    def night_since(self) -> datetime | None:
+        """When the night in progress began, or None outside night."""
+        return self._night.night_since
+
+    def clear_night(self) -> None:
+        """Drop the night in progress; learned nights are kept."""
+        self._night.clear()
 
     # ------------------------------------------------------------ learning
 
     def record(self, ev: ActivityEvent, where: Whereabouts) -> None:
         """Feed one event, before ``where`` records it."""
+        self._night.record(ev, where)
         if not ev.is_activity:
             return
         ts = ev.timestamp
@@ -121,6 +146,7 @@ class Unusual:
     def remove(self, entity_id: str) -> None:
         self._first.pop(entity_id, None)
         self._hours.pop(entity_id, None)
+        self._night.remove(entity_id)
 
     def prune(self, before: date) -> None:
         """Forget days before ``before``."""
@@ -133,6 +159,7 @@ class Unusual:
         if self._hours_day is not None and self._hours_day < cutoff:
             self._hours_day = None
             self._hours = {}
+        self._night.prune(before)
 
     def _window(self, today: date) -> tuple[str, str]:
         """ISO bounds [first, today) of the learned days."""
@@ -154,11 +181,12 @@ class Unusual:
         names: Callable[[str], str],
         categories: dict[str, Category],
     ) -> list[Alert]:
-        """Every card alert open at ``now``."""
+        """Every card alert and night push open at ``now``."""
         return (
             self._not_yet_today(now, where, routines, down, names, categories)
             + self._trips_missed(now, where)
             + self._unusual_now(now, routines, down, names)
+            + self._night.evaluate(now, where, names)
         )
 
     def _not_yet_today(
@@ -356,6 +384,7 @@ class Unusual:
                 eid: {str(h): ts.isoformat() for h, ts in hours.items()}
                 for eid, hours in self._hours.items()
             },
+            "night": self._night.to_dict(),
         }
 
     @classmethod
@@ -378,6 +407,10 @@ class Unusual:
                 str(eid): {int(h): datetime.fromisoformat(ts) for h, ts in hrs.items()}
                 for eid, hrs in data.get("hours", {}).items()
             }
+            # A store from before the night parts has no "night": start the
+            # night learning empty and keep the rest.
+            if "night" in data:
+                u._night = NightWatch.from_dict(data["night"], config)
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
         return u

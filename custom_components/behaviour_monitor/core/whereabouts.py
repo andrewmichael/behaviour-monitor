@@ -588,6 +588,11 @@ class Whereabouts:
         iv = self.current(now)
         return iv is not None and iv.where is Where.OUT
 
+    @property
+    def outside_doors(self) -> frozenset[str]:
+        """The chosen outside doors."""
+        return self._cfg.outside_doors
+
     def sitting_rooms(self) -> set[str]:
         """Rooms with a sitting appliance on."""
         return set(self._tvs_on.values())

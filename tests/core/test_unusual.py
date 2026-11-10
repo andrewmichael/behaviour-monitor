@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from custom_components.behaviour_monitor.core.alerts import AlertClass, Severity
 from custom_components.behaviour_monitor.core.entity_routine import (
@@ -13,6 +14,7 @@ from custom_components.behaviour_monitor.core.events import (
     Category,
     EventKind,
 )
+from custom_components.behaviour_monitor.core.slots import iso_day
 from custom_components.behaviour_monitor.core.unusual import Unusual, UnusualConfig
 from custom_components.behaviour_monitor.core.whereabouts import (
     Whereabouts,
@@ -337,3 +339,522 @@ def test_remove_and_prune():
     train_kettle(s, STEADY)
     s.u.remove(KETTLE)
     assert kettle(s.ev(mins(FRI, STEADY_DUE))) == []
+
+
+# -------------------------------------------------------------------- night
+
+KITCHEN = "binary_sensor.kitchen_motion"
+BACK = "binary_sensor.back_room_motion"
+TV = "switch.back_room_tv"
+BED = "binary_sensor.bedroom_motion"
+LANDING = "binary_sensor.landing_motion"
+BATH = "binary_sensor.bathroom_motion"
+FRONT = "binary_sensor.front_door"
+KDOOR = "binary_sensor.kitchen_door"
+N_ROOMS = {
+    KITCHEN: "Kitchen",
+    BACK: "Back room",
+    TV: "Back room",
+    BED: "Bedroom",
+    LANDING: "Landing",
+    BATH: "Bathroom",
+    FRONT: "Hall",
+    KDOOR: "Kitchen",
+}
+N_CATS = {
+    eid: (
+        Category.PLUG
+        if eid == TV
+        else Category.CONTACT if eid in (FRONT, KDOOR) else Category.MOTION
+    )
+    for eid in N_ROOMS
+}
+N_NAMES = {FRONT: "Front door", KDOOR: "Kitchen door", KITCHEN: "Kitchen"}
+UPSTAIRS = frozenset({"Landing", "Bathroom"})
+EVE = date(2026, 11, 21)  # the evening under test, after 20 trained nights
+NIGHT_KINDS = ("night_downstairs", "night_door")
+# 0-10 minute kitchen trips on some nights (index -> minutes).
+TRIPS = {0: 0, 3: 4, 6: 10, 9: 2, 12: 7, 15: 10, 18: 5}
+
+
+def nt(eve: date, h: int, m: int = 0, tz=timezone.utc, fold: int = 0) -> datetime:
+    """A time in the night that follows evening ``eve`` (before noon: next day)."""
+    d = eve + timedelta(days=1) if h < 12 else eve
+    return datetime(d.year, d.month, d.day, h, m, tzinfo=tz, fold=fold)
+
+
+class NightSite:
+    def __init__(
+        self,
+        upstairs: frozenset[str] = UPSTAIRS,
+        tz=timezone.utc,
+        **where: object,
+    ) -> None:
+        self.tz = tz
+        self.cfg = UnusualConfig(upstairs=upstairs)
+        self.u = Unusual(self.cfg)
+        self.w = Whereabouts(
+            WhereaboutsConfig(
+                outside_doors=frozenset({FRONT, KDOOR}),
+                sitting_appliances=frozenset({TV}),
+                **where,  # type: ignore[arg-type]
+            )
+        )
+        self.r = EntityRoutineModel(RoutineConfig())
+
+    def t(self, eve: date, h: int, m: int = 0, fold: int = 0) -> datetime:
+        return nt(eve, h, m, self.tz, fold)
+
+    def feed(self, eid: str, ts: datetime, kind: EventKind | None = None) -> None:
+        if kind is None:
+            kind = {
+                Category.PLUG: EventKind.APPLIANCE_ON,
+                Category.CONTACT: EventKind.OPEN,
+                Category.MOTION: EventKind.PRESENCE,
+            }[N_CATS[eid]]
+        ev = ActivityEvent(eid, N_CATS[eid], kind, N_ROOMS[eid], ts)
+        self.u.record(ev, self.w)
+        self.w.record(ev)
+
+    def ev(self, now: datetime) -> list:
+        return [
+            a
+            for a in self.u.evaluate(
+                now, self.w, self.r, set(), lambda e: N_NAMES.get(e, e), N_CATS
+            )
+            if a.kind in NIGHT_KINDS
+        ]
+
+    def evening(self, eve: date, tv_off: bool = True) -> None:
+        """Day rooms until 21:55, then up to the bedroom within 2 min."""
+        t = self.t
+        self.feed(KITCHEN, t(eve, 18))
+        self.feed(TV, t(eve, 19))
+        for h in (19, 20, 21):
+            self.feed(BACK, t(eve, h, 30))
+        if tv_off:
+            self.feed(TV, t(eve, 21, 50), EventKind.APPLIANCE_OFF)
+        self.feed(KITCHEN, t(eve, 21, 55))
+        self.feed(BED, t(eve, 21, 57))
+
+    def trip(self, eve: date, h: int, m: int, length: int, room=KITCHEN) -> None:
+        start = self.t(eve, h, m)
+        self.feed(room, start)
+        if length:
+            self.feed(room, start + timedelta(minutes=length))
+        self.feed(BED, start + timedelta(minutes=length + 1))
+
+    def door(self, eve: date, h: int, m: int, eid: str = KDOOR) -> None:
+        at_ = self.t(eve, h, m)
+        self.feed(KITCHEN, at_ - timedelta(minutes=2))
+        self.feed(eid, at_)
+        self.feed(KITCHEN, at_ + timedelta(minutes=2))
+        self.feed(BED, at_ + timedelta(minutes=4))
+
+    def morning(self, eve: date) -> None:
+        self.feed(KITCHEN, self.t(eve, 7))
+
+    def nights(self) -> dict:
+        return self.u.to_dict()["night"]["nights"]
+
+
+def _night_house(
+    site: NightSite,
+    n: int = 20,
+    before: date = EVE,
+    trips: dict[int, int] | None = None,
+    doors: dict[int, tuple[int, int]] | None = None,
+) -> None:
+    """Train ``n`` ordinary nights on the evenings before ``before``."""
+    trips = TRIPS if trips is None else trips
+    doors = doors or {}
+    for i in range(n):
+        d = before - timedelta(days=n - i)
+        site.evening(d)
+        site.ev(site.t(d, 22, 40))
+        if i in doors:
+            site.door(d, *doors[i])
+        if i in trips:
+            site.trip(d, 2, 0, trips[i])
+        site.ev(site.t(d, 3))
+        site.morning(d)
+
+
+def polls(site: NightSite, start: datetime, end: datetime) -> list[list]:
+    out = []
+    now = start
+    while now <= end:
+        out.append(site.ev(now))
+        now += timedelta(minutes=1)
+    return out
+
+
+def test_night_starts_only_after_going_up_and_quiet_and_tv_off():
+    s = NightSite()
+    _night_house(s)
+    assert len(s.nights()) == 20
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 26))
+    assert s.u.night_since is None
+    s.ev(s.t(EVE, 22, 27))
+    assert s.u.night_since == s.t(EVE, 21, 57)
+
+    # TV left on in the back room: someone is still downstairs.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE, tv_off=False)
+    s.ev(s.t(EVE, 23, 30))
+    assert s.u.night_since is None
+    s.feed(TV, s.t(EVE, 23, 31), EventKind.APPLIANCE_OFF)
+    s.ev(s.t(EVE, 23, 32))
+    assert s.u.night_since == s.t(EVE, 21, 57)
+
+
+def test_tv_on_doze_is_not_night():
+    s = NightSite()
+    _night_house(s)
+    s.feed(KITCHEN, s.t(EVE, 18))
+    s.feed(TV, s.t(EVE, 19))
+    s.feed(BACK, s.t(EVE, 21))
+    s.ev(s.t(EVE, 23, 30))
+    assert s.u.night_since is None
+    # Someone fetches something from upstairs; the TV is still on.
+    s.feed(KITCHEN, s.t(EVE, 23, 40))
+    s.feed(BED, s.t(EVE, 23, 42))
+    s.feed(KITCHEN, s.t(EVE, 1, 0))
+    s.feed(KITCHEN, s.t(EVE, 1, 45))
+    assert all(p == [] for p in polls(s, s.t(EVE, 23, 30), s.t(EVE, 2, 30)))
+    assert s.u.night_since is None
+
+
+def test_quiet_read_without_going_up_is_not_night():
+    s = NightSite()
+    _night_house(s)
+    s.feed(KITCHEN, s.t(EVE, 18))
+    s.feed(BACK, s.t(EVE, 21, 30))
+    s.ev(s.t(EVE, 23, 30))
+    assert s.u.night_since is None
+    for m in range(0, 45, 5):
+        s.feed(KITCHEN, s.t(EVE, 23, 40) + timedelta(minutes=m))
+    assert all(p == [] for p in polls(s, s.t(EVE, 23, 30), s.t(EVE, 1, 0)))
+    assert s.u.night_since is None
+
+
+def test_first_to_bed_while_other_downstairs_is_not_night():
+    s = NightSite()
+    _night_house(s)
+    s.feed(KITCHEN, s.t(EVE, 18))
+    s.feed(BACK, s.t(EVE, 20, 28))
+    s.feed(BED, s.t(EVE, 20, 30))  # the first goes up
+    seen = []
+    now = s.t(EVE, 20, 30)
+    while now <= s.t(EVE, 22, 0):
+        if now.minute % 10 == 0 and now > s.t(EVE, 20, 30):
+            s.feed(BACK, now)  # the other is still in the back room
+        if now.minute == 3:
+            s.feed(BED, now)  # the first turns over
+        seen.append(s.ev(now))
+        assert s.u.night_since is None
+        now += timedelta(minutes=1)
+    s.feed(BED, s.t(EVE, 22, 1))  # the other goes up
+    seen += polls(s, s.t(EVE, 22, 1), s.t(EVE, 22, 30))
+    assert s.u.night_since is None
+    s.ev(s.t(EVE, 22, 31))
+    assert s.u.night_since == s.t(EVE, 22, 1)
+    assert all(p == [] for p in seen)
+
+
+def test_long_night_trip_pushes_once_at_30_min_and_clears_back_upstairs():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    opened = 0
+    was_open = False
+    raised = set()
+    for m in range(0, 46):
+        now = s.t(EVE, 2, 0) + timedelta(minutes=m)
+        if m <= 40 and m % 5 == 0:
+            s.feed(KITCHEN, now)
+        if m == 41:
+            s.feed(BED, now)
+        alerts = s.ev(now)
+        if m < 30:
+            assert alerts == []
+        if m == 30:
+            [a] = alerts
+            assert a.kind == "night_downstairs" and a.source == "night"
+            assert a.cls is AlertClass.WELFARE and a.severity is Severity.MEDIUM
+            assert a.explanation == (
+                "Someone has been downstairs for 30 min during the night "
+                "(since 02:00, in the Kitchen)"
+            )
+            assert a.details == {"room": "Kitchen", "since": "02:00"}
+        if 30 <= m < 45:
+            assert [a.kind for a in alerts] == ["night_downstairs"]
+        if m == 45:
+            assert alerts == []  # back upstairs and 5 min quiet downstairs
+        is_open = bool(alerts)
+        opened += is_open and not was_open
+        was_open = is_open
+        raised |= {a.raised_at for a in alerts}
+    assert opened == 1
+    assert raised == {s.t(EVE, 2, 30)}
+
+
+def test_short_trip_sends_nothing():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.trip(EVE, 2, 0, 10)
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 3, 0)))
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["trip"] == 10.0
+
+
+def test_night_door_while_home_pushes_and_while_out_does_not():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KITCHEN, s.t(EVE, 2, 12))
+    s.feed(FRONT, s.t(EVE, 2, 14))
+    [a] = s.ev(s.t(EVE, 2, 15))
+    assert a.kind == "night_door" and a.source == "night"
+    assert a.cls is AlertClass.WELFARE and a.severity is Severity.MEDIUM
+    assert a.explanation == "Front door opened during the night at 02:14"
+    assert a.raised_at == s.t(EVE, 2, 14)
+    s.feed(BED, s.t(EVE, 2, 20))
+    assert s.ev(s.t(EVE, 2, 21)) == []
+
+    # The other occupant goes out after the first is in bed and comes home
+    # late: the house was OUT when the door opened.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.feed(FRONT, s.t(EVE, 22, 0))
+    s.ev(s.t(EVE, 22, 40))
+    assert s.u.night_since == s.t(EVE, 21, 57)
+    assert s.w.is_out(s.t(EVE, 1, 30))
+    s.feed(FRONT, s.t(EVE, 1, 30))
+    assert s.ev(s.t(EVE, 1, 31)) == []
+    s.feed(BED, s.t(EVE, 1, 32))
+    assert all(p == [] for p in polls(s, s.t(EVE, 1, 32), s.t(EVE, 2, 30)))
+
+
+def test_regular_2330_back_door_is_learned_normal():
+    s = NightSite()
+    _night_house(s, doors={i: (23, 30) for i in range(0, 20, 3)})  # 7 of 20
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KDOOR, s.t(EVE, 23, 30))
+    assert s.ev(s.t(EVE, 23, 31)) == []
+    # A door well away from the learned hour still pushes.
+    s.feed(BED, s.t(EVE, 23, 35))
+    s.feed(KDOOR, s.t(EVE, 2, 14))
+    assert [a.kind for a in s.ev(s.t(EVE, 2, 15))] == ["night_door"]
+
+
+def test_regular_long_trip_is_learned_normal():
+    s = NightSite()
+    _night_house(s, trips={i: 40 for i in range(0, 20, 5)})  # 4 of 20
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.trip(EVE, 2, 0, 40)
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 3, 0)))
+
+    # 2 of 20 is not more than 10%: still unusual.
+    s = NightSite()
+    _night_house(s, trips={0: 40, 10: 40})
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KITCHEN, s.t(EVE, 2, 0))
+    assert [a.kind for a in s.ev(s.t(EVE, 2, 30))] == ["night_downstairs"]
+
+
+def test_no_push_before_14_nights():
+    for n, pushed in ((13, False), (14, True)):
+        s = NightSite()
+        _night_house(s, n=n)
+        s.evening(EVE)
+        s.ev(s.t(EVE, 22, 40))
+        assert s.u.night_since is not None
+        s.feed(KITCHEN, s.t(EVE, 2, 0))
+        s.feed(FRONT, s.t(EVE, 2, 1))
+        kinds_ = {a.kind for a in s.ev(s.t(EVE, 2, 30))}
+        assert kinds_ == (set(NIGHT_KINDS) if pushed else set())
+
+
+def test_bungalow_bedrooms_only():
+    s = NightSite(upstairs=frozenset())
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    assert s.u.night_since == s.t(EVE, 21, 57)
+    s.trip(EVE, 2, 0, 3, room=BATH)
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 3, 0)))
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["trip"] == 3.0  # the bathroom is a day room
+
+    # With the bathroom ticked as upstairs, the same visit is no trip.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.trip(EVE, 2, 0, 3, room=BATH)
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["trip"] == 0.0
+
+
+def test_morning_ends_night_at_learned_night_end():
+    s = NightSite()
+    _night_house(s)
+    nxt = EVE + timedelta(days=1)
+    assert s.w.night_end(nxt) == 6 * 60  # earliest waking 07:00 less 60 min
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KITCHEN, s.t(EVE, 5, 30))
+    s.feed(KITCHEN, s.t(EVE, 5, 45))
+    assert s.u.night_since == s.t(EVE, 21, 57)  # before night_end: a trip
+    assert iso_day(EVE) not in s.nights()
+    s.feed(KITCHEN, s.t(EVE, 6, 0))
+    assert s.u.night_since is None
+    assert s.nights()[iso_day(EVE)] == {"trip": 15.0, "doors": []}
+
+
+def test_restart_mid_night_keeps_trip():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KITCHEN, s.t(EVE, 1, 50))
+    s.feed(KITCHEN, s.t(EVE, 2, 0))
+    data = s.u.to_dict()
+    s.u = Unusual.from_dict(data, s.cfg)
+    assert s.u.to_dict() == data
+    assert s.u.night_since == s.t(EVE, 21, 57)
+    s.feed(KITCHEN, s.t(EVE, 2, 10))
+    assert s.ev(s.t(EVE, 2, 19)) == []
+    [a] = s.ev(s.t(EVE, 2, 20))
+    assert a.kind == "night_downstairs"
+    assert a.details["since"] == "01:50"
+    assert a.raised_at == s.t(EVE, 2, 20)
+    [b] = s.ev(s.t(EVE, 2, 25))
+    assert b.raised_at == a.raised_at
+    assert s.u.night_since == s.t(EVE, 21, 57)
+
+
+def test_bedtime_after_midnight():
+    s = NightSite(night_start_min=23 * 60)
+    s.feed(KITCHEN, s.t(EVE, 22, 0))
+    s.feed(BACK, s.t(EVE, 0, 28))
+    s.feed(BED, s.t(EVE, 0, 30))
+    s.ev(s.t(EVE, 0, 59))
+    assert s.u.night_since is None
+    s.ev(s.t(EVE, 1, 0))
+    assert s.u.night_since == s.t(EVE, 0, 30)
+    s.morning(EVE)
+    assert s.u.night_since is None
+    assert list(s.nights()) == [iso_day(EVE)]  # the previous evening's date
+
+    # Going up before the learned night start is not night.
+    s = NightSite(night_start_min=23 * 60)
+    s.feed(KITCHEN, s.t(EVE, 22, 28))
+    s.feed(BED, s.t(EVE, 22, 30))
+    s.ev(s.t(EVE, 23, 30))
+    assert s.u.night_since is None
+
+
+def test_poll_gap_during_trip_fires_once():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    for m in range(10, 55, 5):
+        s.feed(KITCHEN, s.t(EVE, 2, m))  # 02:10 .. 02:50, no polls
+    [a] = s.ev(s.t(EVE, 2, 55))
+    assert a.kind == "night_downstairs"
+    assert a.explanation.startswith("Someone has been downstairs for 45 min")
+    assert a.raised_at == s.t(EVE, 2, 40)
+    [b] = s.ev(s.t(EVE, 2, 56))
+    assert b.raised_at == a.raised_at
+
+
+def test_clock_change_night():
+    lon = ZoneInfo("Europe/London")
+    eve = date(2026, 10, 24)  # clocks go back at 02:00 BST on 25 Oct
+    s = NightSite(tz=lon)
+    _night_house(s, before=eve)
+    s.evening(eve)
+    s.ev(s.t(eve, 22, 40))
+    since = s.t(eve, 21, 57)
+    assert s.u.night_since == since
+    # 01:30 happens twice; neither ends nor restarts the night.
+    s.feed(BED, s.t(eve, 1, 30, fold=0))
+    s.feed(BED, s.t(eve, 1, 30, fold=1))
+    assert s.u.night_since == since
+    assert iso_day(eve) not in s.nights()
+    # A trip from 01:40 BST to 01:05 GMT is 25 minutes, not -35.
+    s.feed(KITCHEN, s.t(eve, 1, 40, fold=0))
+    s.feed(KITCHEN, s.t(eve, 1, 50, fold=0))
+    s.feed(KITCHEN, s.t(eve, 1, 5, fold=1))
+    assert s.ev(s.t(eve, 1, 9, fold=1)) == []
+    [a] = s.ev(s.t(eve, 1, 10, fold=1))
+    assert a.kind == "night_downstairs"
+    assert a.explanation == (
+        "Someone has been downstairs for 30 min during the night "
+        "(since 01:40, in the Kitchen)"
+    )
+    utc = timezone.utc
+    assert a.raised_at.astimezone(utc) == datetime(2026, 10, 25, 1, 10, tzinfo=utc)
+    s.feed(BED, s.t(eve, 1, 12, fold=1))
+    assert s.ev(s.t(eve, 1, 20, fold=1)) == []
+    assert s.u.night_since == since
+    s.morning(eve)
+    assert s.u.night_since is None
+    assert s.nights()[iso_day(eve)]["trip"] == 25.0
+
+    # Back upstairs at 01:01 GMT is after 01:50 BST: the trip ends.
+    s = NightSite(tz=lon)
+    _night_house(s, before=eve)
+    s.evening(eve)
+    s.ev(s.t(eve, 22, 40))
+    s.feed(KITCHEN, s.t(eve, 1, 45, fold=0))
+    s.feed(KITCHEN, s.t(eve, 1, 50, fold=0))
+    s.feed(BED, s.t(eve, 1, 1, fold=1))
+    s.ev(s.t(eve, 1, 6, fold=1))
+    assert s.u.to_dict()["night"]["trip_start"] is None
+    assert s.u.to_dict()["night"]["trip_max"] == 5.0
+
+
+def test_night_state_round_trip_old_store_and_clear():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(KDOOR, s.t(EVE, 2, 0))
+    data = s.u.to_dict()
+    assert Unusual.from_dict(data, s.cfg).to_dict() == data
+
+    # A store from before the night parts keeps its card learning.
+    old = {k: v for k, v in data.items() if k != "night"}
+    back = Unusual.from_dict(old, s.cfg)
+    assert back.to_dict()["first"] == data["first"]
+    assert back.night_since is None and back.to_dict()["night"]["nights"] == {}
+
+    fresh = Unusual(s.cfg).to_dict()
+    for bad in (5, {"nights": {}}, dict(data["night"], night_since=3)):
+        assert Unusual.from_dict(dict(data, night=bad), s.cfg).to_dict() == fresh
+
+    # clear_night drops the night in progress and keeps the learned nights.
+    assert s.ev(s.t(EVE, 2, 1))
+    s.u.clear_night()
+    assert s.u.night_since is None
+    assert s.ev(s.t(EVE, 2, 2)) == []
+    assert len(s.nights()) == 20
+
+
+def test_outside_doors_property():
+    w = Whereabouts(WhereaboutsConfig(outside_doors=frozenset({FRONT})))
+    assert w.outside_doors == frozenset({FRONT})
