@@ -105,6 +105,7 @@ class NightWatch:
         self._last_night_at: datetime | None = None
         # The latest night-room burst end in the night, for coming down only.
         self._night_burst_at: datetime | None = None
+        self._night_burst_rise: datetime | None = None
         # The night in progress.
         self.night_since: datetime | None = None
         self._trip_start: datetime | None = None
@@ -166,9 +167,10 @@ class NightWatch:
             # until someone gets up falls as they leave: during the night it
             # can be the coming-down, and nothing else.
             if self.night_since is not None and _after(ts, self.night_since):
+                rise = ev.last_rise or ev.timestamp
                 if self._night_burst_at is None or _after(ts, self._night_burst_at):
-                    self._night_burst_at = ts
-                self._pending_came_down(ts)
+                    self._night_burst_at, self._night_burst_rise = ts, rise
+                self._pending_came_down(ts, rise)
             return
         day_room = not door and not night_room
         if night_room and self._door_at is not None and _after(ts, self._door_at):
@@ -207,7 +209,7 @@ class NightWatch:
                     if self._pending_up is None or _after(ts, self._pending_up):
                         self._pending_up = ts
                 else:
-                    self._pending_came_down(ts)
+                    self._pending_came_down(ts, ts)
         elif not where.is_out(ts):
             # Owner's decision (third fix wave): the occupants are elderly and
             # the owner is remote, so a night door pushes straight away; a
@@ -230,15 +232,25 @@ class NightWatch:
         ):
             self._went_up_at = self._last_night_at
 
+    def _overlaps(self, rise: datetime, active: datetime, at: datetime) -> bool:
+        """Night-room activity from ``rise`` to ``active`` reaches into the
+        ``went_up_within_min`` before ``at``: a bedroom sensor still showing
+        someone (it usually falls after they're downstairs) counts."""
+        return not _after(rise, at) and (
+            _since(at, active) <= self._cfg.went_up_within_min
+        )
+
     def _came_down(self, at: datetime) -> bool:
         """Night-room activity this soon before ``at``: someone came down.
 
-        A night-room burst end counts here too, at its activity time.
+        A night-room burst end counts too, over its span from its last rise
+        to its activity time.
         """
-        return any(
-            last is not None and 0 <= _since(at, last) <= self._cfg.went_up_within_min
-            for last in (self._last_night_at, self._night_burst_at)
-        )
+        last = self._last_night_at
+        if last is not None and 0 <= _since(at, last) <= self._cfg.went_up_within_min:
+            return True
+        burst, rise = self._night_burst_at, self._night_burst_rise
+        return burst is not None and self._overlaps(rise or burst, burst, at)
 
     def _cancel_night(self, ts: datetime) -> None:
         """Someone was still downstairs: no night yet, and none recorded.
@@ -250,11 +262,12 @@ class NightWatch:
         self._door_at, self._door_entity = door_at, door_entity
         self._day_outside_night(ts)
 
-    def _pending_came_down(self, at: datetime) -> None:
-        """Night-room activity at ``at`` may be the pending motion's
-        coming-down, delivered late: if so, the motion starts a trip."""
+    def _pending_came_down(self, at: datetime, rise: datetime) -> None:
+        """Night-room activity from ``rise`` to ``at`` may be the pending
+        motion's coming-down, delivered late: if so, the motion starts a
+        trip."""
         start = self._pending_at
-        if start is None or not 0 <= _since(start, at) <= self._cfg.went_up_within_min:
+        if start is None or not self._overlaps(rise, at, start):
             return
         last, room, up = self._pending_last, self._pending_room, self._pending_up
         self._clear_pending()
@@ -403,7 +416,7 @@ class NightWatch:
         """Drop the night in progress; finalised nights are kept."""
         self._last_day_at = self._went_up_at = self.night_since = None
         self._last_night_at = None
-        self._night_burst_at = None
+        self._night_burst_at = self._night_burst_rise = None
         self._clear_pending()
         self._trip_start = self._trip_last_day = self._trip_up_at = None
         self._trip_room = ""
@@ -493,6 +506,7 @@ class NightWatch:
             "went_up_at": _iso(self._went_up_at),
             "last_night_at": _iso(self._last_night_at),
             "night_burst_at": _iso(self._night_burst_at),
+            "night_burst_rise": _iso(self._night_burst_rise),
             "night_since": _iso(self.night_since),
             "trip_start": _iso(self._trip_start),
             "trip_last_day": _iso(self._trip_last_day),
@@ -522,6 +536,7 @@ class NightWatch:
         n._went_up_at = _dt(data["went_up_at"])
         n._last_night_at = _dt(data.get("last_night_at"))
         n._night_burst_at = _dt(data.get("night_burst_at"))
+        n._night_burst_rise = _dt(data.get("night_burst_rise"))
         n.night_since = _dt(data["night_since"])
         n._trip_start = _dt(data["trip_start"])
         n._trip_last_day = _dt(data["trip_last_day"])

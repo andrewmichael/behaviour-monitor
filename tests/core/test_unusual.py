@@ -1263,3 +1263,42 @@ def test_late_bedroom_burst_end_inside_the_grace_is_the_coming_down():
     assert s.u.night_since == s.t(EVE, 21, 57)
     s.ev(s.t(EVE, 2, 2))
     assert s.u.night_since is None
+
+
+def test_bedroom_still_on_when_someone_comes_down_counts():
+    # The bedroom sensor usually falls after they're downstairs: its burst
+    # (last rise to fall) overlapping the 5 minutes before the kitchen counts.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 0))  # held on
+    s.feed(KITCHEN, s.t(EVE, 1, 59))
+    s.ev(s.t(EVE, 2, 0))
+    s.ev(s.t(EVE, 2, 1))
+    fall = s.t(EVE, 2, 0) + timedelta(seconds=20)
+    s.feed(BED, fall, EventKind.BURST_END, s.t(EVE, 1, 57))  # delivered 02:02
+    first = None
+    now = s.t(EVE, 2, 2)
+    while now <= s.t(EVE, 2, 40):
+        if (now - s.t(EVE, 1, 59)).total_seconds() % 300 == 0:
+            s.feed(KITCHEN, now)
+        if first is None and s.ev(now):
+            first = now
+        now += timedelta(minutes=1)
+    assert s.u.night_since == s.t(EVE, 21, 57)
+    assert first == s.t(EVE, 2, 29)
+
+    # A last rise at 01:40 caps its activity at 01:50: not still on at 01:54.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 0))
+    s.feed(KITCHEN, s.t(EVE, 1, 59))
+    s.ev(s.t(EVE, 2, 0))
+    s.ev(s.t(EVE, 2, 1))
+    s.feed(BED, fall, EventKind.BURST_END, s.t(EVE, 1, 40))
+    assert s.u.night_since == s.t(EVE, 21, 57)
+    s.ev(s.t(EVE, 2, 2))
+    assert s.u.night_since is None
