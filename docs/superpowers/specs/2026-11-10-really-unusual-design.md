@@ -160,6 +160,17 @@ fired today.
   unchanged.
 - **Unavailable today** includes an outage that began the day before and
   ended today (the health tracker's `down_today`).
+- **Controller's ruling (final review):** the same wait applies when data
+  resumes. On the first poll after holiday mode ends, after a poll gap of
+  `POLL_GAP` (30 min) or more, or after a restart from a store whose last
+  poll is that old, the engine tells `Unusual` the time; for that day the
+  due time is at least that time plus `allowance_floor_min`. It is kept in
+  the store so a restart inside the wait keeps it.
+- **Controller's ruling (final review):** `out_spans(day)` returns every
+  closed outing overlapping the day, clipped to it, so an outing from 18:00
+  to 11:00 the next day counts as going out on both days (for the return
+  wait and for `trip_missed`). Old stores' spans, clipped at midnight, still
+  load.
 
 ### 2. `trip_missed`
 
@@ -214,6 +225,14 @@ night trip, not morning.
 These conditions are a sequence of events, not clock times. The learned
 `night_start` and `night_end` only bound the night.
 
+**Controller's ruling (final review):** a night trip needs someone to have
+come down: night-room activity within 5 min (`went_up_within_min`) before
+the trip's first day-room activity. Day-room activity during the night
+without it means someone was still downstairs (one partner up, the other
+reading quietly with the TV off). The night is cancelled: nothing is
+recorded for it, the trip and door state are cleared, and bedtime is looked
+for again from that activity.
+
 **Evidence from the replay** (40 evenings):
 - Requiring the TV off prevented 40 false bedtimes: someone sitting still
   for 30 minutes or more with the back room TV on.
@@ -237,6 +256,12 @@ ends when there has been night-room activity and no day-room activity for
 - **`night_door`:** fires when an outside door opens during the night,
   unless the whereabouts state was OUT at the time. In that case it's someone
   coming home late: a return, not a night event.
+- **Controller's ruling (final review):** a night door is held for
+  `door_hold_min` (15 min). If inside the hold there is day-room activity
+  and then going up (night-room activity within 5 min of it), it was a
+  return to bed: the door is dropped and not learned, so it can't make
+  later doors normal. Otherwise `night_door` opens when the hold ends, with
+  `raised_at` the door time plus the hold.
 
 Both are suppressed when they're normal for this house, which the owner
 agreed: "if someone always lets the dog out at 23:30, that's learned".
@@ -265,7 +290,10 @@ learned.
     night trip.
 - **New number option "Night-time downstairs alert (minutes)":** default 30,
   range 10–120.
-- Config entry version 13 → 14. Migration adds an empty upstairs list.
+- Config entry version 13 → 14. **Controller's ruling (final review):** the
+  migration bumps the version only. A missing upstairs list means none
+  ticked, so an upgraded site on several HA floors still gets the floor
+  suggestion in the options form.
 
 ## State and upgrade
 
@@ -367,7 +395,7 @@ real bedtime was 11 min, and no outside door opened after the real bedtime.
 - How the upgrade rebuilds new history (see State and upgrade).
 - Exact wording of explanations, within the readable-naming style.
 
-## Acceptance results (measured 10 Nov 2026)
+## Acceptance results (measured 10 Nov 2026, re-run after the final review)
 
 Biddulph Road fixture (18 Sep – 9 Nov), upstairs rooms Bathroom, Landing and
 Box room. Counted from `opened` events in the scorecard's replay, with
@@ -377,28 +405,48 @@ gap: 26 days. The truth file's gap now ends at the first data after it
 (29 Oct 07:53, not 04:13). The baseline is main's engine (c8a2dac) run with
 the same, fixed, scripts on the same data.
 
-| Figure | Target | Baseline (main) | This branch |
-|---|---|---|---|
-| Information opened, whole run | | 158 (3.6 a day) | 12 (0.3 a day) |
-| `routine_missed` / `routine_agreement` / `chain_stall` | not sent | 97 / 22 / 32 | 0 / 0 / 0 |
-| `not_yet_today` in the window | about 5 | | 4 |
-| `trip_missed` in the window | 0 | | 0 |
-| `unusual_now` in the window | ≤ 2 | | 1 |
-| Card total in the window | ≤ 1 every 3 days | | 5 (1 every 5.2 days) |
-| Night pushes, whole run | 0 | | 0 |
-| Welfare alerts that would push | unchanged | 2 | 2 (the same two) |
-| Injected falls caught | unchanged | 20 / 20, median 1h25m, worst 3h45m | 20 / 20, median 1h25m, worst 3h45m |
-| Device health opened | unchanged | 167 | 167 |
+Re-run after the final-review rulings (data resuming, outings across
+midnight, the night door hold and the coming-down rule). "Before the final
+fixes" is this branch at 2c0da9d.
 
-All targets are met. The cards in the window:
+| Figure | Target | Baseline (main) | Before the final fixes | This branch |
+|---|---|---|---|---|
+| Information opened, whole run | | 158 (3.6 a day) | 12 (0.3 a day) | 9 (0.2 a day) |
+| `routine_missed` / `routine_agreement` / `chain_stall` | not sent | 97 / 22 / 32 | 0 / 0 / 0 | 0 / 0 / 0 |
+| `not_yet_today` in the window | about 5 | | 4 | 1 |
+| `trip_missed` in the window | 0 | | 0 | 0 |
+| `unusual_now` in the window | ≤ 2 | | 1 | 1 |
+| Card total in the window | ≤ 1 every 3 days | | 5 (1 every 5.2 days) | 2 (1 every 13 days) |
+| Night pushes, whole run | 0 | | 0 | 0 |
+| Welfare alerts that would push | unchanged | 2 | 2 (the same two) | 2 (the same two) |
+| Injected falls caught | unchanged | 20 / 20, median 1h25m, worst 3h45m | 20 / 20, same | 20 / 20, median 1h25m, worst 3h45m |
+| Device health opened | unchanged | 167 | 167 | 167 |
+| Evenings that reached night, whole run | | | 37 | 37 |
+| Nights recorded, whole run | | | 37 | 27 |
+| Evenings with a night cancelled (coming-down rule) | | | | 16 (18 cancels) |
+| Evenings cancelled and never recorded | | | | 10 |
+
+All card and push targets are met. The cards in the window:
 
 - 15 Oct 20:15, back door not used yet today (usually by 15:42). It wasn't
   used at all that day.
-- 29 Oct 07:55, front bedroom, bathroom and back bedroom motion not used yet
-  today. Data resumes at 07:53 after the recorder gap, past their usual
-  times, so these come from missing data, not a missed routine.
 - 5 Nov 22:10, `unusual_now`: back door at 22:06. The hall and landing
   sensors added on 19 Oct stayed silent.
+
+The three 29 Oct 07:55 cards from missing data are gone: data resumes at
+07:53, so nothing is due before 08:53, and by then the sensors had fired.
+
+**The coming-down rule on real sensors.** 17 of the 18 cancels were the
+back room TV plug (`sensor.smart_plug_power`, a ticked sitting appliance)
+drawing 16–18 W for about two minutes between 00:56 and 03:26. Nobody was
+downstairs; it looks like a standby wake. The plug's turn-on is day-room
+activity with no one coming down, so it cancels the night. On 10 evenings
+nobody then "went up" within 5 minutes of it, so no night was recorded and
+the rest of that night had no night pushes. The other cancel was front room
+motion at 23:25 on 23 Sep, 10 minutes after bedroom motion. In a check run
+(not shipped) where an appliance turning on can't cancel a night, there
+were 2 cancels and 36 nights recorded. Night pushes stayed at 0 and nothing
+else changed. This is left for a ruling.
 
 The first run, before the fixes, gave 14 cards (12 `not_yet_today`, 1
 `trip_missed`, 1 `unusual_now`). Four causes were found:

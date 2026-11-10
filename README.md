@@ -239,7 +239,7 @@ pushed.
 
 | Kind | Shown when | Clears when |
 |---|---|---|
-| `not_yet_today` | An entity used on at least 90% of days hasn't fired by its usual time (the 90th percentile of its first use after the morning starts) plus an allowance of at least an hour. Held while the house is out; after an outing it waits at least an hour from the return | It fires, or the day ends |
+| `not_yet_today` | An entity used on at least 90% of days hasn't fired by its usual time (the 90th percentile of its first use after the morning starts) plus an allowance of at least an hour. Held while the house is out; after an outing, including one overnight, it waits at least an hour from the return, and after holiday mode or a gap in the data at least an hour from when data resumes | It fires, or the day ends |
 | `trip_missed` | A usual outing for this weekday (out at that time on at least 75% of at least 4 learned same weekdays) passed with nobody going out | The day ends |
 | `unusual_now` | An entity fires in an hour where it never fired on any learned day, an hour either side included | 2 hours later, or the day ends |
 
@@ -249,14 +249,17 @@ Two are welfare alerts with source `night`, medium severity, in the
 | Kind | Fires when | Clears when |
 |---|---|---|
 | `night_downstairs` | A night trip has lasted the night-time downstairs alert (default 30 minutes) | Only night rooms are active again, or morning starts |
-| `night_door` | An outside door opens during the night, unless the house was out (that's someone coming home) | Night-room activity follows the door, or morning starts |
+| `night_door` | An outside door opened during the night 15 minutes ago, unless the house was out (that's someone coming home), or someone went back to bed within those 15 minutes | Night-room activity follows, or morning starts |
 
 Night starts when someone goes from a day room to a night room (the bedrooms
 and upstairs rooms) within 5 minutes, the day rooms then stay quiet for 30
 minutes and no sitting appliance in a day room is on. It can't start before
 the learned night start. It ends at the first day-room activity after the
-learned waking time. A night trip is day-room activity during the night; it
-ends after 5 minutes of night rooms only. Both pushes need 14 learned nights,
+learned waking time. A night trip is day-room activity during the night
+that follows night-room activity within 5 minutes (someone came down); it
+ends after 5 minutes of night rooms only. Day-room activity with no one
+coming down means someone was still up: that night is dropped and night
+starts again when they go up. Both pushes need 14 learned nights,
 and each stays quiet when it is normal for the house: a long trip on more
 than 10% of nights, or a door opening within an hour of that time on more
 than 10% of nights. Holiday mode stops both and snooze holds them.
@@ -345,11 +348,14 @@ panic fires `cleared` with `cleared_by: "user"`.
   must change. They are replaced by the five kinds in
   [Unusual days and nights](#unusual-days-and-nights).
 - Learning is kept. On the first start the new history (first use each day,
-  outings, nights) is rebuilt from recorder history. Each new kind stays
-  quiet until it has 14 days of its own history, and the night pushes start
-  after 14 learned nights.
-- Open the integration's options and, on the second step, tick the upstairs
-  rooms. Until then night rooms are the bedrooms only.
+  outings, nights) is rebuilt from recorder history. `unusual_now` uses the
+  existing routine learning, so it works straight after the upgrade.
+  `not_yet_today` and `trip_missed` need 14 days of their own history, and
+  the night pushes need 14 learned nights.
+- Open the integration's options and, on the second step, check the upstairs
+  rooms. Rooms on the upper floors are suggested when the areas have floors
+  in Home Assistant. Until some are ticked, the night rooms are the bedrooms
+  only.
 - The config entry migrates to version 14.
 
 ### Upgrading to v8
