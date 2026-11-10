@@ -733,3 +733,46 @@ def test_restored_battery_alert_closes_when_the_threshold_was_lowered():
     )
     acts = _battery_actions(e2.poll(MON + timedelta(minutes=1)))
     assert "repair_delete" in {a.action for a in acts}
+
+
+def test_full_reset_keeps_an_open_panic_until_it_is_cleared():
+    """Resetting learning must not drop a panic without a cleared event, or the
+    blueprint keeps repeating it with nothing left that can stop it."""
+    e = _engine()
+    _train(e, days=5)
+    now = MON + timedelta(days=5)
+    e.handle_state("binary_sensor.panic", "off", "on", now)
+
+    e.reset()
+
+    assert [a.kind for a in e._router.open_alerts] == ["panic"]
+    assert not [a for a in e.poll(now + timedelta(minutes=1)) if a.event == "cleared"]
+    cleared = e.clear_panic(None, now + timedelta(minutes=2))
+    assert [(a.event, a.cleared_by) for a in cleared] == [("cleared", "user")]
+
+
+def test_full_reset_clears_learned_alerts_with_cleared_events():
+    """Alerts that depended on what was learned close properly, not silently."""
+    e = _engine()
+    _train(e, days=15)
+    now = MON + timedelta(days=15, hours=14)
+    opened = [a for a in e.poll(now) if a.event == "opened"]
+    assert opened, "training should leave a welfare alert open"
+
+    e.reset()
+
+    cleared = {
+        a.alert.key for a in e.poll(now + timedelta(minutes=1)) if a.event == "cleared"
+    }
+    assert {a.alert.key for a in opened} <= cleared
+
+
+def test_full_reset_keeps_a_low_battery_alert():
+    e = _engine()
+    e.record_battery("binary_sensor.panic", 12.0, MON)
+    assert _battery_actions(e.poll(MON))
+
+    e.reset()
+
+    assert not _battery_actions(e.poll(MON + timedelta(minutes=1)))
+    assert [a.kind for a in e._router.open_alerts] == ["battery_low"]

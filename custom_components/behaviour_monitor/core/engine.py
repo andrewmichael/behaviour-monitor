@@ -195,9 +195,16 @@ class Engine:
             # user set deliberately. Resetting what was learned must not
             # silently take the site off holiday or cancel a snooze.
             holiday, snooze_until = self._holiday, self._snooze_until
+            # Open alerts are not learning. Dropping them would lose an open
+            # panic with no cleared event, and the blueprint would repeat it
+            # with nothing left that can stop it. Alerts that depended on the
+            # learning close at the next poll with a cleared event.
+            router = self._router
             self.__init__(self._cfg, specs)  # type: ignore[misc]
             self._holiday = holiday
             self._snooze_until = snooze_until
+            self._router = router
+            self._resume_battery_alerts()
             return
         s = self._specs.get(entity_id)
         if s is None:
@@ -592,17 +599,20 @@ class Engine:
             e._drift.remove_prefix(f"open:{eid}")
             e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
-        # Battery levels are not stored, and the battery sensor may not have
-        # a reading yet after a restart. An open alert carries its own last
-        # level, so the restart neither clears it nor raises a new one.
-        for a in e._router.open_alerts:
+        e._resume_battery_alerts()
+        return e
+
+    def _resume_battery_alerts(self) -> None:
+        """Battery levels are not stored, and the battery sensor may not have
+        a reading yet after a restart or a reset. An open alert carries its
+        own last level, so neither clears it nor raises a new one."""
+        for a in self._router.open_alerts:
             if a.cls is AlertClass.HEALTH and a.kind == "battery_low":
                 try:
                     level = float(a.details["level"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                e._health.resume_battery_alert(a.source, level)
-        return e
+                self._health.resume_battery_alert(a.source, level)
 
 
 _NOUNS: dict[Category, str] = {
