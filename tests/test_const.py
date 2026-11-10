@@ -35,11 +35,12 @@ def test_option_defaults_match_spec():
         "timing_promote_days": 7,
         "drift_sensitivity": "medium",
         "low_battery_pct": 20,
+        "night_trip_min": 30,
     }
 
 
 def test_versions_and_services():
-    assert const.CONFIG_VERSION == 13 and const.STORAGE_VERSION == 11
+    assert const.CONFIG_VERSION == 14 and const.STORAGE_VERSION == 11
     # The release workflow only writes manifest.json, so the version shown as
     # the device firmware must come from there or it goes stale.
     manifest = Path(const.__file__).with_name("manifest.json")

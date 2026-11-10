@@ -16,11 +16,12 @@
       },
       "whereabouts": {
         "title": "Doors, bedrooms and TVs",
-        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.",
+        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.\n\nUpstairs rooms: Rooms people go up to at bedtime. A trip from these to the rest of the house during the night is a night trip.",
         "data": {
           "outside_doors": "Outside doors",
           "bedrooms": "Bedrooms",
-          "sitting_appliances": "Sitting appliances"
+          "sitting_appliances": "Sitting appliances",
+          "upstairs_rooms": "Upstairs rooms"
         }
       }
     },
@@ -55,16 +56,18 @@
           "attention_min_severity": "Minimum severity for needs attention",
           "chain_window_s": "Chain step window (seconds)",
           "timing_promote_days": "Days of slower routine before a welfare alert",
-          "drift_sensitivity": "Drift sensitivity"
+          "drift_sensitivity": "Drift sensitivity",
+          "night_trip_min": "Night-time downstairs alert (minutes)"
         }
       },
       "whereabouts": {
         "title": "Doors, bedrooms and TVs",
-        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.",
+        "description": "Tick what applies, so a fall at home alerts quickly and an outing doesn't.\n\nOutside doors: Doors that lead outside. Don't pick fridge, cupboard or internal doors: they would hold back fall alerts.\n\nBedrooms: Rooms people sleep in. Stillness here at night is normal.\n\nSitting appliances: Plugs, like a TV, that mean someone is sitting nearby when on.\n\nUpstairs rooms: Rooms people go up to at bedtime. A trip from these to the rest of the house during the night is a night trip.",
         "data": {
           "outside_doors": "Outside doors",
           "bedrooms": "Bedrooms",
-          "sitting_appliances": "Sitting appliances"
+          "sitting_appliances": "Sitting appliances",
+          "upstairs_rooms": "Upstairs rooms"
         }
       }
     },

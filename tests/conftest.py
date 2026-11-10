@@ -226,6 +226,19 @@ def _setup_ha_mocks():
         setattr(mock_ha_helpers, mod_name, mod)
         sys.modules[f"homeassistant.helpers.{mod_name}"] = mod
 
+    class _FloorReg:
+        def __init__(self):
+            self.floors = {}
+
+        def async_get_floor(self, floor_id):
+            return self.floors.get(floor_id)
+
+    _floors = _FloorReg()
+    floor_mod = MagicMock()
+    floor_mod.async_get = lambda hass, _r=_floors: _r
+    mock_ha_helpers.floor_registry = floor_mod
+    sys.modules["homeassistant.helpers.floor_registry"] = floor_mod
+
     def _entries_for_device(registry, device_id, include_disabled_entities=False):
         """Registry entries on a device, each with its entity_id filled in."""
         return [

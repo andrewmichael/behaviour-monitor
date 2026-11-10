@@ -30,6 +30,7 @@ from .const import (
     CONF_DRIFT_SENSITIVITY,
     CONF_HEALTH_GRACE_S,
     CONF_LOW_BATTERY_PCT,
+    CONF_NIGHT_TRIP_MIN,
     CONF_LEARNING_DAYS,
     CONF_ATTENTION_MIN_SEVERITY,
     CONF_MOTION_DEBOUNCE_S,
@@ -39,6 +40,7 @@ from .const import (
     CONF_SITE_NAME,
     CONF_SITTING_APPLIANCES,
     CONF_TIMING_PROMOTE_DAYS,
+    CONF_UPSTAIRS_ROOMS,
     CONF_WINDOW_DAYS,
     CONFIG_VERSION,
     DOMAIN,
@@ -46,9 +48,19 @@ from .const import (
     SENSITIVITY_OPTIONS,
     SEVERITY_OPTIONS,
 )
-from .rooms import bedroom_suggestions, display_room, resolve_room
+from .rooms import (
+    bedroom_suggestions,
+    display_room,
+    resolve_room,
+    upstairs_suggestions,
+)
 
-WHEREABOUTS_KEYS = (CONF_OUTSIDE_DOORS, CONF_BEDROOMS, CONF_SITTING_APPLIANCES)
+WHEREABOUTS_KEYS = (
+    CONF_OUTSIDE_DOORS,
+    CONF_BEDROOMS,
+    CONF_SITTING_APPLIANCES,
+    CONF_UPSTAIRS_ROOMS,
+)
 
 _CATEGORY_DOMAINS: dict[str, list[str] | None] = {
     "motion": ["binary_sensor"],
@@ -165,6 +177,9 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
                     options=SENSITIVITY_OPTIONS, mode=SelectSelectorMode.DROPDOWN
                 )
             ),
+            vol.Required(CONF_NIGHT_TRIP_MIN, default=d(CONF_NIGHT_TRIP_MIN)): _number(
+                CONF_NIGHT_TRIP_MIN, 10, 120, 5, "min"
+            ),
         }
     )
 
@@ -177,7 +192,7 @@ def _entity_label(hass: Any, entity_id: str, site: str) -> str:
 
 
 def _tick_list(options: list[dict[str, str]]) -> SelectSelector:
-    """All three whereabouts lists are tick boxes of the same style."""
+    """All the whereabouts lists are tick boxes of the same style."""
     return SelectSelector(
         SelectSelectorConfig(
             options=sorted(options, key=lambda o: (o["label"].lower(), o["value"])),
@@ -190,8 +205,9 @@ def _tick_list(options: list[dict[str, str]]) -> SelectSelector:
 def _whereabouts_schema(
     hass: Any, data: dict[str, Any], current: dict[str, Any]
 ) -> vol.Schema:
-    """Tick lists: outside doors from the site's contacts, bedrooms from the
-    rooms its sensors are in, and sitting appliances from its plugs.
+    """Tick lists: outside doors from the site's contacts, bedrooms and upstairs
+    rooms from the rooms its sensors are in, and sitting appliances from its
+    plugs.
 
     Current values are suggested rather than defaults: a default would refill
     a list the user cleared, and a cleared list must save as []. A saved
@@ -207,6 +223,12 @@ def _whereabouts_schema(
         bedroom_suggestions(rooms)
         if saved is None
         else [room for room in saved if room in rooms]
+    )
+    saved_up = current.get(CONF_UPSTAIRS_ROOMS)
+    upstairs = (
+        upstairs_suggestions(hass, [eid for eid, _ in entity_specs_from_data(data)])
+        if saved_up is None
+        else [room for room in saved_up if room in rooms]
     )
     doors = [e for e in current.get(CONF_OUTSIDE_DOORS) or [] if e in contacts]
     sitting = [e for e in current.get(CONF_SITTING_APPLIANCES) or [] if e in plugs]
@@ -226,6 +248,11 @@ def _whereabouts_schema(
                 CONF_SITTING_APPLIANCES, description={"suggested_value": sitting}
             ): _tick_list(
                 [{"value": e, "label": _entity_label(hass, e, site)} for e in plugs]
+            ),
+            vol.Optional(
+                CONF_UPSTAIRS_ROOMS, description={"suggested_value": upstairs}
+            ): _tick_list(
+                [{"value": r, "label": display_room(site, r)} for r in rooms]
             ),
         }
     )

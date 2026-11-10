@@ -26,7 +26,11 @@ from custom_components.behaviour_monitor.const import (
 )
 
 
-EMPTY_LISTS = {"outside_doors": [], "sitting_appliances": []}
+EMPTY_LISTS = {
+    "outside_doors": [],
+    "sitting_appliances": [],
+    "upstairs_rooms": [],
+}
 
 
 def _legacy_entry():
@@ -50,7 +54,7 @@ async def test_migrate_v10_moves_entities_aside_and_raises_issue(mock_hass):
     entry = _legacy_entry()
     assert await async_migrate_entry(mock_hass, entry) is True
     kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kwargs["version"] == 13
+    assert kwargs["version"] == 14
     assert "notify_service" not in kwargs["data"]
     assert kwargs["data"]["legacy_unassigned"] == ["binary_sensor.a", "sensor.b"]
     assert kwargs["data"][CONF_SITE_NAME] == "Behaviour Monitor"
@@ -62,7 +66,7 @@ async def test_migrate_v10_moves_entities_aside_and_raises_issue(mock_hass):
 
 
 @pytest.mark.asyncio
-async def test_migrate_v10_with_notify_service_lands_on_v13_with_notice(mock_hass):
+async def test_migrate_v10_with_notify_service_lands_on_v14_with_notice(mock_hass):
     from homeassistant.helpers import issue_registry as ir
 
     ir.async_create_issue.reset_mock()
@@ -70,7 +74,7 @@ async def test_migrate_v10_with_notify_service_lands_on_v13_with_notice(mock_has
     entry.data = {**entry.data, "notify_service": "notify.phone"}
     assert await async_migrate_entry(mock_hass, entry) is True
     kwargs = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kwargs["version"] == 13
+    assert kwargs["version"] == 14
     assert "notify_service" not in kwargs["data"]
     assert kwargs["options"] == {**OPTION_DEFAULTS, **EMPTY_LISTS}
     ids = [c.args[2] for c in ir.async_create_issue.call_args_list]
@@ -78,7 +82,7 @@ async def test_migrate_v10_with_notify_service_lands_on_v13_with_notice(mock_has
 
 
 @pytest.mark.asyncio
-async def test_migrate_v11_to_v13_moves_options_and_raises_notice(
+async def test_migrate_v11_to_v14_moves_options_and_raises_notice(
     mock_hass, mock_config_entry
 ):
     from homeassistant.helpers import issue_registry as ir
@@ -96,7 +100,7 @@ async def test_migrate_v11_to_v13_moves_options_and_raises_notice(
     }
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert "notify_service" not in kw["data"] and kw["version"] == 13
+    assert "notify_service" not in kw["data"] and kw["version"] == 14
     assert kw["options"] == {
         "attention_min_severity": "high",
         "learning_days": 10,
@@ -124,7 +128,7 @@ async def test_migrate_v11_without_notify_service_raises_no_notice(
     mock_config_entry.options = {"learning_days": 10}
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kw["version"] == 13
+    assert kw["version"] == 14
     assert kw["options"] == {
         "attention_min_severity": "medium",
         "learning_days": 10,
@@ -149,7 +153,7 @@ async def test_migrate_v12_to_v13_adds_empty_lists_and_drops_house_low_ratio(
     data_before = dict(mock_config_entry.data)
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
-    assert kw["version"] == 13
+    assert kw["version"] == 14
     assert kw["data"] == data_before
     assert kw["options"] == {
         "learning_days": 10,
@@ -162,8 +166,27 @@ async def test_migrate_v12_to_v13_adds_empty_lists_and_drops_house_low_ratio(
 
 
 @pytest.mark.asyncio
-async def test_migrate_v13_is_noop(mock_hass, mock_config_entry):
+async def test_migrate_13_to_14_adds_empty_upstairs(mock_hass, mock_config_entry):
     mock_config_entry.version = 13
+    mock_config_entry.options = {
+        "learning_days": 10,
+        "outside_doors": ["binary_sensor.d"],
+        "sitting_appliances": [],
+    }
+    assert await async_migrate_entry(mock_hass, mock_config_entry) is True
+    kw = mock_hass.config_entries.async_update_entry.call_args.kwargs
+    assert kw["version"] == 14
+    assert kw["options"] == {
+        "learning_days": 10,
+        "outside_doors": ["binary_sensor.d"],
+        "sitting_appliances": [],
+        "upstairs_rooms": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_migrate_v14_is_noop(mock_hass, mock_config_entry):
+    mock_config_entry.version = 14
     assert await async_migrate_entry(mock_hass, mock_config_entry) is True
     mock_hass.config_entries.async_update_entry.assert_not_called()
 
