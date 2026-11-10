@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.1.0] - 2026-11-10
+
+### Added
+- low battery alerts for monitored sensors
+
+### Changed
+- Documentation: scorecard restart storms in CSV exports are an export artefact
+
+### Fixed
+- reset learning keeps open alerts, so an open panic is no longer dropped
+- a low battery alert clears when its battery sensor goes away
+
 ## [8.0.1] - 2026-11-09
 
 ### Changed
