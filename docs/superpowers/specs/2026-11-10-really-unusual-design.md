@@ -152,6 +152,14 @@ fired today.
   - The thresholds are unchanged: one stall, or two or more notes, escalate
     an open whereabouts alert.
 
+- **Controller's ruling (after the first acceptance run):** `not_yet_today`
+  is held while the house is out (`where.is_out(now)`). On a day with an
+  outing, its due time is `max(T + A, R + 60 min)`, where `R` is the end of
+  the latest closed outing today (`where.out_spans(today)`) that ended
+  before now and 60 min is `allowance_floor_min`. `went_out_today` is
+  unchanged.
+- **Unavailable today** includes an outage that began the day before and
+  ended today (the health tracker's `down_today`).
 
 ### 2. `trip_missed`
 
@@ -164,6 +172,12 @@ least 4 such days (*my call*; the replay used 3, and that produced one false
 
 Out-of-house time comes from `whereabouts`, so a house with no outside doors
 ticked has no OUT intervals and never raises this alert.
+
+**Controller's ruling (after the first acceptance run):** a learned window
+whose core, the window with the slack taken back off both sides, is shorter
+than one 15-minute bin is discarded. It comes from outings that never
+overlapped in time, such as the "14:15 to 14:15" Friday window at Biddulph
+Road.
 
 ### 3. `unusual_now`
 
@@ -355,50 +369,46 @@ real bedtime was 11 min, and no outside door opened after the real bedtime.
 
 ## Acceptance results (measured 10 Nov 2026)
 
-Biddulph Road fixture (18 Sep – 9 Nov), the same truth file, upstairs rooms
-Bathroom, Landing and Box room. Counted from `opened` events in the
-scorecard's replay (holiday mode over the truth file's gaps). The evaluation
-window is 3 Oct – 8 Nov without the 19–29 Oct recorder gap: 26 days. The
-baseline is the scorecard run from main's code (c8a2dac) on the same data.
+Biddulph Road fixture (18 Sep – 9 Nov), upstairs rooms Bathroom, Landing and
+Box room. Counted from `opened` events in the scorecard's replay, with
+holiday mode over the truth file's gaps and polls on Europe/London local
+time. The evaluation window is 3 Oct – 8 Nov without the 19–29 Oct recorder
+gap: 26 days. The truth file's gap now ends at the first data after it
+(29 Oct 07:53, not 04:13). The baseline is main's engine (c8a2dac) run with
+the same, fixed, scripts on the same data.
 
 | Figure | Target | Baseline (main) | This branch |
 |---|---|---|---|
-| Information opened, whole run | | 561 (12.8 a day) | 22 (0.5 a day) |
-| `routine_missed` / `routine_agreement` / `chain_stall` | not sent | 411 / 112 / 31 | 0 / 0 / 0 |
-| `not_yet_today` in the window | about 5 | | 12 |
-| `trip_missed` in the window | 0 | | 1 |
+| Information opened, whole run | | 158 (3.6 a day) | 12 (0.3 a day) |
+| `routine_missed` / `routine_agreement` / `chain_stall` | not sent | 97 / 22 / 32 | 0 / 0 / 0 |
+| `not_yet_today` in the window | about 5 | | 4 |
+| `trip_missed` in the window | 0 | | 0 |
 | `unusual_now` in the window | ≤ 2 | | 1 |
-| Card total in the window | ≤ 1 every 3 days (≤ 8) | | 14 (1 every 1.9 days) |
+| Card total in the window | ≤ 1 every 3 days | | 5 (1 every 5.2 days) |
 | Night pushes, whole run | 0 | | 0 |
-| Welfare alerts that would push | unchanged | 3 | 3 (the same three) |
+| Welfare alerts that would push | unchanged | 2 | 2 (the same two) |
 | Injected falls caught | unchanged | 20 / 20, median 1h25m, worst 3h45m | 20 / 20, median 1h25m, worst 3h45m |
-| Device health opened | unchanged | 168 | 168 |
+| Device health opened | unchanged | 167 | 167 |
 
-**Met:** no night pushes; `unusual_now` 1 (the back door at 22:06 on 5 Nov,
-not the new hall or landing sensors); welfare and falls unchanged; the old
-kinds no longer sent.
+All targets are met. The cards in the window:
 
-**Missed:** the card total, `not_yet_today` and `trip_missed`. Not tuned;
-the causes as found:
+- 15 Oct 20:15, back door not used yet today (usually by 15:42). It wasn't
+  used at all that day.
+- 29 Oct 07:55, front bedroom, bathroom and back bedroom motion not used yet
+  today. Data resumes at 07:53 after the recorder gap, past their usual
+  times, so these come from missing data, not a missed routine.
+- 5 Nov 22:10, `unusual_now`: back door at 22:06. The hall and landing
+  sensors added on 19 Oct stayed silent.
 
-- 4 of the 12 `not_yet_today` are on 29 Oct, the first morning after the
-  recorder gap. The truth file ends the gap at 04:13, but the fixture has no
-  events until 07:53 that day, so the bedroom, bathroom and Teasmade cards are
-  missing data, not missed routines.
-- 2 are the kettle on the Friday morning outings (9 and 16 Oct, out 09:46 to
-  11:22 and 09:50 to 11:37). They are shown with `went_out_today` true, as
-  the design allows.
-- 4 fall after the clocks went back (31 Oct, 3, 4, 7 Nov), each at its
-  "usual by" time with no allowance. The scorecard's poll clock keeps the
-  first event's UTC offset, so after 25 Oct every poll reads an hour ahead.
-  Replayed with poll times in local time, as Home Assistant gives them, those
-  4 do not fire: `not_yet_today` 8 (4 of them on 29 Oct), card total 10 (1
-  every 2.6 days), still above target. `replay.py` has the same offset.
-- 1 is the side door on 12 Oct at 14:20 although it opened for 10 s at 09:04;
-  not explained yet.
-- The `trip_missed` is a learned "14:15 to 14:15" Friday window, raised at
-  15:30 on 16 Oct. The Fridays before had outside doors in use in the
-  afternoon (25 Sep from 13:03, 2 Oct from 13:51, 9 Oct from 15:00); 16 Oct
-  had the morning outing and no outside door between 13:00 and 16:30. The
-  truth file records only the morning outings, so whether there was a usual
-  afternoon trip is not confirmed.
+The first run, before the fixes, gave 14 cards (12 `not_yet_today`, 1
+`trip_missed`, 1 `unusual_now`). Four causes were found:
+
+- The replay's poll clock kept the first event's UTC offset, so after the
+  clocks went back every poll read an hour ahead.
+- The truth file's gap ended before the data resumed.
+- Cards fired during and just after the Friday outings.
+- There was a zero-length Friday trip window.
+
+A side-door card on 12 Oct was the door's first opening after an overnight
+"unavailable" in the CSV export. That opening is rightly not counted as
+activity, and the door now counts as down that day.

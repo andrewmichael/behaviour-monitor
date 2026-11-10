@@ -231,14 +231,15 @@ appears, the device health repair for that sensor is the likely cause.
 Five kinds report something out of the ordinary for this house. Each needs 14
 days of the entity's, or the house's, own history inside the 28-day window,
 so a sensor added last week stays quiet. Sensors unavailable at any point
-today are skipped for the card kinds.
+today, including an outage that began the day before, are skipped for the
+card kinds.
 
 Three are cards: statistical, low severity, in the `information` group, never
 pushed.
 
 | Kind | Shown when | Clears when |
 |---|---|---|
-| `not_yet_today` | An entity used on at least 90% of days hasn't fired by its usual time (the 90th percentile of its first use after the morning starts) plus an allowance of at least an hour | It fires, or the day ends |
+| `not_yet_today` | An entity used on at least 90% of days hasn't fired by its usual time (the 90th percentile of its first use after the morning starts) plus an allowance of at least an hour. Held while the house is out; after an outing it waits at least an hour from the return | It fires, or the day ends |
 | `trip_missed` | A usual outing for this weekday (out at that time on at least 75% of at least 4 learned same weekdays) passed with nobody going out | The day ends |
 | `unusual_now` | An entity fires in an hour where it never fired on any learned day, an hour either side included | 2 hours later, or the day ends |
 
