@@ -188,3 +188,80 @@ def test_alert_times_are_reported_in_local_time(tmp_path):
     report = sc.run(FIX, fall_times=["10:00"], fall_days=1, tz="UTC")
     for u in report["welfare"]["unexplained"]:
         assert u["t"].endswith("+00:00")
+
+
+class _PollRecorder:
+    holiday = False
+
+    def __init__(self):
+        self.polls = []
+
+    def poll(self, now):
+        self.polls.append(now)
+        return []
+
+    def handle_state(self, eid, old, new, ts):
+        return []
+
+    def to_dict(self):
+        return {}
+
+
+def _clock_change_events():
+    # The clocks go back at 02:00 BST on 25 Oct 2026; the fixture's offsets
+    # change from +01:00 to +00:00 there.
+    bst = timezone(timedelta(hours=1))
+    return [
+        (datetime(2026, 10, 24, 9, 0, tzinfo=bst), "binary_sensor.x", "on"),
+        (datetime(2026, 10, 25, 9, 0, tzinfo=UTC), "binary_sensor.x", "off"),
+    ]
+
+
+def test_scorecard_polls_on_local_wall_time_across_a_clock_change():
+    rec = _PollRecorder()
+    sc.replay(_clock_change_events(), rec, [], [])
+    after = [p for p in rec.polls if p.date().isoformat() == "2026-10-25"]
+    nine = [p for p in after if p.hour == 9 and p.minute == 0]
+    assert len(nine) == 1
+    assert nine[0].utcoffset() == timedelta(0)  # GMT: 09:00 local is 09:00 UTC
+    first = rec.polls[0]
+    assert (first.hour, first.utcoffset()) == (9, timedelta(hours=1))
+
+
+def test_replay_polls_on_local_wall_time_across_a_clock_change(tmp_path, monkeypatch):
+    import json
+
+    import replay as rp
+
+    fix = tmp_path / "site.jsonl"
+    fix.write_text(
+        "\n".join(
+            json.dumps({"t": t.isoformat(), "e": e, "s": s})
+            for t, e, s in _clock_change_events()
+        )
+    )
+    (tmp_path / "site.sidecar.json").write_text(
+        json.dumps(
+            {
+                "entities": [
+                    {
+                        "entity_id": "binary_sensor.x",
+                        "category": "motion",
+                        "room": "Kitchen",
+                    }
+                ]
+            }
+        )
+    )
+    polls = []
+    real = rp.Engine.poll
+
+    def poll(self, now):
+        polls.append(now)
+        return real(self, now)
+
+    monkeypatch.setattr(rp.Engine, "poll", poll)
+    rp.run_fixture(fix)
+    late = [p for p in polls if p.date().isoformat() == "2026-10-25" and p.hour == 9]
+    assert late and all(p.utcoffset() == timedelta(0) for p in late)
+    assert polls[0].hour == 9 and polls[0].utcoffset() == timedelta(hours=1)
