@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.1.1] - 2026-11-10
+
+### Fixed
+- the device firmware version follows the release instead of staying at 5.0.0
+
 ## [8.1.0] - 2026-11-10
 
 ### Added
