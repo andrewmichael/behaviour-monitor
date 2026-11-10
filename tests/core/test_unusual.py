@@ -727,6 +727,20 @@ def test_night_door_while_home_pushes_and_while_out_does_not():
     s.feed(BED, s.t(EVE, 2, 35))
     assert s.ev(s.t(EVE, 2, 36)) == []
 
+    # The door, then straight back to bed inside the hold: no push, and the
+    # door isn't learned.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 2, 11))
+    s.feed(KITCHEN, s.t(EVE, 2, 12))
+    s.feed(FRONT, s.t(EVE, 2, 14))
+    s.feed(BED, s.t(EVE, 2, 20))
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 14), s.t(EVE, 3, 30)))
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["doors"] == []
+
     # The other occupant goes out after the first is in bed and comes home
     # late: the house was OUT when the door opened.
     s = NightSite()
@@ -1193,3 +1207,55 @@ def test_door_then_back_to_bed_inside_the_hold_is_dropped_unlearned():
     assert s.ev(s.t(EVE, 1, 20)) == []
     s.morning(EVE)
     assert s.nights()[iso_day(EVE)]["doors"] == [1]
+
+
+def test_door_then_downstairs_without_coming_down_is_silent():
+    # Owner's decision: someone coming in and moving about downstairs with
+    # nobody having come down is someone coming home. The night is cancelled
+    # and the door dropped, so nothing pushes.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(FRONT, s.t(EVE, 2, 0))
+    seen = polls(s, s.t(EVE, 2, 0), s.t(EVE, 2, 1))
+    for m in range(2, 50, 5):
+        s.feed(KITCHEN, s.t(EVE, 2, m))
+        seen += polls(s, s.t(EVE, 2, m), s.t(EVE, 2, m + 4))
+    assert s.u.night_since is None
+    assert all(p == [] for p in seen)
+
+
+def test_appliance_blip_at_night_neither_cancels_nor_starts_a_trip():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    since = s.u.night_since
+    s.feed(TV, s.t(EVE, 1, 0))  # a standby wake, nobody downstairs
+    s.feed(TV, s.t(EVE, 1, 2), EventKind.APPLIANCE_OFF)
+    assert all(p == [] for p in polls(s, s.t(EVE, 1, 0), s.t(EVE, 3, 0)))
+    assert s.u.night_since == since
+    assert s.u.to_dict()["night"]["trip_start"] is None
+    s.feed(BED, s.t(EVE, 3, 30))
+    for m in range(0, 41, 5):
+        s.feed(KITCHEN, s.t(EVE, 3, 31) + timedelta(minutes=m))
+    [a] = s.ev(s.t(EVE, 4, 11))
+    assert a.kind == "night_downstairs" and a.details["since"] == "03:31"
+    assert s.u.night_since == since
+
+
+def test_bedroom_burst_end_counts_as_coming_down():
+    for upstairs in (UPSTAIRS, frozenset()):  # two floors, and a bungalow
+        s = NightSite(upstairs=upstairs)
+        _night_house(s)
+        s.evening(EVE)
+        s.ev(s.t(EVE, 22, 40))
+        s.feed(BED, s.t(EVE, 1, 0))  # held on from 01:00
+        s.feed(BED, s.t(EVE, 1, 58), EventKind.BURST_END, s.t(EVE, 1, 55))
+        for m in range(0, 41, 5):
+            s.feed(KITCHEN, s.t(EVE, 1, 59) + timedelta(minutes=m))
+        assert s.u.night_since == s.t(EVE, 21, 57)
+        [a] = s.ev(s.t(EVE, 2, 40))
+        assert a.kind == "night_downstairs" and a.details["since"] == "01:59"
+        assert a.raised_at == s.t(EVE, 2, 29)
