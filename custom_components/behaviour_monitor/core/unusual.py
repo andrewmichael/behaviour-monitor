@@ -71,8 +71,10 @@ class UnusualConfig:
     # share of learned nights.
     night_normal_fraction: float = 0.10
     night_trip_min: float = 30.0
-    # A night door waits this long for someone coming back to bed.
-    door_hold_min: float = 15.0
+    # Downstairs motion with no coming-down waits this long for a late
+    # night-room burst end (the normaliser sends it after its debounce)
+    # before the night is cancelled.
+    came_down_grace_min: float = 3.0
     upstairs: frozenset[str] = frozenset()
 
 
