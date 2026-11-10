@@ -212,6 +212,24 @@ def test_not_yet_today_after_return_waits_allowance():
     assert a.raised_at == mins(FRI, 12 * 60 + 22)
 
 
+def test_out_overnight_counts_as_going_out_on_the_day_back():
+    # Out Thursday 18:00, back Friday 11:00: no kettle card before 12:00,
+    # and the card says she went out today.
+    thu = FRI - timedelta(days=1)
+    s = Site(doors=frozenset({DOOR}))
+    train_kettle(s, STEADY, today=thu)
+    s.feed(HALL, at(thu, 6, 30))
+    s.feed(KETTLE, at(thu, 7))
+    s.feed(DOOR, at(thu, 18))
+    s.end(thu)
+    s.feed(DOOR, at(FRI, 11))
+    s.feed(HALL, at(FRI, 11, 1))
+    assert s.w.out_spans(FRI) == [(0, 660)]
+    assert kettle(s.ev(at(FRI, 11, 59))) == []
+    [a] = kettle(s.ev(at(FRI, 12)))
+    assert a.details["went_out_today"] is True
+
+
 # -------------------------------------------------------------- trip_missed
 
 
@@ -257,6 +275,19 @@ def test_trip_missed_learns_weekday_window_and_fires_after_slack():
     train_house(s, 28, FRI, friday_out=True)
     s.feed(DOOR, at(FRI, 13))
     assert kinds(s.ev(at(FRI, 14, 30)), "trip_missed") == []
+
+
+def test_out_overnight_covers_a_morning_outing_window():
+    s = Site(doors=frozenset({DOOR}))
+    thu = FRI - timedelta(days=1)
+    train_house(s, 27, thu, friday_out=True)  # 4 Fridays out 10:00-12:30
+    s.feed(HALL, at(thu, 7))
+    s.feed(DOOR, at(thu, 18))
+    s.end(thu)
+    s.feed(DOOR, at(FRI, 11))  # back from the night away
+    s.feed(HALL, at(FRI, 11, 1))
+    assert s.u._outing_windows(FRI, s.w)
+    assert kinds(s.ev(at(FRI, 20)), "trip_missed") == []
 
 
 def test_zero_length_trip_window_is_not_learned():
@@ -500,16 +531,20 @@ class NightSite:
 
     def trip(self, eve: date, h: int, m: int, length: int, room=KITCHEN) -> None:
         start = self.t(eve, h, m)
+        self.feed(BED, start - timedelta(minutes=1))  # coming down
         for k in [*range(0, length, 5), length]:  # moving about downstairs
             self.feed(room, start + timedelta(minutes=k))
         self.feed(BED, start + timedelta(minutes=length + 1))
 
     def door(self, eve: date, h: int, m: int, eid: str = KDOOR) -> None:
+        """Down, a door, 14 min downstairs, back up after the door's hold."""
         at_ = self.t(eve, h, m)
+        self.feed(BED, at_ - timedelta(minutes=3))
         self.feed(KITCHEN, at_ - timedelta(minutes=2))
         self.feed(eid, at_)
         self.feed(KITCHEN, at_ + timedelta(minutes=2))
-        self.feed(BED, at_ + timedelta(minutes=4))
+        self.feed(KITCHEN, at_ + timedelta(minutes=12))
+        self.feed(BED, at_ + timedelta(minutes=16))
 
     def morning(self, eve: date) -> None:
         self.feed(KITCHEN, self.t(eve, 7))
@@ -632,6 +667,7 @@ def test_long_night_trip_pushes_once_at_30_min_and_clears_back_upstairs():
     opened = 0
     was_open = False
     raised = set()
+    s.feed(BED, s.t(EVE, 1, 59))  # coming down
     for m in range(0, 46):
         now = s.t(EVE, 2, 0) + timedelta(minutes=m)
         if m <= 40 and m % 5 == 0:
@@ -678,15 +714,18 @@ def test_night_door_while_home_pushes_and_while_out_does_not():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 2, 11))
     s.feed(KITCHEN, s.t(EVE, 2, 12))
     s.feed(FRONT, s.t(EVE, 2, 14))
-    [a] = s.ev(s.t(EVE, 2, 15))
+    # Held for 15 minutes in case someone is coming back to bed.
+    assert all(p == [] for p in polls(s, s.t(EVE, 2, 14), s.t(EVE, 2, 28)))
+    [a] = s.ev(s.t(EVE, 2, 29))
     assert a.kind == "night_door" and a.source == "night"
     assert a.cls is AlertClass.WELFARE and a.severity is Severity.MEDIUM
     assert a.explanation == "Front door opened during the night at 02:14"
-    assert a.raised_at == s.t(EVE, 2, 14)
-    s.feed(BED, s.t(EVE, 2, 20))
-    assert s.ev(s.t(EVE, 2, 21)) == []
+    assert a.raised_at == s.t(EVE, 2, 29)
+    s.feed(BED, s.t(EVE, 2, 35))
+    assert s.ev(s.t(EVE, 2, 36)) == []
 
     # The other occupant goes out after the first is in bed and comes home
     # late: the house was OUT when the door opened.
@@ -709,11 +748,12 @@ def test_regular_2330_back_door_is_learned_normal():
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
     s.feed(KDOOR, s.t(EVE, 23, 30))
-    assert s.ev(s.t(EVE, 23, 31)) == []
+    assert s.ev(s.t(EVE, 23, 46)) == []
     # A door well away from the learned hour still pushes.
-    s.feed(BED, s.t(EVE, 23, 35))
+    s.feed(BED, s.t(EVE, 23, 50))
     s.feed(KDOOR, s.t(EVE, 2, 14))
-    assert [a.kind for a in s.ev(s.t(EVE, 2, 15))] == ["night_door"]
+    assert s.ev(s.t(EVE, 2, 28)) == []
+    assert [a.kind for a in s.ev(s.t(EVE, 2, 29))] == ["night_door"]
 
 
 def test_regular_long_trip_is_learned_normal():
@@ -729,6 +769,7 @@ def test_regular_long_trip_is_learned_normal():
     _night_house(s, trips={0: 40, 10: 40})
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     for m in (0, 10, 20, 30):
         s.feed(KITCHEN, s.t(EVE, 2, m))
     assert [a.kind for a in s.ev(s.t(EVE, 2, 30))] == ["night_downstairs"]
@@ -741,6 +782,7 @@ def test_no_push_before_14_nights():
         s.evening(EVE)
         s.ev(s.t(EVE, 22, 40))
         assert s.u.night_since is not None
+        s.feed(BED, s.t(EVE, 1, 59))
         s.feed(KITCHEN, s.t(EVE, 2, 0))
         s.feed(FRONT, s.t(EVE, 2, 1))
         s.feed(KITCHEN, s.t(EVE, 2, 15))
@@ -777,6 +819,7 @@ def test_morning_ends_night_at_learned_night_end():
     assert s.w.night_end(nxt) == 6 * 60  # earliest waking 07:00 less 60 min
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 5, 28))
     s.feed(KITCHEN, s.t(EVE, 5, 30))
     s.feed(KITCHEN, s.t(EVE, 5, 45))
     assert s.u.night_since == s.t(EVE, 21, 57)  # before night_end: a trip
@@ -791,6 +834,7 @@ def test_restart_mid_night_keeps_trip():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 48))
     s.feed(KITCHEN, s.t(EVE, 1, 50))
     s.feed(KITCHEN, s.t(EVE, 2, 0))
     data = s.u.to_dict()
@@ -835,6 +879,7 @@ def test_poll_gap_during_trip_fires_once():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 2, 8))
     for m in range(10, 55, 5):
         s.feed(KITCHEN, s.t(EVE, 2, m))  # 02:10 .. 02:50, no polls
     [a] = s.ev(s.t(EVE, 2, 55))
@@ -856,10 +901,10 @@ def test_clock_change_night():
     assert s.u.night_since == since
     # 01:30 happens twice; neither ends nor restarts the night.
     s.feed(BED, s.t(eve, 1, 30, fold=0))
-    s.feed(BED, s.t(eve, 1, 30, fold=1))
     assert s.u.night_since == since
     assert iso_day(eve) not in s.nights()
     # A trip from 01:40 BST to 01:05 GMT is 25 minutes, not -35.
+    s.feed(BED, s.t(eve, 1, 38, fold=0))  # coming down
     s.feed(KITCHEN, s.t(eve, 1, 40, fold=0))
     s.feed(KITCHEN, s.t(eve, 1, 50, fold=0))
     s.feed(KITCHEN, s.t(eve, 1, 5, fold=1))
@@ -875,6 +920,7 @@ def test_clock_change_night():
     assert a.raised_at.astimezone(utc) == datetime(2026, 10, 25, 1, 10, tzinfo=utc)
     s.feed(BED, s.t(eve, 1, 12, fold=1))
     assert s.ev(s.t(eve, 1, 20, fold=1)) == []
+    s.feed(BED, s.t(eve, 1, 30, fold=1))  # the second 01:30
     assert s.u.night_since == since
     s.morning(eve)
     assert s.u.night_since is None
@@ -885,6 +931,7 @@ def test_clock_change_night():
     _night_house(s, before=eve)
     s.evening(eve)
     s.ev(s.t(eve, 22, 40))
+    s.feed(BED, s.t(eve, 1, 43, fold=0))
     s.feed(KITCHEN, s.t(eve, 1, 45, fold=0))
     s.feed(KITCHEN, s.t(eve, 1, 58, fold=0))
     s.feed(BED, s.t(eve, 1, 1, fold=1))
@@ -913,10 +960,10 @@ def test_night_state_round_trip_old_store_and_clear():
         assert Unusual.from_dict(dict(data, night=bad), s.cfg).to_dict() == fresh
 
     # clear_night drops the night in progress and keeps the learned nights.
-    assert s.ev(s.t(EVE, 2, 1))
+    assert s.ev(s.t(EVE, 2, 15))
     s.u.clear_night()
     assert s.u.night_since is None
-    assert s.ev(s.t(EVE, 2, 2)) == []
+    assert s.ev(s.t(EVE, 2, 16)) == []
     assert len(s.nights()) == 20
 
 
@@ -930,6 +977,7 @@ def test_held_on_sensor_trip_measured_from_burst_end():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     s.feed(KITCHEN, s.t(EVE, 2, 0))  # one presence, then held on
     assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 2, 44)))
     s.feed(KITCHEN, s.t(EVE, 2, 45), EventKind.BURST_END, s.t(EVE, 2, 40))
@@ -947,6 +995,7 @@ def test_held_on_sensor_trip_measured_from_burst_end():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     s.feed(KITCHEN, s.t(EVE, 2, 0))
     s.feed(KITCHEN, s.t(EVE, 3, 0), EventKind.BURST_END, s.t(EVE, 2, 15))
     assert s.ev(s.t(EVE, 3, 0)) == []
@@ -969,6 +1018,7 @@ def test_partner_bedroom_motion_does_not_close_trip():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     s.feed(KITCHEN, s.t(EVE, 2, 0))
     s.feed(KITCHEN, s.t(EVE, 2, 10))
     s.feed(BED, s.t(EVE, 2, 20))  # 10 min after the kitchen: not going up
@@ -986,6 +1036,7 @@ def test_lone_blip_then_nothing_never_pushes():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     s.feed(KITCHEN, s.t(EVE, 2, 0))
     assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 6, 59)))
     s.morning(EVE)
@@ -1011,7 +1062,7 @@ def test_night_door_clears_at_morning_and_morning_door_is_not_night():
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
     s.feed(FRONT, s.t(EVE, 5, 0))
-    assert [a.kind for a in s.ev(s.t(EVE, 5, 1))] == ["night_door"]
+    assert [a.kind for a in s.ev(s.t(EVE, 5, 15))] == ["night_door"]
     s.feed(KITCHEN, s.t(EVE, 6, 0))  # morning
     assert s.ev(s.t(EVE, 6, 1)) == []
     assert s.u.night_since is None
@@ -1032,9 +1083,113 @@ def test_two_blips_far_apart_are_two_trips():
     _night_house(s)
     s.evening(EVE)
     s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 59))
     s.feed(KITCHEN, s.t(EVE, 2, 0))
+    s.feed(BED, s.t(EVE, 2, 39))
     s.feed(KITCHEN, s.t(EVE, 2, 40))  # 40 min of quiet downstairs: a new trip
     assert s.u.to_dict()["night"]["trip_start"] == s.t(EVE, 2, 40).isoformat()
     assert all(p == [] for p in polls(s, s.t(EVE, 2, 0), s.t(EVE, 4, 0)))
     s.morning(EVE)
     assert s.nights()[iso_day(EVE)]["trip"] == 0.0
+
+
+# ------------------------------------------------- coming down, door holds
+
+
+def test_still_reader_after_partner_goes_up_cancels_the_night():
+    s = NightSite()
+    _night_house(s)
+    s.feed(KITCHEN, s.t(EVE, 18))
+    s.feed(BACK, s.t(EVE, 21, 58))
+    s.feed(BED, s.t(EVE, 22, 0))  # A goes up; B reads on, TV off, 35 min
+    seen = polls(s, s.t(EVE, 22, 0), s.t(EVE, 22, 34))
+    assert s.u.night_since == s.t(EVE, 22, 0)
+    now = s.t(EVE, 22, 35)
+    for k in range(0, 70, 8):  # B moves now and then for an hour
+        s.feed(BACK, now + timedelta(minutes=k))
+        assert s.u.night_since is None  # no coming down: cancelled
+        seen += polls(s, now + timedelta(minutes=k), now + timedelta(minutes=k + 7))
+    assert s.u.night_since is None
+    up = now + timedelta(minutes=66)
+    s.feed(LANDING, up)  # B goes up
+    seen += polls(s, up, up + timedelta(minutes=29))
+    assert s.u.night_since is None
+    seen += polls(s, up + timedelta(minutes=30), up + timedelta(minutes=90))
+    assert s.u.night_since == up
+    assert all(p == [] for p in seen)
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)] == {"trip": 0.0, "doors": []}
+
+
+def test_real_night_trip_after_coming_down_still_pushes():
+    for upstairs in (UPSTAIRS, frozenset()):  # two floors, and a bungalow
+        s = NightSite(upstairs=upstairs)
+        _night_house(s)
+        s.evening(EVE)
+        s.ev(s.t(EVE, 22, 40))
+        s.feed(BED, s.t(EVE, 2, 0))
+        for m in range(1, 41, 5):
+            s.feed(KITCHEN, s.t(EVE, 2, m))
+        assert s.u.night_since == s.t(EVE, 21, 57)
+        [a] = s.ev(s.t(EVE, 2, 40))
+        assert a.kind == "night_downstairs" and a.details["since"] == "02:01"
+        assert a.raised_at == s.t(EVE, 2, 31)
+
+
+def test_late_return_with_a_cup_of_tea_is_not_a_night_door():
+    s = NightSite()
+    _night_house(s)
+    s.feed(KITCHEN, s.t(EVE, 18))
+    s.feed(FRONT, s.t(EVE, 19))  # B goes out
+    s.feed(BACK, s.t(EVE, 21, 58))
+    s.feed(BED, s.t(EVE, 22, 0))  # A goes to bed
+    seen = polls(s, s.t(EVE, 22, 0), s.t(EVE, 23, 44))
+    assert s.u.night_since == s.t(EVE, 22, 0)
+    s.feed(FRONT, s.t(EVE, 23, 45))  # B comes home
+    seen += polls(s, s.t(EVE, 23, 45), s.t(EVE, 23, 46))
+    s.feed(KITCHEN, s.t(EVE, 23, 47))
+    seen += polls(s, s.t(EVE, 23, 47), s.t(EVE, 23, 51))
+    s.feed(LANDING, s.t(EVE, 23, 52))
+    s.feed(BED, s.t(EVE, 23, 53))
+    seen += polls(s, s.t(EVE, 23, 52), s.t(EVE, 1, 0))
+    assert all(p == [] for p in seen)
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["doors"] == []
+
+
+def test_door_then_back_to_bed_inside_the_hold_is_dropped_unlearned():
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 0))
+    s.feed(KITCHEN, s.t(EVE, 1, 2))
+    s.feed(KDOOR, s.t(EVE, 1, 3))  # the cat out
+    seen = polls(s, s.t(EVE, 1, 3), s.t(EVE, 1, 8))
+    data = s.u.to_dict()  # a restart inside the hold keeps it
+    assert data["night"]["door_held"] is True
+    s.u = Unusual.from_dict(data, s.cfg)
+    s.feed(KITCHEN, s.t(EVE, 1, 9))
+    s.feed(LANDING, s.t(EVE, 1, 12))
+    seen += polls(s, s.t(EVE, 1, 9), s.t(EVE, 2, 0))
+    assert all(p == [] for p in seen)
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["doors"] == []
+
+    # Going up only after the hold: the door opened at 01:18.
+    s = NightSite()
+    _night_house(s)
+    s.evening(EVE)
+    s.ev(s.t(EVE, 22, 40))
+    s.feed(BED, s.t(EVE, 1, 0))
+    s.feed(KITCHEN, s.t(EVE, 1, 2))
+    s.feed(KDOOR, s.t(EVE, 1, 3))
+    s.feed(KITCHEN, s.t(EVE, 1, 15))
+    assert s.ev(s.t(EVE, 1, 17)) == []
+    [a] = s.ev(s.t(EVE, 1, 18))
+    assert a.kind == "night_door" and a.raised_at == s.t(EVE, 1, 18)
+    assert a.explanation == "Kitchen door opened during the night at 01:03"
+    s.feed(LANDING, s.t(EVE, 1, 19))
+    assert s.ev(s.t(EVE, 1, 20)) == []
+    s.morning(EVE)
+    assert s.nights()[iso_day(EVE)]["doors"] == [1]

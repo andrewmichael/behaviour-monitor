@@ -1008,3 +1008,124 @@ def test_reset_entity_forgets_unusual_learning():
 
     e.set_entities(ENTS[:3])
     assert set(e._unusual.to_dict()["first"]) <= {s.entity_id for s in ENTS[:3]}
+
+
+def _window(e: Engine, start: datetime, end: datetime) -> list:
+    """Poll each minute from ``start`` to ``end``; the open alerts each time."""
+    seen = []
+    t = start
+    while t <= end:
+        e.poll(t)
+        seen.append(list(e._router.open_alerts))
+        t += timedelta(minutes=1)
+    return seen
+
+
+def _no_cards_or_signs(seen: list) -> bool:
+    return all(
+        a.kind not in UNUSUAL_KINDS and "escalated_by" not in a.details
+        for open_ in seen
+        for a in open_
+    )
+
+
+def test_back_from_holiday_waits_the_allowance_before_not_yet_today():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    day = MON + timedelta(days=15)
+    e.holiday = True
+    for h in range(0, 18):
+        e.poll(day + timedelta(hours=h))
+    e.holiday = False
+    back = day + timedelta(hours=18)
+    e.poll(back)
+    _pulse(e, "binary_sensor.kit", back + timedelta(minutes=1), learn_only=False)
+    seen = _window(e, back + timedelta(minutes=1), back + timedelta(minutes=59))
+    assert any(a.source == "whereabouts" for a in seen[-1])  # still_at_home
+    assert _no_cards_or_signs(seen)
+    e.poll(back + timedelta(minutes=60))
+    assert {a.source for a in _unusual_open(e)} == {
+        "binary_sensor.bed",
+        "binary_sensor.bath",
+        "sensor.kettle",
+    }
+    # Past the wait the cards are signs again, and they escalate.
+    [where] = _open_where(e)
+    assert where.details["escalated_by"]
+
+
+def test_ha_down_all_morning_waits_the_allowance_after_it_is_back():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    day = MON + timedelta(days=15)
+    e.poll(day + timedelta(hours=6))
+    up = day + timedelta(hours=11)  # nothing seen or polled 06:00-11:00
+    e.poll(up)
+    _pulse(e, "binary_sensor.kit", up, learn_only=False)
+    seen = _window(e, up + timedelta(minutes=1), up + timedelta(minutes=59))
+    assert any(a.source == "whereabouts" for a in seen[-1])
+    assert _no_cards_or_signs(seen)
+    e.poll(up + timedelta(minutes=60))
+    assert {a.source for a in _unusual_open(e)} == {
+        "binary_sensor.bed",
+        "binary_sensor.bath",
+        "sensor.kettle",
+    }
+
+
+def test_restart_from_an_old_store_waits_the_allowance():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    day = MON + timedelta(days=15)
+    e.poll(day + timedelta(hours=6))
+    up = day + timedelta(hours=11)
+    restored = Engine.from_dict(e.to_dict(), e._cfg, ENTS)
+    _pulse(restored, "binary_sensor.kit", up, learn_only=False)
+    seen = _window(restored, up, up + timedelta(minutes=59))
+    assert _no_cards_or_signs(seen)
+    # A restart inside the wait keeps it.
+    again = Engine.from_dict(restored.to_dict(), e._cfg, ENTS)
+    assert _no_cards_or_signs(
+        _window(again, up + timedelta(minutes=30), up + timedelta(minutes=59))
+    )
+    again.poll(up + timedelta(minutes=60))
+    assert _unusual_open(again)
+
+
+def test_unreadable_unusual_store_flags_a_rebuild():
+    e = _engine(learning_days=14)
+    _train(e, days=15)
+    data = e.to_dict()
+    for bad in ({"first": 5}, 7, dict(data["unusual"], night=3)):
+        back = Engine.from_dict(dict(data, unusual=bad), e._cfg, ENTS)
+        assert back.needs_unusual_history
+        assert back._unusual.to_dict()["active"] == []
+    assert not Engine.from_dict(data, e._cfg, ENTS).needs_unusual_history
+
+
+def test_out_overnight_cards_wait_for_the_return_and_say_went_out():
+    e = _door_engine()
+    day = MON + timedelta(days=15)
+    out_at = day + timedelta(hours=18)
+    _pulse(e, "binary_sensor.kit", out_at - timedelta(minutes=1), learn_only=False)
+    e.handle_state("binary_sensor.side_door", "off", "on", out_at, learn_only=False)
+    e.handle_state(
+        "binary_sensor.side_door", "on", "off", out_at + timedelta(seconds=30), False
+    )
+    t = out_at
+    back = day + timedelta(days=1, hours=11)
+    while t < back:
+        e.poll(t)
+        t += timedelta(minutes=10)
+    assert _unusual_open(e) == []
+    e.handle_state("binary_sensor.side_door", "off", "on", back, learn_only=False)
+    e.handle_state(
+        "binary_sensor.side_door", "on", "off", back + timedelta(seconds=30), False
+    )
+    _pulse(e, "binary_sensor.kit", back + timedelta(minutes=1), learn_only=False)
+    for m in range(2, 60, 5):
+        e.poll(back + timedelta(minutes=m))
+        assert _unusual_open(e) == []
+    e.poll(back + timedelta(minutes=61))
+    opened = _unusual_open(e)
+    assert opened and all(a.details["went_out_today"] is True for a in opened)

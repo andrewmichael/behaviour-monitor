@@ -5,6 +5,15 @@ activity within a few minutes), the downstairs then stays quiet with no
 sitting appliance on, and that going-up lies inside the learned night. It
 ends at the first day-room activity at or after the learned night end.
 
+A night trip starts only after a coming-down: night-room activity a few
+minutes before its first day-room activity. Day-room activity without one
+means someone was still downstairs (a partner reading quietly, say): the
+night is cancelled unrecorded and bedtime is looked for again from there.
+
+A night door is held for ``door_hold_min``. Day-room activity then going up
+inside the hold is someone coming back to bed: the door is dropped and not
+learned. Otherwise it opens when the hold ends.
+
 All bounds come from ``Whereabouts.night_start()`` and ``night_end()``;
 everything else is event sequence. Elapsed times use UTC subtraction so
 they stay right across a clock change; times of day use local wall time.
@@ -92,6 +101,9 @@ class NightWatch:
         self._trip_room: str = ""
         self._door_at: datetime | None = None
         self._door_entity: str | None = None
+        # The door is inside its hold; the latest day-room activity after it.
+        self._door_held = False
+        self._door_day_at: datetime | None = None
         self._trip_max: float = 0.0
         self._doors: list[int] = []
         # Finalised nights, keyed by the evening's ISO date.
@@ -154,18 +166,26 @@ class NightWatch:
         if not _after(ts, self.night_since):
             return  # a late burst end from before the night began
         if day_room:
-            self._day_in_night(ts, ev.room, ev.kind is EventKind.BURST_END)
+            burst = ev.kind is EventKind.BURST_END
+            rise = (ev.last_rise or ev.timestamp) if burst else ts
+            self._day_in_night(ts, ev.room, burst, rise)
         elif night_room:
             self._last_night_at = ts
             if self._trip_start is not None and self._went_up(ts, self._trip_last_day):
                 self._trip_up_at = ts
-            if self._door_at is not None and _after(ts, self._door_at):
-                self._door_at = None
-                self._door_entity = None
-        elif not where.is_out(ts):
-            self._doors.append(ts.hour)
+            if self._door_at is None or not _after(ts, self._door_at):
+                return
+            if not self._door_held:
+                self._clear_door()  # back upstairs after an open door
+            elif self._went_up(ts, self._door_day_at) and _since(ts, self._door_at) < (
+                self._cfg.door_hold_min
+            ):
+                self._clear_door()  # came in and went back to bed
+        elif not where.is_out(ts) and not self._door_held:
             self._door_at = ts
             self._door_entity = ev.entity_id
+            self._door_held = True
+            self._door_day_at = None
 
     def _day_outside_night(self, ts: datetime) -> None:
         if self._last_day_at is None or _after(ts, self._last_day_at):
@@ -181,7 +201,21 @@ class NightWatch:
         ):
             self._went_up_at = self._last_night_at
 
-    def _day_in_night(self, ts: datetime, room: str, burst: bool) -> None:
+    def _came_down(self, at: datetime) -> bool:
+        """Night-room activity this soon before ``at``: someone came down."""
+        last = self._last_night_at
+        return (
+            last is not None and 0 <= _since(at, last) <= self._cfg.went_up_within_min
+        )
+
+    def _cancel_night(self, ts: datetime) -> None:
+        """Someone was still downstairs: no night yet, and none recorded."""
+        self.clear()
+        self._day_outside_night(ts)
+
+    def _day_in_night(
+        self, ts: datetime, room: str, burst: bool, rise: datetime
+    ) -> None:
         last = self._trip_last_day
         if (
             not burst  # a burst end is motion held since its presence
@@ -193,6 +227,15 @@ class NightWatch:
             # this is a new trip.
             self._close_trip()
         if self._trip_start is None:
+            if (
+                burst
+                and self._last_night_at is not None
+                and not _after(rise, self._last_night_at)
+            ):
+                return  # motion held since before the last going up
+            if not self._came_down(rise):
+                self._cancel_night(ts)
+                return
             self._trip_start = ts
             self._trip_up_at = None
         if self._trip_last_day is None or _after(ts, self._trip_last_day):
@@ -207,6 +250,15 @@ class NightWatch:
             and self._went_up(self._last_night_at, self._trip_last_day)
         ):
             self._trip_up_at = self._last_night_at
+        if self._door_held and self._door_at is not None and _after(ts, self._door_at):
+            if self._door_day_at is None or _after(ts, self._door_day_at):
+                self._door_day_at = ts
+
+    def _clear_door(self) -> None:
+        self._door_at = None
+        self._door_entity = None
+        self._door_held = False
+        self._door_day_at = None
 
     def _is_morning(self, ts: datetime, where: Whereabouts) -> bool:
         assert self.night_since is not None
@@ -220,6 +272,15 @@ class NightWatch:
             if _since(now, self.night_since) >= cfg.night_max_h * 60:
                 self._end_night()
                 return
+            if (
+                self._door_held
+                and self._door_at is not None
+                and _since(now, self._door_at) >= cfg.door_hold_min
+            ):
+                # No coming back to bed inside the hold: the door opens.
+                self._door_held = False
+                self._door_day_at = None
+                self._doors.append(self._door_at.hour)
             if (
                 self._trip_start is not None
                 and self._trip_last_day is not None
@@ -268,15 +329,13 @@ class NightWatch:
         self._last_night_at = None
         self._trip_start = self._trip_last_day = self._trip_up_at = None
         self._trip_room = ""
-        self._door_at = None
-        self._door_entity = None
+        self._clear_door()
         self._trip_max = 0.0
         self._doors = []
 
     def remove(self, entity_id: str) -> None:
         if self._door_entity == entity_id:
-            self._door_at = None
-            self._door_entity = None
+            self._clear_door()
 
     def prune(self, before: date) -> None:
         cutoff = iso_day(before)
@@ -324,7 +383,7 @@ class NightWatch:
                     )
                 )
         t = self._door_at
-        if t is not None and self._door_entity is not None:
+        if t is not None and self._door_entity is not None and not self._door_held:
             h = t.hour
             near = sum(
                 any((d - h) % 24 in (0, 1, 23) for d in r.doors) for r in learned
@@ -340,7 +399,9 @@ class NightWatch:
                             f"{names(self._door_entity)} opened during the night "
                             f"at {t:%H:%M}"
                         ),
-                        raised_at=t,
+                        raised_at=(
+                            _utc(t) + timedelta(minutes=cfg.door_hold_min)
+                        ).astimezone(t.tzinfo),
                         details={"door": self._door_entity, "at": f"{t:%H:%M}"},
                     )
                 )
@@ -360,6 +421,8 @@ class NightWatch:
             "trip_room": self._trip_room,
             "door_at": _iso(self._door_at),
             "door_entity": self._door_entity,
+            "door_held": self._door_held,
+            "door_day_at": _iso(self._door_day_at),
             "trip_max": self._trip_max,
             "doors": list(self._doors),
             "nights": {
@@ -385,6 +448,9 @@ class NightWatch:
         n._door_at = _dt(data["door_at"])
         door = data["door_entity"]
         n._door_entity = None if door is None else str(door)
+        # A store from before the hold: its door was already learned.
+        n._door_held = bool(data.get("door_held", False))
+        n._door_day_at = _dt(data.get("door_day_at"))
         n._trip_max = float(data["trip_max"])
         n._doors = [int(h) for h in data["doors"]]
         nights: dict[str, _NightRecord] = {}

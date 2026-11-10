@@ -29,7 +29,6 @@ from custom_components.behaviour_monitor.const import (
 EMPTY_LISTS = {
     "outside_doors": [],
     "sitting_appliances": [],
-    "upstairs_rooms": [],
 }
 
 
@@ -166,7 +165,7 @@ async def test_migrate_v12_to_v13_adds_empty_lists_and_drops_house_low_ratio(
 
 
 @pytest.mark.asyncio
-async def test_migrate_13_to_14_adds_empty_upstairs(mock_hass, mock_config_entry):
+async def test_migrate_13_to_14_leaves_upstairs_unset(mock_hass, mock_config_entry):
     mock_config_entry.version = 13
     mock_config_entry.options = {
         "learning_days": 10,
@@ -180,8 +179,9 @@ async def test_migrate_13_to_14_adds_empty_upstairs(mock_hass, mock_config_entry
         "learning_days": 10,
         "outside_doors": ["binary_sensor.d"],
         "sitting_appliances": [],
-        "upstairs_rooms": [],
     }
+    # Unset, so the options form suggests the upper floors' rooms.
+    assert "upstairs_rooms" not in kw["options"]
 
 
 @pytest.mark.asyncio

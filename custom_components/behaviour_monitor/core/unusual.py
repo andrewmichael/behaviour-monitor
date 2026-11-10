@@ -71,6 +71,8 @@ class UnusualConfig:
     # share of learned nights.
     night_normal_fraction: float = 0.10
     night_trip_min: float = 30.0
+    # A night door waits this long for someone coming back to bed.
+    door_hold_min: float = 15.0
     upstairs: frozenset[str] = frozenset()
 
 
@@ -100,12 +102,19 @@ class Unusual:
         # Today's first activity per (entity, hour), for unusual_now.
         self._hours_day: str | None = None
         self._hours: dict[str, dict[int, datetime]] = {}
+        # When data last resumed after a gap (holiday, downtime); for that
+        # day nothing is missed before the allowance floor has passed.
+        self._resumed: datetime | None = None
         self._night = NightWatch(config)
 
     @property
     def night_since(self) -> datetime | None:
         """When the night in progress began, or None outside night."""
         return self._night.night_since
+
+    def data_resumed(self, at: datetime) -> None:
+        """Events are flowing again at ``at`` after a gap in the data."""
+        self._resumed = at
 
     def clear_night(self) -> None:
         """Drop the night in progress; learned nights are kept."""
@@ -214,6 +223,10 @@ class Unusual:
         # After an outing, wait at least the allowance floor from the return.
         returns = [end for _, end in spans if end <= now_min]
         back_by = max(returns) + cfg.allowance_floor_min if returns else 0.0
+        # Likewise after the data resumes: what came before it wasn't seen.
+        resumed = self._resumed
+        if resumed is not None and resumed.date() == today:
+            back_by = max(back_by, _minute(resumed) + cfg.allowance_floor_min)
         out: list[Alert] = []
         for eid, days in self._first.items():
             if eid in down or categories.get(eid) is Category.PANIC:
@@ -398,10 +411,18 @@ class Unusual:
                 for eid, hours in self._hours.items()
             },
             "night": self._night.to_dict(),
+            "resumed": None if self._resumed is None else self._resumed.isoformat(),
         }
 
     @classmethod
     def from_dict(cls, data: Any, config: UnusualConfig) -> "Unusual":
+        """Restore, or a blank model if ``data`` can't be read."""
+        u = cls.try_from_dict(data, config)
+        return cls(config) if u is None else u
+
+    @classmethod
+    def try_from_dict(cls, data: Any, config: UnusualConfig) -> "Unusual | None":
+        """Restore, or None if ``data`` can't be read."""
         u = cls(config)
         try:
             u._first = {
@@ -420,10 +441,12 @@ class Unusual:
                 str(eid): {int(h): datetime.fromisoformat(ts) for h, ts in hrs.items()}
                 for eid, hrs in data.get("hours", {}).items()
             }
+            resumed = data.get("resumed")
+            u._resumed = None if resumed is None else datetime.fromisoformat(resumed)
             # A store from before the night parts has no "night": start the
             # night learning empty and keep the rest.
             if "night" in data:
                 u._night = NightWatch.from_dict(data["night"], config)
         except (KeyError, TypeError, ValueError, AttributeError):
-            return cls(config)
+            return None
         return u

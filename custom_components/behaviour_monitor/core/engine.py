@@ -119,6 +119,8 @@ class Engine:
         # coordinator rebuilds it from the recorder with rebuild_unusual.
         self.needs_unusual_history = False
         self._last_poll: datetime | None = None
+        # Set by from_dict: the first poll after a restart checks for a gap.
+        self._restored = False
         self._holiday = False
         self._holiday_just_ended = False
         self._snooze_until: datetime | None = None
@@ -295,12 +297,15 @@ class Engine:
         # She may have moved while nothing was fed in. Flushed events come
         # first: they predate ``now`` and a moved clock would drop them. The
         # first poll back from holiday restarts every clock below anyway.
-        if (
-            self._last_poll is not None
-            and now - self._last_poll >= POLL_GAP
-            and not self._holiday_just_ended
-        ):
+        gap = self._last_poll is not None and now - self._last_poll >= POLL_GAP
+        if gap and not self._holiday_just_ended:
             self._where.restart_clock(now, keep_anchored=True)
+        # Data resumes after a holiday, a poll gap, or a restart from a store
+        # whose last poll is old (or unknown): what came before wasn't seen.
+        restored_stale = self._restored and (self._last_poll is None or gap)
+        if not self._holiday and (gap or self._holiday_just_ended or restored_stale):
+            self._unusual.data_resumed(now)
+        self._restored = False
         self._last_poll = now
 
         if self._holiday:
@@ -599,12 +604,14 @@ class Engine:
         e._routines = EntityRoutineModel.from_dict(
             data.get("routines", {}), config.routine
         )
-        # A store from before the unusual learning keeps everything else;
-        # the coordinator rebuilds this part from the recorder.
-        if "unusual" in data:
-            e._unusual = Unusual.from_dict(data["unusual"], config.unusual)
-        else:
+        # A store from before the unusual learning, or one whose unusual part
+        # can't be read, keeps everything else; the coordinator rebuilds this
+        # part from the recorder.
+        unusual = Unusual.try_from_dict(data.get("unusual"), config.unusual)
+        if unusual is None:
             e.needs_unusual_history = True
+        else:
+            e._unusual = unusual
         e._chains = ChainModel.from_dict(data.get("chains", {}), config.chain)
         e._drift = DriftDetector.from_dict(data.get("drift", {}), config.drift)
         e._health = HealthTracker.from_dict(data.get("health", {}), config.health)
@@ -653,6 +660,7 @@ class Engine:
             e._drift.remove_prefix(f"dwell:{eid}")
         e.set_entities(entities)
         e._resume_battery_alerts()
+        e._restored = True
         return e
 
     # ------------------------------------------------------------- rebuild

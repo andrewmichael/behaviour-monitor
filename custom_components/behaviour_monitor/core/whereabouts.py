@@ -169,7 +169,8 @@ class Whereabouts:
         self._home: dict[str, dict[int, list[float]]] = {}
         self._outs: dict[str, list[float]] = {}
         # Day -> (start minute, end minute) of each closed outing that began
-        # that day, minutes after local midnight, end clipped to 1440.
+        # that day, minutes after that day's local midnight; an outing that
+        # ends on a later day has an end past 1440. Old stores clipped it.
         self._out_spans: dict[str, list[tuple[int, int]]] = {}
         # Night key (the evening's date) -> (onset, minutes to the end of
         # the night's last sleep interval).
@@ -276,10 +277,8 @@ class Whereabouts:
             if length < cfg.max_outing_min:
                 self._outs.setdefault(day, []).append(length)
                 start_min = iv.start.hour * 60 + iv.start.minute
-                if end.date() == iv.start.date():
-                    end_min = end.hour * 60 + end.minute
-                else:
-                    end_min = 1440
+                days_on = (end.date() - iv.start.date()).days
+                end_min = days_on * 1440 + end.hour * 60 + end.minute
                 self._out_spans.setdefault(day, []).append((start_min, end_min))
             return
         if iv.where is Where.HOME:
@@ -424,7 +423,12 @@ class Whereabouts:
                 # A store from before rises were kept: the interval's start
                 # is the best evidence of when the room was set.
                 w._room_rise = w._interval.start
-            w._tvs_on = dict(data.get("tvs_on", {}))
+            # An appliance unticked while on must not hold the room forever.
+            w._tvs_on = {
+                str(e): r
+                for e, r in data.get("tvs_on", {}).items()
+                if e in config.sitting_appliances
+            }
             w._out_spans = {
                 d: [(int(a), int(b)) for a, b in v]
                 for d, v in data.get("out_spans", {}).items()
@@ -577,8 +581,16 @@ class Whereabouts:
             self._wakes[day] = minute
 
     def out_spans(self, day: date) -> list[tuple[int, int]]:
-        """Closed outings that began on ``day``: (start, end) minutes."""
-        return list(self._out_spans.get(iso_day(day), []))
+        """Closed outings overlapping ``day``: (start, end) minutes, clipped
+        to that day, so one out overnight shows on both days."""
+        out: list[tuple[int, int]] = []
+        for back in range(2):
+            key = iso_day(day - timedelta(days=back))
+            for start, end in self._out_spans.get(key, []):
+                lo, hi = start - back * 1440, end - back * 1440
+                if back == 0 or hi > 0:
+                    out.append((max(lo, 0), min(hi, 1440)))
+        return sorted(out)
 
     def adopt_out_spans(self, spans: dict[str, list[tuple[int, int]]]) -> None:
         """Replace the stored outing spans (used when history is rebuilt)."""
@@ -600,7 +612,8 @@ class Whereabouts:
 
     def sitting_rooms(self) -> set[str]:
         """Rooms with a sitting appliance on."""
-        return set(self._tvs_on.values())
+        chosen = self._cfg.sitting_appliances
+        return {r for e, r in self._tvs_on.items() if e in chosen}
 
     def current(self, now: datetime) -> Interval | None:
         """The interval in force at ``now``, or None before any activity."""
