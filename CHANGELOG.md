@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.2.0] - 2026-11-11
+
+### Added
+- upstairs rooms and night trip minutes in the options, rebuilt on upgrade
+- wire really-unusual learning into the engine, rebuilt from history on upgrade
+- routine notes and stalls become internal signs only
+- learn when the house has gone to bed and push long night trips and night doors
+- learn what is really unusual: not yet today, missed trips, unusual times
+- whereabouts keeps outing times and health knows who was down today
+
+### Changed
+- Documentation: third fix wave owner decision, grace ruling and acceptance
+- Documentation: second fix wave rulings and acceptance for really unusual alerts
+- Documentation: final review rulings and re-run acceptance for really unusual alerts
+- Documentation: rulings and updated acceptance results for really unusual alerts
+- Documentation: really unusual alerts, upstairs rooms and acceptance results
+- Documentation: implementation plan for really unusual alerts
+- Documentation: design for showing only really unusual information, plus two night pushes
+
+### Fixed
+- a bedroom sensor still on when someone comes down counts as coming down
+- night door pushes at once, late bedroom burst end can be the coming-down
+- night door drops on any return upstairs, only motion counts at night
+- night pushes wait for coming down and door holds, cards wait after data resumes
+- missed-use cards wait for a return home, zero-length trips aren't learned
+- replay and scorecard poll on local time across clock changes
+- a long quiet gap downstairs starts a new night trip
+- night trips measured from real presence, ended only by going up
+
 ## [8.1.1] - 2026-11-10
 
 ### Fixed
