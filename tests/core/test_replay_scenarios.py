@@ -68,12 +68,9 @@ def test_sitewide_dropout_is_one_health_alert(tmp_path):
     assert not any(a.kind == "unavailable" for a in created)
 
 
-def test_chain_stall_logs_missing_kitchen_and_silence_escalates(tmp_path):
+def test_chain_stall_is_not_published_and_silence_escalates(tmp_path):
     tl = _run(tmp_path, synth.chain_stall_at_kettle())
-    logs = [a.alert for _, a in tl if a.action == "log"]
-    assert any(
-        a.kind == "chain_stall" and a.details.get("missing") == "Kitchen" for a in logs
-    )
+    assert not [a for _, a in tl if a.alert.kind == "chain_stall"]
     day = synth.START + timedelta(days=21)
     pushes = [
         (t, a)
@@ -84,19 +81,9 @@ def test_chain_stall_logs_missing_kitchen_and_silence_escalates(tmp_path):
     assert pushes[0][0] < day + timedelta(hours=12)
 
 
-def test_kettle_absent_three_days_becomes_routine_notes(tmp_path):
+def test_kettle_absent_three_days_publishes_no_routine_notes(tmp_path):
     tl = _run(tmp_path, synth.kettle_absent_days())
-    logs = [
-        (t, a.alert)
-        for t, a in tl
-        if a.action == "log"
-        and a.alert.kind == "routine_missed"
-        and a.alert.source == "sensor.kettle_power"
-    ]
-    assert {t.date() for t, _ in logs} >= {
-        (synth.START + timedelta(days=21 + i)).date() for i in range(3)
-    }
-    assert all(a.details["hour"] == 7 for _, a in logs)
+    assert not [a for _, a in tl if a.alert.kind == "routine_missed"]
 
 
 def test_gradual_lengthening_reports_drift_within_two_weeks(tmp_path):

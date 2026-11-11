@@ -66,9 +66,10 @@ in one category's list.
 | Chain window (s) | 1800 |
 | Timing drift promotion (days) | 7 |
 | Drift sensitivity | medium |
+| Night-time downstairs alert (minutes) | 30 (10 to 120) |
 
-The options flow has a second step with the outside doors, bedrooms and
-sitting appliances lists.
+The options flow has a second step with the outside doors, bedrooms,
+sitting appliances and upstairs rooms lists.
 
 ## Entities
 
@@ -128,8 +129,9 @@ Every alert belongs to exactly one of three classes:
   is high severity, any other sensor's medium. To get these on a phone, tick
   `health` in the notification automation's Alert groups.
 
-- **Statistical** — unusual but not a welfare concern on its own (routine
-  notes, chain stalls, drift). Appended to the anomaly sensor's attributes
+- **Statistical** — unusual but not a welfare concern on its own (the
+  three card kinds in [Unusual days and nights](#unusual-days-and-nights),
+  and drift). Appended to the anomaly sensor's attributes
   and logged to the logbook. They sit in the `information` group.
   A drift alert's `details` carry `direction` (the way it drifted), `days`,
   `baseline`, `today`, `current` (`above`, `below` or `near` usual today) and
@@ -157,7 +159,7 @@ cover that.
 
 ### Setup lists
 
-The setup step asks for three lists. Each is optional, but without them the
+The setup step asks for four lists. Each is optional, but without them the
 matching states can't be told apart.
 
 - **Outside doors**: the doors that lead outside. Without them the
@@ -170,6 +172,11 @@ matching states can't be told apart.
 - **Sitting appliances**: the TV, or a plug that shows someone is sitting
   down with something on. Quiet time with one on is allowed to run longer,
   so a film isn't mistaken for a fall.
+- **Upstairs rooms**: the rooms people go up to at bedtime, such as the
+  bathroom and landing. Bedrooms count already. A move from these to the
+  rest of the house during the night is a night trip. Rooms on floors above
+  the lowest are suggested when the site's areas have floors. Leave it empty
+  in a bungalow: night rooms are then the bedrooms only.
 
 ### States and alerts
 
@@ -218,6 +225,53 @@ restart teach slightly shorter limits.
 A sensor that stops reporting while still shown as available can cause
 stillness alerts in the rooms it covered until it is fixed. If one of these
 appears, the device health repair for that sensor is the likely cause.
+
+## Unusual days and nights
+
+Five kinds report something out of the ordinary for this house. Each needs 14
+days of the entity's, or the house's, own history inside the 28-day window,
+so a sensor added last week stays quiet. Sensors unavailable at any point
+today, including an outage that began the day before, are skipped for the
+card kinds.
+
+Three are cards: statistical, low severity, in the `information` group, never
+pushed.
+
+| Kind | Shown when | Clears when |
+|---|---|---|
+| `not_yet_today` | An entity used on at least 90% of days hasn't fired by its usual time (the 90th percentile of its first use after the morning starts) plus an allowance of at least an hour. Held while the house is out; after an outing, including one overnight, it waits at least an hour from the return, and after holiday mode or a gap in the data at least an hour from when data resumes | It fires, or the day ends |
+| `trip_missed` | A usual outing for this weekday (out at that time on at least 75% of at least 4 learned same weekdays) passed with nobody going out | The day ends |
+| `unusual_now` | An entity fires in an hour where it never fired on any learned day, an hour either side included | 2 hours later, or the day ends |
+
+Two are welfare alerts with source `night`, medium severity, in the
+`attention` group, so the notify blueprint pushes them to the phone of
+whoever set up the notifications:
+
+| Kind | Fires when | Clears when |
+|---|---|---|
+| `night_downstairs` | A night trip has lasted the night-time downstairs alert (default 30 minutes) | Only night rooms are active again, or morning starts |
+| `night_door` | An outside door opens during the night. It pushes at once, unless the house was out just before (that's someone coming home) or a door at that hour is normal for the house | Night-room activity after the door, the night ends, or 2 hours pass. It stays open even if the night is then dropped |
+
+Night starts when someone goes from a day room to a night room (the bedrooms
+and upstairs rooms) within 5 minutes, the day rooms then stay quiet for 30
+minutes and no sitting appliance in a day room is on. It can't start before
+the learned night start. It ends at the first day-room activity after the
+learned waking time. A night trip is motion in a day room during the night
+that follows night-room activity within 5 minutes (someone came down; a
+bedroom sensor clearing as they leave counts, even when that arrives up to
+3 minutes after the downstairs motion); it ends after 5 minutes of night
+rooms only. Downstairs motion with no one coming down means someone was
+still up: that night is dropped and night starts again when they go up.
+During the night only motion counts downstairs, so a TV's standby wake or
+an automated light doesn't start a trip or drop the night. Both pushes
+need 14 learned nights,
+and each stays quiet when it is normal for the house: a long trip on more
+than 10% of nights, or a door opening within an hour of that time on more
+than 10% of nights. Holiday mode stops both and snooze holds them.
+
+A `not_yet_today` while nobody went out today counts as a missed routine sign
+for an open whereabouts alert, which raises it one severity step at two or
+more signs.
 
 ## Notifications
 
@@ -291,6 +345,23 @@ alert's `id` (or with no `alert_id` to clear every open panic). A cleared
 panic fires `cleared` with `cleared_by: "user"`.
 
 ## Upgrading
+
+### Upgrading to this release
+
+- Routine notes (`routine_missed`), chain stalls (`chain_stall`) and
+  `routine_agreement` events are no longer sent. Automations that match them
+  must change. They are replaced by the five kinds in
+  [Unusual days and nights](#unusual-days-and-nights).
+- Learning is kept. On the first start the new history (first use each day,
+  outings, nights) is rebuilt from recorder history. `unusual_now` uses the
+  existing routine learning, so it works straight after the upgrade.
+  `not_yet_today` and `trip_missed` need 14 days of their own history, and
+  the night pushes need 14 learned nights.
+- Open the integration's options and, on the second step, check the upstairs
+  rooms. Rooms on the upper floors are suggested when the areas have floors
+  in Home Assistant. Until some are ticked, the night rooms are the bedrooms
+  only.
+- The config entry migrates to version 14.
 
 ### Upgrading to v8
 

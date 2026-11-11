@@ -23,7 +23,12 @@ def test_translations_cover_every_config_and_option_field():
     for section in ("config", "options"):
         step = t[section]["step"]["whereabouts"]
         assert step["title"]
-        assert set(step["data"]) == {"outside_doors", "bedrooms", "sitting_appliances"}
+        assert set(step["data"]) == {
+            "outside_doors",
+            "bedrooms",
+            "sitting_appliances",
+            "upstairs_rooms",
+        }
         for sentence in (
             "Doors that lead outside. Don't pick fridge, cupboard or internal "
             "doors: they would hold back fall alerts.",
@@ -56,3 +61,16 @@ def test_services_yaml_lists_every_service():
         "test_panic",
     }
     assert "entity_id" in s["reset_learning"]["fields"]
+
+
+def test_translations_have_upstairs_and_night_trip_labels():
+    t = json.loads((ROOT / "translations" / "en.json").read_text())
+    for section in ("config", "options"):
+        step = t[section]["step"]["whereabouts"]
+        assert step["data"]["upstairs_rooms"] == "Upstairs rooms"
+        assert (
+            "Rooms people go up to at bedtime. A trip from these to the rest of "
+            "the house during the night is a night trip."
+        ) in step["description"]
+    init = t["options"]["step"]["init"]["data"]
+    assert init["night_trip_min"] == "Night-time downstairs alert (minutes)"

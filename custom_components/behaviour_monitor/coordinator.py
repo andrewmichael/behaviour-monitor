@@ -22,6 +22,7 @@ from homeassistant.util import dt as dt_util
 from .config_flow import entity_specs_from_data
 from .const import (
     CONF_BEDROOMS,
+    CONF_UPSTAIRS_ROOMS,
     CONF_SITE_NAME,
     DOMAIN,
     EVENT_ALERT,
@@ -247,32 +248,34 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._engine.set_entities(self._specs)
         self._forget_unmapped_batteries()
         await self._saver.async_call()
-        self._rename_bedrooms(renamed)
+        self._rename_room_options(renamed)
 
-    def _rename_bedrooms(self, renamed: dict[str, str]) -> None:
-        """Carry a renamed area over into the bedrooms option.
+    def _rename_room_options(self, renamed: dict[str, str]) -> None:
+        """Carry a renamed area over into the bedrooms and upstairs options.
 
         Unset bedrooms are left unset, and the entry reloads when the rooms
         named "bedroom" change, so they are worked out again. Updating the
         entry reloads it too, which is acceptable for a rename.
         """
         bedrooms = self._entry.options.get(CONF_BEDROOMS)
+        reload_needed = False
         if bedrooms is None:
             named = frozenset(bedroom_suggestions(s.room for s in self._specs))
-            if named != self._config.whereabouts.bedrooms:
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self._entry.entry_id)
-                )
-            return
-        if not any(room in renamed for room in bedrooms):
-            return
-        self.hass.config_entries.async_update_entry(
-            self._entry,
-            options={
-                **self._entry.options,
-                CONF_BEDROOMS: [renamed.get(room, room) for room in bedrooms],
-            },
-        )
+            reload_needed = named != self._config.whereabouts.bedrooms
+        changes = {
+            key: [renamed.get(room, room) for room in rooms]
+            for key in (CONF_BEDROOMS, CONF_UPSTAIRS_ROOMS)
+            if (rooms := self._entry.options.get(key))
+            and any(room in renamed for room in rooms)
+        }
+        if changes:
+            self.hass.config_entries.async_update_entry(
+                self._entry, options={**self._entry.options, **changes}
+            )
+        elif reload_needed:
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self._entry.entry_id)
+            )
 
     # ------------------------------------------------------------- lifecycle
 
@@ -316,6 +319,17 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 new_ids = all_ids
         else:
             new_ids = all_ids
+        if self._engine.needs_unusual_history:
+            # A store from before the unusual learning: relearn it from the
+            # recorder once. Afterwards the flag is False and the save below
+            # includes it, so this never runs twice.
+            try:
+                await self._rebuild_unusual(all_ids)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Could not rebuild from history; learning from now on"
+                )
+            await self._save()
         if new_ids:
             try:
                 await self._bootstrap_entities(new_ids)
@@ -415,16 +429,23 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
         )
 
-    async def _bootstrap_entities(self, entity_ids: list[str]) -> None:
+    async def _fetch_history(
+        self, entity_ids: list[str]
+    ) -> list[tuple[datetime, str, str | None, str]]:
+        """Recorder rows for the entities, oldest first, ready to replay.
+
+        Unavailable and unknown rows are dropped and the row after one starts
+        again with no previous state.
+        """
         if (
             recorder_get_instance is None
             or recorder_state_changes_during_period is None
         ):
-            _LOGGER.warning("Recorder unavailable; skipping bootstrap")
-            return
+            _LOGGER.warning("Recorder unavailable; skipping history")
+            return []
         instance = recorder_get_instance(self.hass)
         if instance is None:
-            return
+            return []
         end = dt_util.now()
         start = end - timedelta(days=self._config.window_days)
         # state_changes_during_period takes one entity_id string, not a list,
@@ -460,7 +481,16 @@ class BehaviourMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 replay.append((ts, entity_id, prev, state.state))
                 prev = state.state
         # sorted is stable, so rows at the same instant keep entity order.
-        for ts, entity_id, prev, new in sorted(replay, key=lambda r: r[0]):
+        return sorted(replay, key=lambda r: r[0])
+
+    async def _rebuild_unusual(self, entity_ids: list[str]) -> None:
+        rows = await self._fetch_history(entity_ids)
+        self._engine.rebuild_unusual(rows, dt_util.now())
+
+    async def _bootstrap_entities(self, entity_ids: list[str]) -> None:
+        end = dt_util.now()
+        replay = await self._fetch_history(entity_ids)
+        for ts, entity_id, prev, new in replay:
             self._engine.handle_state(entity_id, prev, new, ts, learn_only=True)
         # The router has already recorded these as opened, so dropping them
         # here would lose their events for good.

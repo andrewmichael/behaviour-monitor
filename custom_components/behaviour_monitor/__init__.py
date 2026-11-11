@@ -112,6 +112,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # engine picks the rooms named "bedroom". The house silence ratio is gone.
     options.setdefault(CONF_OUTSIDE_DOORS, [])
     options.setdefault(CONF_SITTING_APPLIANCES, [])
+    # v14: upstairs rooms are left unset, so the options form suggests the
+    # rooms on upper floors. Until some are ticked the night rooms are the
+    # bedrooms only: bathroom and landing are day rooms, and night trips
+    # still happen.
     options.pop(LEGACY_CONF_HOUSE_LOW_RATIO, None)
     hass.config_entries.async_update_entry(
         entry, data=data, options=options, version=CONFIG_VERSION

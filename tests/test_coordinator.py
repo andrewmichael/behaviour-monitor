@@ -594,6 +594,25 @@ async def test_area_rename_renames_bedroom_option(
 
 
 @pytest.mark.asyncio
+async def test_rename_remaps_upstairs_rooms(coordinator, mock_hass, mock_config_entry):
+    """A renamed area keeps its place in the upstairs rooms option."""
+    with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
+        await coordinator.async_setup()
+    from homeassistant.helpers import entity_registry as er
+
+    mock_config_entry.options = {
+        "bedrooms": ["Kitchen"],
+        "upstairs_rooms": ["Bedroom", "Den"],
+    }
+    er.async_get(mock_hass).areas["a_bed"] = SimpleNamespace(name="Back Bedroom")
+    await coordinator._async_registry_updated(SimpleNamespace(data={}))
+    mock_hass.config_entries.async_update_entry.assert_called_once_with(
+        mock_config_entry,
+        options={"bedrooms": ["Kitchen"], "upstairs_rooms": ["Back Bedroom", "Den"]},
+    )
+
+
+@pytest.mark.asyncio
 async def test_shutdown_stops_both_timers(coordinator):
     with patch.object(coordinator, "_bootstrap_entities", new=AsyncMock()):
         await coordinator.async_setup()
@@ -781,6 +800,51 @@ async def test_stale_engine_schema_triggers_full_bootstrap(coordinator):
     assert set(boot.await_args.args[0]) == {
         s.entity_id for s in coordinator.entity_specs
     }
+
+
+@pytest.mark.asyncio
+async def test_upgrade_store_without_unusual_rebuilds_from_recorder_once(coordinator):
+    """A store from before the unusual learning is rebuilt from the recorder."""
+    engine = coordinator._engine.to_dict()
+    del engine["unusual"]
+    coordinator._store._data = {
+        "site": "Test House",
+        "entity_ids": [s.entity_id for s in coordinator.entity_specs],
+        "engine": engine,
+    }
+    coordinator._store._stored_version = coordinator._store.version
+    eid = "binary_sensor.kitchen_motion"
+    rows = {
+        eid: [
+            _row("on", NOW - timedelta(hours=4)),
+            _row("off", NOW - timedelta(hours=3, minutes=58)),
+        ]
+    }
+    instance = _recorder_instance(rows)
+    with patch(
+        "custom_components.behaviour_monitor.coordinator.recorder_get_instance",
+        return_value=instance,
+    ), patch(
+        "custom_components.behaviour_monitor.coordinator.dt_util.now", return_value=NOW
+    ), patch(
+        "custom_components.behaviour_monitor.coordinator.Engine.rebuild_unusual",
+        autospec=True,
+        side_effect=lambda self, rows, now: setattr(
+            self, "needs_unusual_history", False
+        ),
+    ) as rebuild:
+        await coordinator.async_setup()
+        rebuild.assert_called_once()
+        fed = rebuild.call_args.args[1]
+        assert [(r[1], r[2], r[3]) for r in fed] == [
+            (eid, None, "on"),
+            (eid, "on", "off"),
+        ]
+        assert rebuild.call_args.args[2] == NOW
+        assert "unusual" in coordinator._store._data["engine"]
+        # The save now carries "unusual", so the next load does not rebuild.
+        await coordinator.async_setup()
+        rebuild.assert_called_once()
 
 
 def _record_data_at_fire(coordinator, mock_hass) -> list[tuple[dict, object]]:

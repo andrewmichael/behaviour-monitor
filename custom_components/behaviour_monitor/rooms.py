@@ -48,3 +48,33 @@ def display_room(site: str, room: str) -> str:
 def bedroom_suggestions(rooms: Iterable[str]) -> list[str]:
     """The rooms whose name contains "bedroom" (case-insensitive), sorted."""
     return sorted({r for r in rooms if "bedroom" in r.lower()})
+
+
+def upstairs_suggestions(hass: HomeAssistant, entity_ids: Iterable[str]) -> list[str]:
+    """The rooms on a floor above the lowest floor the site uses, sorted.
+
+    Floors come from the area's floor level. Areas with no floor, or a floor
+    with no level, are ignored, and a site on a single level has no upstairs.
+    """
+    try:
+        from homeassistant.helpers import floor_registry as fr
+    except ImportError:
+        return []
+    get_registry = getattr(fr, "async_get", None)
+    if get_registry is None:
+        return []
+    floors = get_registry(hass)
+    areas = ar.async_get(hass)
+    levels: dict[str, int] = {}
+    for entity_id in entity_ids:
+        room, area_id = resolve_room(hass, entity_id)
+        area = areas.async_get_area(area_id) if area_id else None
+        floor_id = getattr(area, "floor_id", None)
+        floor = floors.async_get_floor(floor_id) if floor_id else None
+        level = getattr(floor, "level", None)
+        if isinstance(level, int):
+            levels[room] = level
+    if len(set(levels.values())) < 2:
+        return []
+    lowest = min(levels.values())
+    return sorted(room for room, level in levels.items() if level > lowest)

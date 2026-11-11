@@ -845,3 +845,88 @@ def test_evaluate_without_activity_and_does_not_mutate():
     before = w.to_dict()
     w.evaluate(T(12, 0))
     assert w.to_dict() == before
+
+
+def test_out_spans_record_closed_outings_by_start_day():
+    w = Whereabouts(CFG)
+    w.record(_door(T(10, 0)))
+    w.record(_presence(T(12, 30), "Kitchen"))
+    assert w.out_spans(date(2026, 11, 9)) == [(600, 750)]
+    assert w.out_spans(date(2026, 11, 8)) == []
+
+
+def test_out_spans_survive_round_trip_and_old_store():
+    w = Whereabouts(CFG)
+    w.record(_door(T(10, 0)))
+    w.record(_presence(T(12, 30), "Kitchen"))
+    data = w.to_dict()
+    back = Whereabouts.from_dict(data, CFG)
+    assert back.out_spans(date(2026, 11, 9)) == [(600, 750)]
+    del data["out_spans"]
+    old = Whereabouts.from_dict(data, CFG)
+    assert old._out_spans == {}
+    assert old._outs == w._outs
+
+
+def test_out_spans_pruned_with_window():
+    w = Whereabouts(CFG)
+    w.adopt_out_spans({"2026-11-05": [(60, 120)], "2026-11-08": [(600, 700)]})
+    w.prune(date(2026, 11, 7))
+    assert w.out_spans(date(2026, 11, 5)) == []
+    assert w.out_spans(date(2026, 11, 8)) == [(600, 700)]
+
+
+def test_out_span_end_is_clipped_to_midnight():
+    w = Whereabouts(CFG)
+    w.record(_door(T(22, 0)))
+    w.record(_presence(T(23, 0), "Kitchen"))
+    w.record(_door(T(23, 10)))
+    w.record(_presence(T(23, 59), "Kitchen"))
+    assert w.out_spans(date(2026, 11, 9)) == [(1320, 1380), (1390, 1439)]
+    w2 = Whereabouts(CFG)
+    w2.record(_door(T(23, 0)))
+    w2.record(_presence(T(23, 0) + timedelta(hours=3), "Kitchen"))
+    assert w2.out_spans(date(2026, 11, 9)) == [(1380, 1440)]
+
+
+def test_out_overnight_shows_on_both_days_and_survives_round_trip():
+    w = Whereabouts(CFG)
+    w.record(_presence(T(17, 59), "Kitchen"))
+    w.record(_door(T(18, 0)))
+    w.record(_door(T(18, 0) + timedelta(hours=17)))  # back 11:00 next day
+    nxt = date(2026, 11, 10)
+    assert w.out_spans(date(2026, 11, 9)) == [(1080, 1440)]
+    assert w.out_spans(nxt) == [(0, 660)]
+    assert w.out_spans(date(2026, 11, 11)) == []
+    back = Whereabouts.from_dict(w.to_dict(), CFG)
+    assert back.out_spans(nxt) == [(0, 660)]
+    # An old store's spans were clipped at midnight and still load.
+    old = w.to_dict()
+    old["out_spans"] = {"2026-11-09": [[1080, 1440]]}
+    clipped = Whereabouts.from_dict(old, CFG)
+    assert clipped.out_spans(date(2026, 11, 9)) == [(1080, 1440)]
+    assert clipped.out_spans(nxt) == []
+
+
+def test_tv_unticked_while_on_no_longer_counts_as_sitting():
+    w = Whereabouts(CFG)
+    w.record(_tv(T(20, 0), "Back room"))
+    assert w.sitting_rooms() == {"Back room"}
+    unticked = WhereaboutsConfig(outside_doors=DOORS)
+    back = Whereabouts.from_dict(w.to_dict(), unticked)
+    assert back.sitting_rooms() == set()
+    assert back.to_dict()["tvs_on"] == {}
+    # The same holds without a restore: only chosen appliances count.
+    live = Whereabouts(unticked)
+    live._tvs_on = {TV: "Back room"}
+    assert live.sitting_rooms() == set()
+
+
+def test_is_out_and_sitting_rooms():
+    w = Whereabouts(CFG)
+    w.record(_door(T(10, 0)))
+    assert not w.is_out(T(10, 5))
+    assert w.is_out(T(10, 11))
+    assert w.sitting_rooms() == set()
+    w.record(_tv(T(10, 12), "Back room"))
+    assert w.sitting_rooms() == {"Back room"}

@@ -168,6 +168,10 @@ class Whereabouts:
         # Learned, all keyed by ISO day.
         self._home: dict[str, dict[int, list[float]]] = {}
         self._outs: dict[str, list[float]] = {}
+        # Day -> (start minute, end minute) of each closed outing that began
+        # that day, minutes after that day's local midnight; an outing that
+        # ends on a later day has an end past 1440. Old stores clipped it.
+        self._out_spans: dict[str, list[tuple[int, int]]] = {}
         # Night key (the evening's date) -> (onset, minutes to the end of
         # the night's last sleep interval).
         self._sleeps: dict[str, tuple[datetime, float]] = {}
@@ -272,6 +276,10 @@ class Whereabouts:
         if out:
             if length < cfg.max_outing_min:
                 self._outs.setdefault(day, []).append(length)
+                start_min = iv.start.hour * 60 + iv.start.minute
+                days_on = (end.date() - iv.start.date()).days
+                end_min = days_on * 1440 + end.hour * 60 + end.minute
+                self._out_spans.setdefault(day, []).append((start_min, end_min))
             return
         if iv.where is Where.HOME:
             hours = self._home.setdefault(day, {})
@@ -338,6 +346,7 @@ class Whereabouts:
         cutoff = iso_day(before)
         self._home = {d: v for d, v in self._home.items() if d >= cutoff}
         self._outs = {d: v for d, v in self._outs.items() if d >= cutoff}
+        self._out_spans = {d: v for d, v in self._out_spans.items() if d >= cutoff}
         self._sleeps = {d: v for d, v in self._sleeps.items() if d >= cutoff}
         self._wakes = {d: v for d, v in self._wakes.items() if d >= cutoff}
 
@@ -351,6 +360,9 @@ class Whereabouts:
                 for d, hours in self._home.items()
             },
             "outs": {d: list(v) for d, v in self._outs.items()},
+            "out_spans": {
+                d: [[a, b] for a, b in v] for d, v in self._out_spans.items()
+            },
             "sleeps": {
                 d: [s.isoformat(), length] for d, (s, length) in self._sleeps.items()
             },
@@ -411,7 +423,16 @@ class Whereabouts:
                 # A store from before rises were kept: the interval's start
                 # is the best evidence of when the room was set.
                 w._room_rise = w._interval.start
-            w._tvs_on = dict(data.get("tvs_on", {}))
+            # An appliance unticked while on must not hold the room forever.
+            w._tvs_on = {
+                str(e): r
+                for e, r in data.get("tvs_on", {}).items()
+                if e in config.sitting_appliances
+            }
+            w._out_spans = {
+                d: [(int(a), int(b)) for a, b in v]
+                for d, v in data.get("out_spans", {}).items()
+            }
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(config)
         return w
@@ -558,6 +579,41 @@ class Whereabouts:
         day = iso_day(ev.timestamp.date())
         if day not in self._wakes or minute < self._wakes[day]:
             self._wakes[day] = minute
+
+    def out_spans(self, day: date) -> list[tuple[int, int]]:
+        """Closed outings overlapping ``day``: (start, end) minutes, clipped
+        to that day, so one out overnight shows on both days."""
+        out: list[tuple[int, int]] = []
+        for back in range(2):
+            key = iso_day(day - timedelta(days=back))
+            for start, end in self._out_spans.get(key, []):
+                lo, hi = start - back * 1440, end - back * 1440
+                if back == 0 or hi > 0:
+                    out.append((max(lo, 0), min(hi, 1440)))
+        return sorted(out)
+
+    def adopt_out_spans(self, spans: dict[str, list[tuple[int, int]]]) -> None:
+        """Replace the stored outing spans (used when history is rebuilt)."""
+        self._out_spans = {d: list(v) for d, v in spans.items()}
+
+    def is_out(self, now: datetime) -> bool:
+        iv = self.current(now)
+        return iv is not None and iv.where is Where.OUT
+
+    @property
+    def outside_doors(self) -> frozenset[str]:
+        """The chosen outside doors."""
+        return self._cfg.outside_doors
+
+    @property
+    def burst_activity_max_min(self) -> float:
+        """How long after its last rise a burst still counts as activity."""
+        return self._cfg.burst_activity_max_min
+
+    def sitting_rooms(self) -> set[str]:
+        """Rooms with a sitting appliance on."""
+        chosen = self._cfg.sitting_appliances
+        return {r for e, r in self._tvs_on.items() if e in chosen}
 
     def current(self, now: datetime) -> Interval | None:
         """The interval in force at ``now``, or None before any activity."""

@@ -1,6 +1,10 @@
 """Replay a fixture through the core Engine and print the alert timeline.
 
-Usage: python scripts/replay.py FIXTURE.jsonl [--poll-minutes 5] [--json]
+Usage: python scripts/replay.py FIXTURE.jsonl [--poll-minutes 5] [--tz Europe/London]
+       [--json]
+
+Polls run on local wall time in ``--tz``, as Home Assistant's ``dt_util.now()``
+gives, so a clock change mid-fixture doesn't leave them an hour out.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -37,6 +42,9 @@ except ModuleNotFoundError:
     from custom_components.behaviour_monitor.core.events import Category
 
 
+DEFAULT_TZ = "Europe/London"
+
+
 def load_fixture(
     path: Path,
 ) -> tuple[list[tuple[datetime, str, str]], list[EntitySpec], dict]:
@@ -55,15 +63,16 @@ def load_fixture(
 
 
 def run_fixture(
-    path: Path, poll_minutes: int = 5
+    path: Path, poll_minutes: int = 5, tz: str = DEFAULT_TZ
 ) -> list[tuple[datetime, DeliveryAction]]:
-    return run_fixture_full(path, poll_minutes)[0]
+    return run_fixture_full(path, poll_minutes, tz)[0]
 
 
 def run_fixture_full(
-    path: Path, poll_minutes: int = 5
+    path: Path, poll_minutes: int = 5, tz: str = DEFAULT_TZ
 ) -> tuple[list[tuple[datetime, DeliveryAction]], Engine, datetime | None]:
     """Replay and also return the engine and the last poll time, for snapshot assertions."""
+    zone = ZoneInfo(tz)
     events, specs, options = load_fixture(path)
     engine = Engine(EngineConfig.from_options(options), specs)
     last_state: dict[str, str | None] = {s.entity_id: None for s in specs}
@@ -74,7 +83,8 @@ def run_fixture_full(
     step = timedelta(minutes=poll_minutes)
     for ts, eid, state in events:
         while next_poll <= ts:
-            timeline.extend((next_poll, a) for a in engine.poll(next_poll))
+            now = next_poll.astimezone(zone)
+            timeline.extend((now, a) for a in engine.poll(now))
             next_poll += step
         timeline.extend(
             (ts, a) for a in engine.handle_state(eid, last_state.get(eid), state, ts)
@@ -82,18 +92,20 @@ def run_fixture_full(
         last_state[eid] = state
     end = events[-1][0] + timedelta(hours=6)
     while next_poll <= end:
-        timeline.extend((next_poll, a) for a in engine.poll(next_poll))
+        now = next_poll.astimezone(zone)
+        timeline.extend((now, a) for a in engine.poll(now))
         next_poll += step
-    return timeline, engine, next_poll - step
+    return timeline, engine, (next_poll - step).astimezone(zone)
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("fixture", type=Path)
     p.add_argument("--poll-minutes", type=int, default=5)
+    p.add_argument("--tz", default=DEFAULT_TZ, help="local time zone for polls")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
-    for ts, a in run_fixture(args.fixture, args.poll_minutes):
+    for ts, a in run_fixture(args.fixture, args.poll_minutes, args.tz):
         if args.json:
             print(
                 json.dumps(

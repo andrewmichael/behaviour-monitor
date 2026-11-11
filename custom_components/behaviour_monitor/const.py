@@ -12,7 +12,7 @@ DOMAIN: Final = "behaviour_monitor"
 VERSION: Final = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]
-CONFIG_VERSION: Final = 13
+CONFIG_VERSION: Final = 14
 STORAGE_KEY: Final = "behaviour_monitor"
 STORAGE_VERSION: Final = 11
 UPDATE_INTERVAL: Final = 60  # seconds
@@ -47,6 +47,7 @@ CONF_CHAIN_WINDOW_S: Final = "chain_window_s"
 CONF_TIMING_PROMOTE_DAYS: Final = "timing_promote_days"
 CONF_DRIFT_SENSITIVITY: Final = "drift_sensitivity"
 CONF_LOW_BATTERY_PCT: Final = "low_battery_pct"
+CONF_NIGHT_TRIP_MIN: Final = "night_trip_min"
 
 OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_MOTION_DEBOUNCE_S: 90,
@@ -59,12 +60,14 @@ OPTION_DEFAULTS: Final[dict[str, int | str]] = {
     CONF_TIMING_PROMOTE_DAYS: 7,
     CONF_DRIFT_SENSITIVITY: "medium",
     CONF_LOW_BATTERY_PCT: 20,
+    CONF_NIGHT_TRIP_MIN: 30,
 }
 
 # Whereabouts-step option keys (names match EngineConfig.from_options)
 CONF_OUTSIDE_DOORS: Final = "outside_doors"
 CONF_SITTING_APPLIANCES: Final = "sitting_appliances"
 CONF_BEDROOMS: Final = "bedrooms"
+CONF_UPSTAIRS_ROOMS: Final = "upstairs_rooms"
 
 SEVERITY_OPTIONS: Final = ["low", "medium", "high", "critical"]
 SENSITIVITY_OPTIONS: Final = ["low", "medium", "high"]

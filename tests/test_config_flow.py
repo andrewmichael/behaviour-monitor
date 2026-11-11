@@ -24,6 +24,7 @@ from custom_components.behaviour_monitor.const import (
     CONF_PLUG_ENTITIES,
     CONF_SITE_NAME,
     CONF_SITTING_APPLIANCES,
+    CONF_UPSTAIRS_ROOMS,
     OPTION_DEFAULTS,
 )
 
@@ -50,7 +51,12 @@ def test_entity_specs_from_data_in_category_order():
     ]
 
 
-NO_LISTS = {CONF_OUTSIDE_DOORS: [], CONF_BEDROOMS: [], CONF_SITTING_APPLIANCES: []}
+NO_LISTS = {
+    CONF_OUTSIDE_DOORS: [],
+    CONF_BEDROOMS: [],
+    CONF_SITTING_APPLIANCES: [],
+    CONF_UPSTAIRS_ROOMS: [],
+}
 
 
 def _hass() -> MagicMock:
@@ -122,7 +128,7 @@ async def test_user_step_then_whereabouts_step_creates_entry_with_lists():
     assert options[CONF_BEDROOMS] == ["Back Bedroom"]
     assert options[CONF_SITTING_APPLIANCES] == []
     assert options[CONF_LEARNING_DAYS] == OPTION_DEFAULTS[CONF_LEARNING_DAYS]
-    assert flow.VERSION == 13
+    assert flow.VERSION == 14
 
 
 @pytest.mark.asyncio
@@ -153,11 +159,13 @@ async def test_bedrooms_default_to_rooms_named_bedroom(monkeypatch):
         CONF_BEDROOMS: None,
         CONF_OUTSIDE_DOORS: None,
         CONF_SITTING_APPLIANCES: None,
+        CONF_UPSTAIRS_ROOMS: None,
     }
-    # All three lists are tick boxes of the same style: doors, bedrooms, plugs.
-    doors, beds, plugs = selects[-3:]
+    # All four lists are tick boxes of the same style: doors, bedrooms, plugs,
+    # upstairs rooms.
+    doors, beds, plugs, _ = selects[-4:]
     list_mode = config_flow.SelectSelectorMode.LIST
-    assert all(s["mode"] == list_mode and s["multiple"] for s in selects[-3:])
+    assert all(s["mode"] == list_mode and s["multiple"] for s in selects[-4:])
     # Values are the raw room names; labels drop the site-name prefix.
     assert beds["options"] == [
         {"value": "Back Bedroom", "label": "Back Bedroom"},
@@ -193,7 +201,7 @@ async def test_door_and_plug_ticks_use_friendly_names_without_the_site(monkeypat
         else None
     )
     await flow.async_step_user({**GOOD, CONF_PLUG_ENTITIES: ["sensor.tv"]})
-    doors, _, plugs = selects[-3:]
+    doors, _, plugs, _ = selects[-4:]
     assert doors["options"] == [{"value": "binary_sensor.d", "label": "Front door"}]
     assert plugs["options"] == [{"value": "sensor.tv", "label": "Back room TV plug"}]
 
@@ -366,3 +374,94 @@ def test_options_form_has_low_battery_level_defaulting_to_20():
         number.assert_any_call("low_battery_pct", 5, 50, 1, "%")
         config_flow._options_schema({"low_battery_pct": 35})
         assert defaults["low_battery_pct"] == 35
+
+
+def _floors(levels: dict[str, int | None], area_floor: dict[str, str]) -> None:
+    """Floors by id with their levels, and each area's floor, in the mock registries."""
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import floor_registry as fr
+
+    floors = fr.async_get(None).floors
+    floors.clear()
+    for floor_id, level in levels.items():
+        floors[floor_id] = SimpleNamespace(level=level)
+    areas = ar.async_get(None).areas
+    for eid, floor_id in area_floor.items():
+        areas[f"a_{eid}"].floor_id = floor_id
+
+
+@pytest.mark.asyncio
+async def test_whereabouts_step_offers_upstairs_tick_list_suggested_from_floors(
+    monkeypatch,
+):
+    from custom_components.behaviour_monitor import config_flow
+
+    _rooms(
+        {
+            "binary_sensor.k": "Kitchen",
+            "binary_sensor.d": "Hall",
+            "binary_sensor.p": "Back Bedroom",
+        }
+    )
+    _floors(
+        {"ground": 0, "first": 1},
+        {
+            "binary_sensor.k": "ground",
+            "binary_sensor.d": "ground",
+            "binary_sensor.p": "first",
+        },
+    )
+    selects: list[dict] = []
+    monkeypatch.setattr(config_flow.vol, "Optional", _keyed)
+    monkeypatch.setattr(
+        config_flow, "SelectSelectorConfig", lambda **kw: selects.append(kw) or kw
+    )
+    flow = BehaviourMonitorConfigFlow()
+    flow.hass = _hass()
+    result = await flow.async_step_user({**GOOD})
+    assert _suggested(result["data_schema"])[CONF_UPSTAIRS_ROOMS] == ["Back Bedroom"]
+    assert _defaults(result["data_schema"])[CONF_UPSTAIRS_ROOMS] is None
+    upstairs = selects[-1]
+    assert upstairs["multiple"] and upstairs["options"] == [
+        {"value": "Back Bedroom", "label": "Back Bedroom"},
+        {"value": "Hall", "label": "Hall"},
+        {"value": "Kitchen", "label": "Kitchen"},
+    ]
+    result = await flow.async_step_whereabouts(
+        {**NO_LISTS, CONF_UPSTAIRS_ROOMS: ["Back Bedroom"]}
+    )
+    assert result["options"][CONF_UPSTAIRS_ROOMS] == ["Back Bedroom"]
+
+
+def test_upstairs_suggestions_empty_without_floors():
+    from custom_components.behaviour_monitor.rooms import upstairs_suggestions
+
+    _rooms({"binary_sensor.k": "Kitchen", "binary_sensor.p": "Back Bedroom"})
+    _floors({}, {})
+    assert upstairs_suggestions(_hass(), ["binary_sensor.k", "binary_sensor.p"]) == []
+    # One level only, or floors without a level, is not an upstairs either.
+    _floors({"a": 1, "b": 1}, {"binary_sensor.k": "a", "binary_sensor.p": "b"})
+    assert upstairs_suggestions(_hass(), ["binary_sensor.k", "binary_sensor.p"]) == []
+    _floors({"a": 0, "b": None}, {"binary_sensor.k": "a", "binary_sensor.p": "b"})
+    assert upstairs_suggestions(_hass(), ["binary_sensor.k", "binary_sensor.p"]) == []
+    _floors({}, {})
+
+
+def test_options_offer_night_trip_minutes_default_30():
+    from custom_components.behaviour_monitor import config_flow
+
+    defaults: dict = {}
+
+    def required(key, default=None):
+        defaults[key] = default
+        return key
+
+    with patch.object(config_flow.vol, "Required", side_effect=required), patch.object(
+        config_flow, "_number", wraps=config_flow._number
+    ) as number:
+        config_flow._options_schema({})
+        assert defaults["night_trip_min"] == 30
+        number.assert_any_call("night_trip_min", 10, 120, 5, "min")
+        config_flow._options_schema({"night_trip_min": 45})
+        assert defaults["night_trip_min"] == 45
+    assert OPTION_DEFAULTS["night_trip_min"] == 30

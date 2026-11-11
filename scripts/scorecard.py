@@ -52,6 +52,8 @@ from custom_components.behaviour_monitor.core.engine import (  # noqa: E402
 from custom_components.behaviour_monitor.core.events import Category  # noqa: E402
 
 HOLIDAY_KINDS = {"away", "gap"}
+CARD_KINDS = ("not_yet_today", "trip_missed", "unusual_now")
+NIGHT_KINDS = ("night_downstairs", "night_door")
 EXPLAINS_WELFARE = {"out", "away", "visitor", "maintenance", "gap"}
 PUSH_EVENTS = {"opened", "escalated", "reminder"}
 STORM_MIN_SENSORS = 5
@@ -119,9 +121,14 @@ def replay(
     engine: Engine,
     holidays: list[Truth],
     checkpoints: list[datetime],
+    tz: str = "Europe/London",
 ) -> tuple[list[dict[str, Any]], dict[datetime, dict[str, Any]]]:
     """Replay events, polling every 5 minutes, with holiday mode over the given
-    windows. Returns the timeline and an engine snapshot at each checkpoint."""
+    windows. Returns the timeline and an engine snapshot at each checkpoint.
+
+    Polls run on local wall time in ``tz``, as Home Assistant's
+    ``dt_util.now()`` gives, so they stay right across a clock change."""
+    zone = ZoneInfo(tz)
     timeline: list[dict[str, Any]] = []
     snaps: dict[datetime, dict[str, Any]] = {}
     pending = sorted(checkpoints)
@@ -133,8 +140,9 @@ def replay(
     def poll_until(limit: datetime) -> None:
         nonlocal next_poll
         while next_poll <= limit:
-            engine.holiday = on_holiday(next_poll)
-            timeline.extend(_row(next_poll, a) for a in engine.poll(next_poll))
+            now = next_poll.astimezone(zone)
+            engine.holiday = on_holiday(now)
+            timeline.extend(_row(now, a) for a in engine.poll(now))
             next_poll += POLL
 
     next_poll = events[0][0].replace(second=0, microsecond=0)
@@ -189,9 +197,13 @@ def _fall_points(
 
 
 def simulate_falls(
-    snaps: dict[datetime, dict[str, Any]], config: EngineConfig, specs: list
+    snaps: dict[datetime, dict[str, Any]],
+    config: EngineConfig,
+    specs: list,
+    tz: str = "Europe/London",
 ) -> list[dict[str, Any]]:
     """From each snapshot, stop all activity and poll until welfare alerts."""
+    zone = ZoneInfo(tz)
     cases = []
     for start, snap in sorted(snaps.items()):
         e = Engine.from_dict(snap, config, specs)
@@ -199,7 +211,7 @@ def simulate_falls(
         t, latency = start, None
         while t < start + FALL_HORIZON and latency is None:
             t += POLL
-            for a in e.poll(t):
+            for a in e.poll(t.astimezone(zone)):
                 if (
                     a.action == "event"
                     and a.group == "attention"
@@ -257,6 +269,7 @@ def score_welfare(tl: list[dict[str, Any]], truth: list[Truth]) -> dict[str, Any
             )
     return {
         "alerts": len(first_push),
+        "night_pushes": sum(r["kind"] in NIGHT_KINDS for r in first_push.values()),
         "explained": dict(explained),
         "unexplained": unexplained,
         "concerns": len(concerns),
@@ -368,13 +381,13 @@ def run(
     points = _fall_points(
         events, truth, config.learning_days, fall_times or ["10:00", "15:00"], fall_days
     )
-    tl, snaps = replay(events, Engine(config, specs), holidays, points)
-    for r in tl:  # the poll clock keeps the first event's offset; show local
+    tl, snaps = replay(events, Engine(config, specs), holidays, points, tz)
+    for r in tl:  # event rows keep the fixture's offset; show local
         r["t"] = r["t"].astimezone(zone)
     data_days = len(
         {ts.date() for ts, _, _ in events if not any(h.covers(ts) for h in holidays)}
     )
-    cases = simulate_falls(snaps, config, specs)
+    cases = simulate_falls(snaps, config, specs, tz)
     lat = [c["latency_min"] for c in cases if c["latency_min"] is not None]
     return {
         "span": {
@@ -411,6 +424,7 @@ def render(r: dict[str, Any]) -> str:
         f" {s['events']} events",
         "",
         f"WELFARE (would push)          {w['alerts']}",
+        f"  night pushes                {w['night_pushes']}",
         f"  explained by truth          {sum(w['explained'].values())}"
         + (f"  {w['explained']}" if w["explained"] else ""),
         f"  unexplained                 {len(w['unexplained'])}",
@@ -443,7 +457,7 @@ def render(r: dict[str, Any]) -> str:
     out += [
         f"  top {k}: " + ", ".join(f"{src} {n}" for src, n in v)
         for k, v in i["top_sources"].items()
-        if k in ("routine_missed", "drift")
+        if k in CARD_KINDS or k == "drift"
     ]
     out += [
         "",

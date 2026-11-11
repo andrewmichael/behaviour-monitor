@@ -218,3 +218,19 @@ def test_resumed_battery_alert_respects_the_current_threshold():
     assert t.evaluate(T0, lambda e: None, None) == []
     t.resume_battery_alert("binary_sensor.k", 12)  # inside the band: held open
     assert len(t.evaluate(T0, lambda e: None, None)) == 1
+
+
+def test_down_today_includes_recovered_entity():
+    t = _tracker()
+    _down(t, "binary_sensor.k", T0.replace(hour=8, minute=0))
+    _down(t, "binary_sensor.k", T0.replace(hour=8, minute=10), available=True)
+    assert "binary_sensor.k" in t.down_today(T0.replace(hour=13))
+    assert t.down_today(T0 + timedelta(days=1)) == set()
+
+
+def test_down_today_includes_outage_from_yesterday_that_ended_today():
+    t = _tracker()
+    _down(t, "binary_sensor.k", T0.replace(hour=23, minute=40) - timedelta(days=1))
+    _down(t, "binary_sensor.k", T0.replace(hour=9, minute=4), available=True)
+    assert "binary_sensor.k" in t.down_today(T0.replace(hour=14, minute=20))
+    assert t.down_today(T0 + timedelta(days=1)) == set()
